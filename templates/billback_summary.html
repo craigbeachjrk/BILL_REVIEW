@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BILLBACK Summary · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    select,input[type="text"]{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;margin-bottom:20px}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600}
+    tr:hover{background:#f9fafb}
+    .summary-card{background:#fff;border-radius:12px;padding:20px;margin-bottom:20px}
+    .summary-card h3{margin:0 0 12px 0;font-size:16px;color:#64748b}
+    .summary-card .value{font-size:28px;font-weight:600;color:#0ea5e9}
+    .group-section{margin-bottom:32px}
+    .group-header{background:#f9fafb;padding:12px 16px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+    .group-title{font-size:16px;font-weight:600}
+    .group-amount{font-size:18px;font-weight:600;color:#0ea5e9}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto}
+    .improve-modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:6px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{display:block;width:calc(100% - 24px);max-width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .improve-modal-box textarea{min-height:120px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · BILLBACK Summary</a></div>
+    <div class="logout">
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/billback">Back to Billback</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+  <div id="toast" class="toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h1>BILLBACK Summary</h1>
+
+    <div class="card">
+      <div class="controls">
+        <label>Group By:</label>
+        <select id="groupBySelect" onchange="loadSummary()">
+          <option value="month">Month (Billback Period)</option>
+          <option value="property">Property</option>
+          <option value="vendor">Vendor</option>
+          <option value="charge_code">Charge Code</option>
+        </select>
+        <button class="btn" onclick="loadSummary()">Refresh</button>
+      </div>
+
+      <div id="loading" class="loading">Loading summary...</div>
+
+      <div id="summaryContainer" style="display:none">
+        <div class="summary-card">
+          <h3>Total Billback Amount</h3>
+          <div class="value" id="totalAmount">$0.00</div>
+          <div style="margin-top:8px;color:#64748b;font-size:13px">
+            <span id="totalItems">0</span> line items
+          </div>
+        </div>
+
+        <div id="groupsContainer"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentSummary = null;
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function showImproveToast(msg, type){
+      const t = document.getElementById('improveToast');
+      t.textContent = msg;
+      t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function loadSummary(){
+      const groupBy = document.getElementById('groupBySelect').value;
+
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('summaryContainer').style.display = 'none';
+
+      try {
+        const response = await fetch(`/api/billback/summary?group_by=${groupBy}`);
+        if (!response.ok) throw new Error('Failed to load summary');
+
+        const data = await response.json();
+        currentSummary = data;
+
+        renderSummary(data);
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('summaryContainer').style.display = 'block';
+      } catch (e) {
+        console.error('Error loading summary:', e);
+        document.getElementById('loading').textContent = 'Error loading summary: ' + e.message;
+        showToast('Error loading summary', 'err');
+      }
+    }
+
+    function renderSummary(data){
+      const summary = data.summary || [];
+      let totalAmount = 0;
+      let totalItems = 0;
+
+      summary.forEach(group => {
+        totalAmount += group.total_amount;
+        totalItems += group.count;
+      });
+
+      document.getElementById('totalAmount').textContent = '$' + totalAmount.toFixed(2);
+      document.getElementById('totalItems').textContent = totalItems;
+
+      const groupsContainer = document.getElementById('groupsContainer');
+      groupsContainer.innerHTML = '';
+
+      if (summary.length === 0) {
+        groupsContainer.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b">No billback data found. Save some line items from the billback page first.</div>';
+        return;
+      }
+
+      summary.forEach(group => {
+        const section = document.createElement('div');
+        section.className = 'group-section';
+
+        const header = document.createElement('div');
+        header.className = 'group-header';
+
+        const title = document.createElement('div');
+        title.className = 'group-title';
+        title.textContent = group.group_key + ` (${group.count} items)`;
+
+        const amount = document.createElement('div');
+        amount.className = 'group-amount';
+        amount.textContent = '$' + group.total_amount.toFixed(2);
+
+        header.appendChild(title);
+        header.appendChild(amount);
+        section.appendChild(header);
+
+        // Create table for items in this group
+        const table = document.createElement('table');
+        table.innerHTML = `
+          <thead>
+            <tr>
+              <th>Property</th>
+              <th>Vendor</th>
+              <th>Charge Code</th>
+              <th>Billback Period</th>
+              <th style="text-align:right">Amount</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+          </tbody>
+        `;
+
+        const tbody = table.querySelector('tbody');
+
+        group.items.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td style="font-size:11px">${item.property_name || 'N/A'}</td>
+            <td style="font-size:11px">${item.vendor_name || 'N/A'}</td>
+            <td style="font-size:11px">${item.charge_code || 'N/A'}</td>
+            <td style="font-size:11px">${item.billback_period || 'N/A'}</td>
+            <td style="text-align:right;font-size:11px">$${item.billback_amount.toFixed(2)}</td>
+            <td style="font-size:11px;font-style:italic;color:#64748b">${item.notes || ''}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        section.appendChild(table);
+        groupsContainer.appendChild(section);
+      });
+    }
+
+    // Load summary on page load
+    loadSummary();
+
+    // IMPROVE modal functionality
+    (function(){
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return;
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

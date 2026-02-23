@@ -1,0 +1,3329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Review · Account {{ account }} · {{ date }}</title>
+  <!-- Choices.js for in-dropdown searchable selects -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); --leftW:33vw; }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .wrap{max-width:1600px;margin:20px auto;padding:0 24px}
+    /* 1/3 vs 2/3 responsive with draggable divider */
+    .row{display:grid;grid-template-columns:minmax(320px,var(--leftW)) 6px minmax(600px,1fr);gap:20px;align-items:start}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:16px}
+    h1{margin:0 0 12px 0;font-size:20px}
+    iframe{width:100%;height:calc(100vh - 160px);border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    /* label | readonly view | control */
+    .field{display:grid;grid-template-columns:1fr 1.6fr minmax(200px, 340px);align-items:center;gap:10px}
+    .lbl{font-size:12px;opacity:.8;text-align:center}
+    input[type=text]{padding:8px;border-radius:10px;border:1px solid #e5e7eb}
+    select{padding:8px;border-radius:10px;border:1px solid #e5e7eb;background:#fff}
+    /* keep controls from spanning too wide */
+    .field input[type=text], .field select{max-width:340px}
+    /* Choices wrapper width */
+    .choices{max-width:340px; font-size:14px}
+    .choices__inner{min-height:auto;padding:6px 8px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;box-shadow:none}
+    .choices.is-open .choices__inner{border-bottom-left-radius:10px;border-bottom-right-radius:10px}
+    .choices__list--dropdown{max-height:260px;border:1px solid #e5e7eb;border-radius:10px;margin-top:4px;box-shadow:0 4px 14px rgba(0,0,0,.06);z-index:100}
+    .choices.is-open{z-index:101}
+    .choices__list--dropdown .choices__item{padding:6px 8px}
+    .choices__item.is-highlighted{background:#f8fafc}
+    .choices__placeholder{opacity:.7}
+    .choices__input{padding:6px 8px}
+    .bar{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
+    /* removed duplicate secondary, consolidated above */
+    .header{margin-bottom:12px}
+    .lines{height:calc(100vh - 240px);overflow:auto;margin-top:8px}
+    .line{padding:8px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;margin-bottom:8px}
+    .line:hover{background:#f8fafc}
+    .line select{position:relative; z-index:3; pointer-events:auto}
+    .muted{font-size:12px;opacity:.7}
+    .section-title{font-size:16px;font-weight:600;margin:0 0 8px 0}
+    .line-num{font-size:20px;font-weight:700;margin:4px 0 8px}
+    .resizer{width:6px;background:rgba(255,255,255,.55);border-radius:6px;cursor:col-resize;user-select:none;align-self:stretch}
+    .resizer:hover{background:rgba(255,255,255,.8)}
+    .toast{position:fixed;right:20px;top:20px;z-index:9999;min-width:320px;max-width:520px;background:#fff;border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 10px 30px rgba(0,0,0,.15);padding:12px 14px;display:none}
+    .toast.show{display:block}
+    .toast .title{font-weight:600;margin-bottom:6px}
+    .toast .ok{color:#16a34a}
+    .toast .err{color:#dc2626}
+    .toolbar{display:flex;justify-content:flex-end;gap:10px;margin-bottom:8px}
+    .searchbox{margin-bottom:6px}
+    .searchbox input{width:100%;max-width:340px;padding:6px 8px;border-radius:8px;border:1px solid #e5e7eb}
+    .line[data-minimized="1"] .field{display:none}
+    .line[data-minimized="1"] .line-summary{display:block}
+    .line-summary{display:none;font-size:13px;color:#64748b;margin-top:6px}
+    .minimize-btn{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;margin-left:8px}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+    /* Bulk GL assignment styles */
+    .bulk-gl-item:hover{background:#f5f5f5}
+    /* Line items total display */
+    .line-items-total{position:sticky;bottom:0;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);padding:12px 16px;border-top:2px solid #0ea5e9;border-radius:0 0 10px 10px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:600;box-shadow:0 -4px 12px rgba(0,0,0,0.08);z-index:10}
+    .line-items-total .label{color:#64748b}
+    .line-items-total .amount{color:#0ea5e9;font-size:20px}
+    /* Timing tracker display */
+    .timing-display{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,0.9);padding:6px 12px;border-radius:8px;font-size:13px;margin-right:12px}
+    .timing-display .timer-icon{font-size:16px}
+    .timing-display .timer-value{font-weight:600;font-family:monospace;font-size:14px}
+    .timing-display .timer-label{color:#64748b;font-size:11px}
+    /* Page badge for chunk-to-line mapping */
+    .page-badge{display:inline-flex;align-items:center;gap:4px;background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;transition:all 0.15s;border:1px solid #bae6fd}
+    .page-badge:hover{background:#0ea5e9;color:#fff;border-color:#0ea5e9}
+    .page-badge .page-icon{font-size:12px}
+    .page-badge.no-page{background:#f1f5f9;color:#94a3b8;cursor:default;border-color:#e2e8f0}
+    .page-badge.no-page:hover{background:#f1f5f9;color:#94a3b8;border-color:#e2e8f0}
+    /* Knowledge panel styles */
+    .knowledge-panel{margin:12px 0;border:1px solid #e2e8f0;border-radius:10px;background:#fefce8;overflow:hidden}
+    .knowledge-panel summary{padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#854d0e}
+    .knowledge-panel summary:hover{background:#fef9c3}
+    .knowledge-panel .kb-icon{font-size:16px}
+    .knowledge-panel .kb-count{background:#ca8a04;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+    .knowledge-panel .kb-body{padding:12px 14px;border-top:1px solid #e2e8f0;max-height:200px;overflow-y:auto}
+    .knowledge-panel .kb-empty{color:#a16207;font-size:13px;font-style:italic}
+    .knowledge-panel .kb-note{background:#fff;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+    .knowledge-panel .kb-note:last-child{margin-bottom:0}
+    .knowledge-panel .kb-note-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+    .knowledge-panel .kb-note-entity{font-weight:600;font-size:13px;color:#1e293b}
+    .knowledge-panel .kb-note-meta{font-size:11px;color:#92400e}
+    .knowledge-panel .kb-note-content{font-size:13px;color:#334155;white-space:pre-wrap;line-height:1.5}
+    .knowledge-panel .kb-category{font-size:10px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;margin-left:6px}
+    .knowledge-panel .kb-link{display:block;text-align:right;margin-top:8px;font-size:12px}
+    .knowledge-panel .kb-link a{color:#ca8a04;text-decoration:none}
+    .knowledge-panel .kb-link a:hover{text-decoration:underline}
+    /* AI Review Panel styles */
+    .ai-panel{margin:12px 0;border:1px solid #c4b5fd;border-radius:10px;background:#f5f3ff;overflow:hidden}
+    .ai-panel summary{padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#5b21b6}
+    .ai-panel summary:hover{background:#ede9fe}
+    .ai-panel .ai-icon{font-size:16px}
+    .ai-panel .ai-confidence{font-size:12px;color:#7c3aed;margin-left:auto}
+    .ai-panel .ai-verdict{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;margin-left:8px}
+    .ai-panel .ai-verdict.pass{background:#d1fae5;color:#047857}
+    .ai-panel .ai-verdict.review{background:#fef3c7;color:#b45309}
+    .ai-panel .ai-body{padding:12px 14px;border-top:1px solid #c4b5fd}
+    .ai-panel .ai-loading{color:#7c3aed;font-size:13px;font-style:italic}
+    .ai-panel .ai-section{margin-bottom:12px}
+    .ai-panel .ai-section:last-child{margin-bottom:0}
+    .ai-panel .ai-section-title{font-size:12px;font-weight:600;color:#5b21b6;margin-bottom:6px;text-transform:uppercase}
+    .ai-panel .ai-flag{background:#fff;border:1px solid #ddd6fe;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;display:flex;align-items:flex-start;gap:8px}
+    .ai-panel .ai-flag:last-child{margin-bottom:0}
+    .ai-panel .ai-flag-icon{font-size:14px;flex-shrink:0}
+    .ai-panel .ai-flag.garbage{border-color:#fecaca;background:#fef2f2}
+    .ai-panel .ai-flag.history{border-color:#fde68a;background:#fffbeb}
+    .ai-panel .ai-flag.knowledge{border-color:#bfdbfe;background:#eff6ff}
+    .ai-panel .ai-reasoning{font-size:12px;color:#6b7280;font-style:italic;margin-top:8px}
+    .ai-panel .ai-empty{color:#7c3aed;font-size:13px;font-style:italic}
+    .ai-panel .ai-action{display:inline-flex;align-items:center;gap:4px;background:#7c3aed;color:#fff;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;border:none;margin-top:4px}
+    .ai-panel .ai-action:hover{background:#6d28d9}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div style="display:flex;align-items:center">
+      <div class="timing-display" id="timingDisplay">
+        <span class="timer-icon">&#9201;</span>
+        <div>
+          <div class="timer-value" id="timerValue">0:00</div>
+          <div class="timer-label">Time on invoice</div>
+        </div>
+      </div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <button class="btn secondary" onclick="history.back()">Back</button>
+    </div>
+  </header>
+
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for missing apartment/unit numbers on Vacant lines -->
+  <div id="unitModal" class="improve-modal-overlay" style="display:none">
+    <div class="improve-modal-box" style="max-width:600px;max-height:80vh;overflow-y:auto">
+      <h2 style="color:#f59e0b">Verify Apartment/Unit Numbers</h2>
+      <p style="margin-bottom:16px;color:#64748b">The following Vacant lines have no apartment/unit number. Enter one if needed, or leave blank to confirm there's no unit:</p>
+      <div id="unitModalBody"></div>
+      <div class="improve-modal-actions" style="margin-top:16px">
+        <button class="btn secondary" id="cancelUnitModal">Cancel</button>
+        <button class="btn" id="submitUnitModal">Confirm & Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk GL Assignment Modal -->
+  <div id="bulkGLModal" class="improve-modal-overlay" style="display:none">
+    <div class="improve-modal-box" style="width:500px;max-height:80vh">
+      <h2>Assign GL to <span id="bulkGLCount">0</span> Selected Lines</h2>
+      <input type="text" id="bulkGLSearch" placeholder="Search GL Number or Name..."
+             oninput="filterBulkGLList(this.value)" style="width:100%;padding:8px;margin:10px 0;box-sizing:border-box" />
+      <div id="bulkGLList" style="max-height:350px;overflow-y:auto;border:1px solid #ccc;border-radius:4px"></div>
+      <input type="hidden" id="selectedGLNumber" />
+      <input type="hidden" id="selectedGLName" />
+      <input type="hidden" id="selectedGLId" />
+      <div class="improve-modal-actions" style="margin-top:15px">
+        <button type="button" class="btn secondary" onclick="closeBulkGLModal()">Cancel</button>
+        <button type="button" class="btn" onclick="applyBulkGL()">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Knowledge Note Modal -->
+  <div id="knowledgeModal" class="improve-modal-overlay" style="display:none">
+    <div class="improve-modal-box" style="max-width:500px">
+      <h2 style="color:#854d0e">Add Knowledge Note</h2>
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Applies To</label>
+        <select id="kbEntityScope" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px">
+          <option value="vendor">This Vendor (all properties)</option>
+          <option value="vendor_property">This Vendor + Property combination</option>
+        </select>
+        <div id="kbEntityDisplay" style="font-size:12px;color:#64748b;margin-top:6px"></div>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Category</label>
+        <select id="kbCategory" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px">
+          <option value="common_issues">Common Issues</option>
+          <option value="billing_pattern">Billing Pattern</option>
+          <option value="expected_values">Expected Values</option>
+          <option value="special_rules">Special Rules</option>
+          <option value="gl_mapping">GL Mapping</option>
+          <option value="gotchas">Gotchas</option>
+        </select>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Note *</label>
+        <textarea id="kbContent" rows="4" placeholder="What should others know about this vendor/property?" style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit;resize:vertical"></textarea>
+      </div>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" onclick="closeKnowledgeModal()">Cancel</button>
+        <button class="btn" onclick="saveKnowledgeNote()">Save Note</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="row">
+      <div class="card">
+        <h1>PDF · Account {{ account }}</h1>
+        <iframe id="pdfFrame" src=""></iframe>
+        <div id="pdfHelper" class="muted" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="resizer" id="resizer" title="Drag to resize"></div>
+      <div class="card">
+        <h1>Invoice Review</h1>
+        <div class="toolbar">
+          <button class="btn secondary" type="button" onclick="sendRework()">Send Back to Parser</button>
+          <button class="btn" type="button" id="saveHeaderBtn" onclick="manualSaveHeader()">Save Header</button>
+          <span id="headerSaveStatus" style="font-size:12px;color:#666"></span>
+          <form method="post" action="/api/submit" onsubmit="return submitAll(event)" id="submitForm">
+            <input type="hidden" name="date" value="{{ date }}" />
+            <input type="hidden" id="idsField" name="ids" value="" />
+            <button class="btn" id="submitBtn" type="submit">Submit</button>
+          </form>
+        </div>
+        <details class="header" id="headerBox" open>
+          <summary class="section-title">Invoice Header <span class="muted">(set once; use Save button to persist)</span></summary>
+          <div class="field"><div class="lbl">EnrichedPropertyName</div>
+            <div id="hdr_enrichedpropertyname_view">{{ header['EnrichedPropertyName'] }}</div>
+            <select id="propName" name="EnrichedPropertyName" data-search="1"></select>
+          </div>
+          <div class="field"><div class="lbl">EnrichedPropertyID</div>
+            <div id="hdr_enrichedpropertyid_view">{{ header['EnrichedPropertyID'] }}</div>
+            <input id="propId" type="text" name="EnrichedPropertyID" value="{{ header['EnrichedPropertyID'] }}" readonly style="background:#f1f5f9;color:#64748b;cursor:not-allowed" title="Auto-set from Property Name" />
+          </div>
+          <div class="field"><div class="lbl">EnrichedVendorName</div>
+            <div id="hdr_vendor_view">{{ header['EnrichedVendorName'] }}</div>
+            <select id="vendName" name="EnrichedVendorName" data-search="1"></select>
+          </div>
+          <div class="field"><div class="lbl">EnrichedVendorID</div>
+            <div id="hdr_vendorid_view">{{ header['EnrichedVendorID'] }}</div>
+            <input id="vendId" type="text" name="EnrichedVendorID" value="{{ header['EnrichedVendorID'] }}" readonly style="background:#f1f5f9;color:#64748b;cursor:not-allowed" title="Auto-set from Vendor Name" />
+          </div>
+          <div class="field"><div class="lbl">VendorCode</div>
+            <div id="hdr_vendorcode_view"></div>
+            <input id="vendCode" type="text" name="VendorCode" value="" readonly style="background:#f1f5f9;color:#64748b;cursor:not-allowed" title="Auto-set from Vendor Name" />
+          </div>
+          <div class="field"><div class="lbl">Bill From</div>
+            <div id="hdr_bill_from_view">{{ header['Bill From'] }}</div>
+            <input id="billFrom" type="text" name="Bill From" value="{{ header['Bill From'] }}" />
+          </div>
+          <div class="field"><div class="lbl">Account Number</div>
+            <div id="hdr_account_view">{{ header['Account Number'] }}</div>
+            <input type="text" name="Account Number" value="{{ header['Account Number'] }}" readonly style="background:#f1f5f9;color:#64748b;cursor:not-allowed" title="Account Number cannot be edited" />
+          </div>
+          <div class="field"><div class="lbl">Bill Period Start <span style="color:#ef4444">*</span></div>
+            <div id="hdr_bps_view">{{ header['Bill Period Start'] }}</div>
+            <input type="text" name="Bill Period Start" value="{{ header['Bill Period Start'] }}" id="hdr_bps_input" />
+          </div>
+          <div class="field"><div class="lbl">Bill Period End <span style="color:#ef4444">*</span></div>
+            <div id="hdr_bpe_view">{{ header['Bill Period End'] }}</div>
+            <input type="text" name="Bill Period End" value="{{ header['Bill Period End'] }}" id="hdr_bpe_input" />
+          </div>
+          <div class="field"><div class="lbl">Bill Date <span style="color:#ef4444">*</span></div>
+            <div id="hdr_bd_view">{{ header['Bill Date'] }}</div>
+            <input type="text" name="Bill Date" value="{{ header['Bill Date'] }}" id="hdr_bd_input" />
+          </div>
+          <div class="field"><div class="lbl">Due Date</div>
+            <div id="hdr_dd_view">{{ header['Due Date'] }}</div>
+            <input type="text" name="Due Date" value="{{ header['Due Date'] }}" />
+          </div>
+          <div class="field"><div class="lbl">Service Address</div>
+            <div id="hdr_addr_view">{{ header['Service Address'] }}</div>
+            <input type="text" name="Service Address" value="{{ header['Service Address'] }}" />
+          </div>
+          <div class="field"><div class="lbl">Service City</div>
+            <div id="hdr_city_view">{{ header['Service City'] }}</div>
+            <input type="text" name="Service City" value="{{ header['Service City'] }}" />
+          </div>
+          <div class="field"><div class="lbl">Service State</div>
+            <div id="hdr_state_view">{{ header['Service State'] }}</div>
+            <input type="text" name="Service State" value="{{ header['Service State'] }}" />
+          </div>
+          <div class="field"><div class="lbl">Service Zipcode</div>
+            <div id="hdr_zip_view">{{ header['Service Zipcode'] }}</div>
+            <input type="text" name="Service Zipcode" value="{{ header['Service Zipcode'] }}" />
+          </div>
+          <div class="field"><div class="lbl">Special Instructions</div>
+            <div id="hdr_si_view">{{ header['Special Instructions'] }}</div>
+            <input type="text" name="Special Instructions" value="{{ header['Special Instructions'] }}" />
+          </div>
+        </details>
+        <!-- Knowledge Panel - shows relevant notes for current vendor/property -->
+        <details class="knowledge-panel" id="knowledgePanel">
+          <summary>
+            <span class="kb-icon">📚</span>
+            <span>Knowledge Base</span>
+            <span class="kb-count" id="kbCount" style="display:none">0</span>
+          </summary>
+          <div class="kb-body" id="kbBody">
+            <div class="kb-empty">Select a vendor or property to see relevant notes.</div>
+          </div>
+          <div style="padding:8px 14px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+            <button class="btn small" type="button" onclick="openAddKnowledgeModal()">+ Add Note</button>
+            <a href="/knowledge-base" target="_blank" style="font-size:12px;color:#ca8a04">View All</a>
+          </div>
+        </details>
+        <!-- AI Review Panel - shows AI analysis of bill -->
+        <details class="ai-panel" id="aiPanel">
+          <summary>
+            <span class="ai-icon">🤖</span>
+            <span>AI Review</span>
+            <span class="ai-confidence" id="aiConfidence"></span>
+            <span class="ai-verdict" id="aiVerdict" style="display:none"></span>
+          </summary>
+          <div class="ai-body" id="aiBody">
+            <div class="ai-loading" id="aiLoading">Analyzing bill...</div>
+            <div id="aiContent" style="display:none">
+              <!-- Garbage Lines Section -->
+              <div class="ai-section" id="aiGarbageSection" style="display:none">
+                <div class="ai-section-title">⚠️ Potential Garbage Lines</div>
+                <div id="aiGarbageFlags"></div>
+              </div>
+              <!-- Historical Flags Section -->
+              <div class="ai-section" id="aiHistorySection" style="display:none">
+                <div class="ai-section-title">📊 Historical Comparison</div>
+                <div id="aiHistoryFlags"></div>
+              </div>
+              <!-- Knowledge Flags Section -->
+              <div class="ai-section" id="aiKnowledgeSection" style="display:none">
+                <div class="ai-section-title">📚 Knowledge Notes</div>
+                <div id="aiKnowledgeFlags"></div>
+              </div>
+              <!-- Clean Bill Message -->
+              <div id="aiCleanMessage" class="ai-empty" style="display:none">
+                ✓ No issues detected. Bill appears normal.
+              </div>
+              <!-- AI Reasoning -->
+              <div class="ai-reasoning" id="aiReasoning"></div>
+            </div>
+          </div>
+        </details>
+        <details open>
+          <summary class="section-title">Invoice Line Items <span class="muted">— Original vs Override (autosaves)</span></summary>
+          <div class="bar" style="justify-content:flex-start;gap:8px;margin:6px 0 8px">
+            <button class="btn small secondary" type="button" onclick="selectAllLines()">Select All</button>
+            <button class="btn small" type="button" onclick="addLine()">Add Line</button>
+            <button class="btn small" type="button" onclick="duplicateSelectedLines()">Duplicate Selected</button>
+            <button class="btn small" type="button" onclick="showBulkGLModal()">Assign GL to Selected</button>
+            <button class="btn small" type="button" onclick="flipAllHouse()">Flip All H/V</button>
+            <button class="btn small secondary" type="button" onclick="resetSelected()">Reset Selected to Original</button>
+            <button class="btn small danger" type="button" onclick="deleteSelectedLines()">Delete Selected</button>
+          </div>
+          <div class="line-items-total">
+            <div class="label">Total Line Items:</div>
+            <div class="amount" id="lineItemsTotal">$0.00</div>
+          </div>
+          <div class="lines" id="lines">
+          {% for ln in lines %}
+          <div class="line" data-pdf-id="{{ ln.pdf_id }}" data-line-id="{{ ln.line_id }}" data-orig-id="{{ ln.orig_id }}" data-pdf="{{ ln.pdf_link }}" data-page-start="{{ ln.source_page_start }}" data-page-end="{{ ln.source_page_end }}" data-chunk="{{ ln.source_chunk }}">
+            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div class="line-num">Line #{{ ln.line_number }}</div>
+                {% if ln.source_page_start and ln.source_page_start > 0 %}
+                <span class="page-badge" onclick="jumpToPage({{ ln.source_page_start }})" title="Jump to page {{ ln.source_page_start }}{% if ln.source_page_end and ln.source_page_end != ln.source_page_start %}-{{ ln.source_page_end }}{% endif %}">
+                  <span class="page-icon">📄</span>
+                  p{{ ln.source_page_start }}{% if ln.source_page_end and ln.source_page_end != ln.source_page_start %}-{{ ln.source_page_end }}{% endif %}
+                </span>
+                {% else %}
+                <span class="page-badge no-page" title="Page info not available">
+                  <span class="page-icon">📄</span>
+                  —
+                </span>
+                {% endif %}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button type="button" class="minimize-btn" onclick="toggleMinimize(this)">Minimize</button>
+                <label class="muted" style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="line-pick" /> Select</label>
+              </div>
+            </div>
+            <div class="line-summary">
+              GL: {{ ln.original['EnrichedGLAccountNumber'] }} | {{ ln.original['Line Item Description'] }} | ${{ ln.original['Line Item Charge'] }}
+            </div>
+            <div class="field"><div class="lbl">EnrichedGLAccountNumber</div>
+              <div>{{ ln.original['EnrichedGLAccountNumber'] }}</div>
+              <select name="EnrichedGLAccountNumber" data-orig="{{ ln.original['EnrichedGLAccountNumber'] }}" data-search="1"></select>
+            </div>
+            <div class="field"><div class="lbl">EnrichedGLAccountName</div>
+              <div>{{ ln.original['EnrichedGLAccountName'] }}</div>
+              <select name="EnrichedGLAccountName" data-orig="{{ ln.original['EnrichedGLAccountName'] }}" data-search="1"></select>
+            </div>
+            <!-- Hidden field for GL Account ID - updated when GL Number/Name changes -->
+            <input type="hidden" name="EnrichedGLAccountID" value="{{ ln.original['EnrichedGLAccountID'] }}" data-orig="{{ ln.original['EnrichedGLAccountID'] }}" />
+            <div class="field"><div class="lbl">Meter Number</div>
+              <div>{{ ln.original['Meter Number'] }}</div>
+              <input type="text" name="Meter Number" value="{{ ln.original['Meter Number'] }}" data-orig="{{ ln.original['Meter Number'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Meter Size</div>
+              <div>{{ ln.original['Meter Size'] }}</div>
+              <input type="text" name="Meter Size" value="{{ ln.original['Meter Size'] }}" data-orig="{{ ln.original['Meter Size'] }}" />
+            </div>
+            <div class="field"><div class="lbl">House Or Vacant</div>
+              <div>{{ ln.original['House Or Vacant'] }}</div>
+              <select name="House Or Vacant" data-orig="{{ ln.original['House Or Vacant'] }}"></select>
+            </div>
+            <div class="field"><div class="lbl">Utility Type</div>
+              <div>{{ ln.original['Utility Type'] }}</div>
+              <select name="Utility Type" data-orig="{{ ln.original['Utility Type'] }}" data-search="1"></select>
+            </div>
+            <div class="field"><div class="lbl">Line Item Description</div>
+              <div>{{ ln.original['Line Item Description'] }}</div>
+              <input type="text" name="Line Item Description" value="{{ ln.original['Line Item Description'] }}" data-orig="{{ ln.original['Line Item Description'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Line Item Charge</div>
+              <div>{{ ln.original['Line Item Charge'] }}</div>
+              <input type="text" name="Line Item Charge" value="{{ ln.original['Line Item Charge'] }}" data-orig="{{ ln.original['Line Item Charge'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Consumption Amount</div>
+              <div>{{ ln.original['Consumption Amount'] }}</div>
+              <input type="text" name="Consumption Amount" value="{{ ln.original['Consumption Amount'] }}" data-orig="{{ ln.original['Consumption Amount'] }}" />
+            </div>
+            <div class="field"><div class="lbl">ENRICHED CONSUMPTION</div>
+              <div>{{ ln.original['ENRICHED CONSUMPTION'] }}</div>
+              <input type="text" name="ENRICHED CONSUMPTION" value="{{ ln.original['ENRICHED CONSUMPTION'] }}" data-orig="{{ ln.original['ENRICHED CONSUMPTION'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Unit of Measure</div>
+              <div>{{ ln.original['Unit of Measure'] }}</div>
+              <input type="text" name="Unit of Measure" value="{{ ln.original['Unit of Measure'] }}" data-orig="{{ ln.original['Unit of Measure'] }}" />
+            </div>
+            <div class="field"><div class="lbl">ENRICHED UOM</div>
+              <div>{{ ln.original['ENRICHED UOM'] }}</div>
+              <input type="text" name="ENRICHED UOM" value="{{ ln.original['ENRICHED UOM'] }}" data-orig="{{ ln.original['ENRICHED UOM'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Previous Reading</div>
+              <div>{{ ln.original['Previous Reading'] }}</div>
+              <input type="text" name="Previous Reading" value="{{ ln.original['Previous Reading'] }}" data-orig="{{ ln.original['Previous Reading'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Previous Reading Date</div>
+              <div>{{ ln.original['Previous Reading Date'] }}</div>
+              <input type="text" name="Previous Reading Date" value="{{ ln.original['Previous Reading Date'] }}" data-orig="{{ ln.original['Previous Reading Date'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Current Reading</div>
+              <div>{{ ln.original['Current Reading'] }}</div>
+              <input type="text" name="Current Reading" value="{{ ln.original['Current Reading'] }}" data-orig="{{ ln.original['Current Reading'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Current Reading Date</div>
+              <div>{{ ln.original['Current Reading Date'] }}</div>
+              <input type="text" name="Current Reading Date" value="{{ ln.original['Current Reading Date'] }}" data-orig="{{ ln.original['Current Reading Date'] }}" />
+            </div>
+            <div class="field"><div class="lbl">Rate</div>
+              <div>{{ ln.original['Rate'] }}</div>
+              <input type="text" name="Rate" value="{{ ln.original['Rate'] }}" data-orig="{{ ln.original['Rate'] }}" />
+            </div>
+          </div>
+          {% endfor %}
+          </div>
+        
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="submitToast">
+    <div class="title">Submission</div>
+    <div id="toastBody" class="muted"></div>
+  </div>
+
+  <script>
+    // Load Choices.js
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+  <script>
+    const dateVal = {{ date|tojson|safe }};
+    const invoiceVal = {{ invoice|tojson|safe }};
+    const pdfFrame = document.getElementById('pdfFrame');
+    const _choicesMap = new WeakMap(); // select -> Choices instance
+    let _loadingDrafts = true; // Flag to prevent autosave during draft loading - STARTS TRUE for safety
+    // Global helper so other functions (e.g., resetSelected) can set values on Choices-backed selects
+    function setSelectValue(sel, value){
+      if (!sel) return;
+      const v = value == null ? '' : String(value);
+      const inst = _choicesMap.get(sel);
+      if (inst) {
+        try { inst.setChoiceByValue(v); } catch(e) { /* fall through */ }
+        // Verify result; Choices can silently no-op if option not yet matched
+        if (sel.value !== v) {
+          sel.value = v;
+          try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch(_){}
+        }
+      } else {
+        sel.value = v;
+      }
+    }
+
+    // Load first line's PDF once
+    (function initPDF(){
+      const first = document.querySelector('.line');
+      const helper = document.getElementById('pdfHelper');
+      if (!first){ if(helper){ helper.textContent = 'No lines found to determine PDF link.'; } return; }
+      const pdf = first.getAttribute('data-pdf') || '';
+      const pdfId = first.getAttribute('data-pdf-id') || '';
+      // Build iframe URL and a clickable fallback link for the user
+      let iframeUrl = '';
+      try {
+        const u = new URL(pdf);
+        if (u.hostname.endsWith('.s3.amazonaws.com')){
+          const key = (u.pathname || '').replace(/^\//,'');
+          if (key){
+            iframeUrl = '/pdf?k=' + encodeURIComponent(key) + '&date=' + encodeURIComponent(dateVal) + '&pdf_id=' + encodeURIComponent(pdfId) + '&cb=' + Date.now();
+          }
+        }
+      } catch(e) { /* not a full URL; continue */ }
+      if (!iframeUrl){
+        const isUrl = /^(https?:)?\/\//i.test(pdf) || pdf.startsWith('s3://');
+        const looksLikeKey = /^(Bill_Parser_|yyyy=mm=dd=|jrk-analytics-billing\/)/i.test(pdf) || (!isUrl && /\//.test(pdf));
+        const q = looksLikeKey && !isUrl ? ('k=' + encodeURIComponent(pdf)) : (pdf ? ('u=' + encodeURIComponent(pdf)) : '');
+        const base = '/pdf?' + (q ? (q + '&') : '') + 'date=' + encodeURIComponent(dateVal) + '&pdf_id=' + encodeURIComponent(pdfId) + '&cb=' + Date.now();
+        iframeUrl = base;
+      }
+      pdfFrame.src = iframeUrl;
+      if (helper){
+        const open = document.createElement('a');
+        open.href = iframeUrl;
+        open.target = '_blank';
+        open.rel = 'noopener';
+        open.textContent = 'Open PDF in a new tab';
+        helper.innerHTML = '';
+        helper.appendChild(open);
+      }
+    })();
+
+    // Apply draft data to a single line box (used by both single and batch loading)
+    function applyDraftToLine(lineBox, draftFields) {
+      if (!lineBox || !draftFields) return;
+      for (const [k,v] of Object.entries(draftFields)) {
+        const inp = lineBox.querySelector(`input[name="${k}"]`);
+        if (inp) inp.value = v ?? '';
+        const sel = lineBox.querySelector(`select[name="${k}"]`);
+        if (sel) {
+          // SAFETY: Don't apply empty values for GL fields - likely corrupt draft from race condition
+          // Let the original data-orig value be used instead
+          const isGLField = k === 'EnrichedGLAccountName' || k === 'EnrichedGLAccountNumber';
+          if (isGLField && (v === '' || v === null || v === undefined)) {
+            console.warn(`[applyDraftToLine] Skipping empty ${k} - likely corrupt draft`);
+            continue;
+          }
+          setSelectValue(sel, v ?? '');
+        }
+      }
+      // Restore deletion state if persisted
+      const del = draftFields["__deleted__"];
+      if (del && String(del).toLowerCase() !== '0' && String(del).toLowerCase() !== 'false'){
+        lineBox.setAttribute('data-deleted','1');
+        lineBox.style.opacity = '0.5';
+        lineBox.querySelectorAll('input,select,button,textarea').forEach(el => { try{ el.disabled = true; }catch(_){ } });
+      }
+    }
+
+    // BATCH load all drafts in a single request (PERF optimization - replaces N individual calls)
+    async function loadAllDraftsBatch() {
+      const lines = document.querySelectorAll('.line');
+      if (lines.length === 0) return;
+
+      // Collect all pdf_id/line_id pairs including __header__
+      const items = [];
+      const first = lines[0];
+      const firstPdfId = first?.getAttribute('data-pdf-id');
+
+      // Include header draft
+      if (firstPdfId) {
+        items.push({ pdf_id: firstPdfId, line_id: '__header__' });
+      }
+
+      // Include all line drafts
+      lines.forEach(lineBox => {
+        const pdf_id = lineBox.getAttribute('data-pdf-id');
+        const line_id = lineBox.getAttribute('data-line-id');
+        if (pdf_id && line_id) {
+          items.push({ pdf_id, line_id });
+        }
+      });
+
+      if (items.length === 0) return;
+
+      try {
+        const r = await fetch('/api/drafts/batch', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items })
+        });
+        const j = await r.json();
+        if (!j || !j.drafts) return;
+
+        // Apply header draft
+        if (firstPdfId) {
+          const headerKey = `${firstPdfId}#__header__`;
+          const headerDraft = j.drafts[headerKey];
+          if (headerDraft && headerDraft.fields) {
+            applyHeaderDraft(headerDraft.fields);
+          }
+        }
+
+        // Apply line drafts
+        lines.forEach(lineBox => {
+          const pdf_id = lineBox.getAttribute('data-pdf-id');
+          const line_id = lineBox.getAttribute('data-line-id');
+          const key = `${pdf_id}#${line_id}`;
+          const draft = j.drafts[key];
+          if (draft && draft.fields) {
+            applyDraftToLine(lineBox, draft.fields);
+          }
+        });
+
+        console.log(`[review] Batch loaded ${Object.keys(j.drafts).length} drafts in 1 request`);
+      } catch (e) {
+        console.error('[review] Batch draft load failed, falling back to individual loads', e);
+        // Fallback to individual loads if batch fails
+        lines.forEach(loadDraft);
+      }
+    }
+
+    // Load and create new lines that were added in previous sessions but not yet submitted
+    async function loadNewLinesFromDrafts() {
+      const first = document.querySelector('.line');
+      if (!first) return;
+      const pdfId = first.getAttribute('data-pdf-id');
+      if (!pdfId) return;
+
+      try {
+        const r = await fetch(`/api/drafts/new-lines?pdf_id=${encodeURIComponent(pdfId)}`, { credentials: 'same-origin' });
+        const j = await r.json();
+        if (!j || !j.new_lines || j.new_lines.length === 0) return;
+
+        console.log(`[review] Found ${j.new_lines.length} new lines from drafts`);
+
+        const container = document.getElementById('lines');
+        if (!container) return;
+
+        // Create DOM elements for each new line
+        j.new_lines.forEach(newLine => {
+          // Check if this line already exists (avoid duplicates)
+          if (document.querySelector(`.line[data-line-id="${newLine.line_id}"]`)) return;
+
+          // Clone the first line as template
+          const clone = first.cloneNode(true);
+          clone.setAttribute('data-new', '1');
+          clone.removeAttribute('data-orig-id');
+          clone.setAttribute('data-line-id', newLine.line_id);
+
+          // Clear all inputs first
+          clone.querySelectorAll('input[type=text]').forEach(i => { i.value = ''; });
+          clone.querySelectorAll('select').forEach(s => { try { s.value = ''; } catch(_) {} });
+
+          // Reset checkbox
+          const pick = clone.querySelector('.line-pick');
+          if (pick) pick.checked = false;
+
+          // Apply saved field values
+          if (newLine.fields) {
+            for (const [k, v] of Object.entries(newLine.fields)) {
+              if (k === '__deleted__') continue;
+              const inp = clone.querySelector(`input[name="${k}"]`);
+              if (inp) inp.value = v ?? '';
+              const sel = clone.querySelector(`select[name="${k}"]`);
+              if (sel) {
+                // SAFETY: Don't apply empty values for GL fields
+                const isGLField = k === 'EnrichedGLAccountName' || k === 'EnrichedGLAccountNumber';
+                if (isGLField && (v === '' || v === null || v === undefined)) {
+                  continue;
+                }
+                try { sel.value = v ?? ''; } catch(_) {}
+              }
+            }
+          }
+
+          // Append to container
+          container.appendChild(clone);
+
+          // Initialize event handlers
+          if (window.initLineSelects) window.initLineSelects(clone);
+          bindLineAutosave(clone);
+        });
+
+        // Renumber and update total
+        renumberLines();
+        updateLineItemsTotal();
+      } catch (e) {
+        console.error('[review] Failed to load new lines from drafts:', e);
+      }
+    }
+
+    // Helper to apply header draft fields
+    function applyHeaderDraft(fields) {
+      if (!fields) return;
+      const headerBox = document.querySelector('.header-card');
+      if (!headerBox) return;
+      for (const [k,v] of Object.entries(fields)) {
+        const inp = headerBox.querySelector(`input[name="${k}"]`);
+        const viewId = (k === 'EnrichedVendorName') ? 'hdr_vendor_view'
+                      : (k === 'EnrichedVendorID') ? 'hdr_vendorid_view'
+                      : `hdr_${k.replaceAll(' ','_').toLowerCase()}_view`;
+        const view = document.getElementById(viewId);
+        if (inp && v != null && String(v).trim() !== '') inp.value = v;
+        const sel = headerBox.querySelector(`select[name="${k}"]`);
+        if (sel && v != null && String(v).trim() !== '') setSelectValue(sel, v);
+        if (view && v != null && String(v).trim() !== '') view.textContent = v;
+      }
+    }
+
+    // Single draft load (for newly added lines or fallback)
+    async function loadDraft(lineBox) {
+      const pdf_id = lineBox.getAttribute('data-pdf-id');
+      const line_id = lineBox.getAttribute('data-line-id');
+      const r = await fetch(`/api/drafts?pdf_id=${encodeURIComponent(pdf_id)}&line_id=${encodeURIComponent(line_id)}`, { credentials: 'same-origin' });
+      const j = await r.json();
+      if (j && j.draft && j.draft.fields) {
+        applyDraftToLine(lineBox, j.draft.fields);
+      }
+    }
+
+    async function sendRework(){
+      try{
+        const first = document.querySelector('.line');
+        if (!first){ alert('No lines found.'); return; }
+        const pdfId = first.getAttribute('data-pdf-id');
+        // Derive explicit S3 key for backend to avoid brittle URL parsing
+        let pdfKey = '';
+        try{
+          const raw = first.getAttribute('data-pdf') || '';
+          if (raw){
+            if (/^s3:\/\//i.test(raw)){
+              // s3://bucket/key
+              const m = raw.match(/^s3:\/\/[^/]+\/(.+)$/i);
+              if (m) pdfKey = m[1];
+            } else if (/^https?:\/\//i.test(raw)){
+              // Try S3 virtual-hosted style bucket.s3.amazonaws.com/key
+              try{
+                const u = new URL(raw);
+                if (u.hostname.includes('.s3.')){
+                  pdfKey = (u.pathname||'').replace(/^\//,'');
+                }
+              }catch(_){ }
+            } else if (raw.includes('/')){
+              // looks like a bucket-relative key already
+              pdfKey = raw.replace(/^\//,'');
+            }
+          }
+          // Fallback: parse currently loaded iframe src
+          if (!pdfKey) {
+            try{
+              const fr = document.getElementById('pdfFrame');
+              if (fr && fr.src){
+                const u = new URL(fr.src, window.location.origin);
+                const k = u.searchParams.get('k');
+                const uparam = u.searchParams.get('u');
+                if (k){
+                  pdfKey = k.replace(/^\//,'');
+                } else if (uparam){
+                  // if u is an s3 url, extract path as key
+                  try{
+                    const uu = new URL(uparam);
+                    if (uu.hostname.includes('.s3.')){
+                      pdfKey = (uu.pathname||'').replace(/^\//,'');
+                    }
+                  }catch(_){ }
+                }
+              }
+            }catch(_){ }
+          }
+        }catch(_){ }
+        const notes = window.prompt('Tell the parser what went wrong (optional):', '');
+        if (notes === null) return; // cancelled
+        const fd = new FormData();
+        fd.append('date', dateVal);
+        fd.append('pdf_id', pdfId || '');
+        fd.append('notes', notes || '');
+        if (pdfKey) fd.append('pdf_key', pdfKey);
+        // Optional: explicit expected line count to avoid regex misses downstream
+        const exp = window.prompt('Optional: expected total line count (number only). Leave blank to skip.', '');
+        if (exp != null){
+          const n = String(exp).trim();
+          if (/^\d+$/.test(n)) fd.append('expected_lines', n);
+        }
+        // Pass current Bill From through to REWORK so parser/enricher can use it
+        const bfInput = document.querySelector('input[name="Bill From"]');
+        const bfView = document.getElementById('hdr_bill_from_view');
+        const billFrom = (bfInput && bfInput.value) ? bfInput.value : ((bfView && bfView.textContent) ? bfView.textContent.trim() : '');
+        if (billFrom) fd.append('bill_from', billFrom);
+        // Also pass Account Number and Bill Date for fallback row lookup
+        const acctInput = document.querySelector('input[name="Account Number"]');
+        const acctView = document.getElementById('hdr_account_view');
+        const acctNum = (acctInput && acctInput.value) ? acctInput.value : ((acctView && acctView.textContent) ? acctView.textContent.trim() : '');
+        if (acctNum) fd.append('account_number', acctNum);
+        const bdInput = document.querySelector('input[name="Bill Date"]');
+        const bdView = document.getElementById('hdr_bd_view');
+        const billDate = (bdInput && bdInput.value) ? bdInput.value : ((bdView && bdView.textContent) ? bdView.textContent.trim() : '');
+        if (billDate) fd.append('bill_date', billDate);
+        const r = await fetch('/api/rework', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok || !j || j.error){
+          alert('Failed to send to REWORK: ' + (j && (j.error||JSON.stringify(j))));
+          return;
+        }
+        // toast and redirect back to invoices list
+        const toast = document.getElementById('submitToast');
+        const body = document.getElementById('toastBody');
+        body.innerHTML = `<div class="ok"><strong>Sent back to parser.</strong></div><div class="muted">Removed current artifacts: ${j.deleted||0}. Tracking: <code>${j.copied_key||''}</code></div>`;
+        toast.classList.add('show');
+        try{ const linesBox = document.getElementById('lines'); if (linesBox) linesBox.innerHTML = ''; }catch(_){ }
+        const cb = Date.now();
+        setTimeout(()=>{ window.location.replace(`/invoices?date=${encodeURIComponent(dateVal)}&cb=${cb}`); }, 800);
+      }catch(e){ alert('Error: ' + e); }
+    }
+
+    function collectFields(lineBox){
+      const fields = {};
+      lineBox.querySelectorAll('input').forEach(i => fields[i.name] = i.value);
+      lineBox.querySelectorAll('select').forEach(s => {
+        // SAFETY: Skip saving empty GL select values during loading - they're likely corrupt
+        // (empty because options weren't loaded yet when draft was applied)
+        const isGLField = s.name === 'EnrichedGLAccountName' || s.name === 'EnrichedGLAccountNumber';
+        if (isGLField && !s.value && _loadingDrafts) {
+          console.warn(`[collectFields] Skipping empty ${s.name} during loading - likely race condition`);
+          return; // Skip this select, don't add to fields
+        }
+        fields[s.name] = s.value;
+      });
+      return fields;
+    }
+
+    function flipHouse(btn){
+      try{
+        const line = btn.closest('.line');
+        if (!line) return;
+        const hv = line.querySelector('select[name="House Or Vacant"]');
+        if (!hv) return;
+        const cur = String(hv.value || hv.getAttribute('data-orig') || '').trim().toUpperCase();
+        const next = (cur === 'HOUSE') ? 'VACANT' : 'HOUSE';
+        setSelectValue(hv, next);
+        saveDraft(line);
+      }catch(_){ }
+    }
+
+    function _hvOptionMap(sel){
+      const map = { house: null, vacant: null };
+      try{
+        const opts = sel ? Array.from(sel.options || []) : [];
+        for (const o of opts){
+          const v = String(o.value || o.text || '').trim();
+          const n = v.toUpperCase();
+          if (!map.house && (n === 'HOUSE')) map.house = v;
+          if (!map.vacant && (n === 'VACANT')) map.vacant = v;
+        }
+      }catch(_){ }
+      // fallbacks
+      if (!map.house) map.house = 'HOUSE';
+      if (!map.vacant) map.vacant = 'VACANT';
+      return map;
+    }
+
+    function _utilToGlStem(utilVal){
+      const u = String(utilVal||'').trim().toLowerCase();
+      if (!u) return '';
+      if (u === 'electricity') return 'Electric';
+      if (u === 'electric') return 'Electric';
+      if (u === 'gas') return 'Gas';
+      if (u === 'water') return 'Water';
+      if (u === 'sewer') return 'Sewer';
+      if (u === 'trash') return 'Trash';
+      // default: title-case the raw utility
+      return u.replace(/\b\w/g, c=>c.toUpperCase());
+    }
+
+    // Build the GL account name based on utility type and House/Vacant
+    // Only Electric uses "House Electric", others use just the utility name for House
+    // e.g., House: "House Electric", "Gas", "Water", "Sewer"
+    //       Vacant: "Vacant Electric", "Vacant Gas", "Vacant Water", "Vacant Sewer"
+    function _buildGlName(stem, isHouse){
+      if (!stem) return '';
+      if (isHouse) {
+        // Only Electric uses "House" prefix, others have no prefix
+        if (stem === 'Electric') return 'House Electric';
+        return stem; // Gas, Water, Sewer just use the utility name
+      } else {
+        // Vacant always uses "Vacant" prefix
+        return 'Vacant ' + stem;
+      }
+    }
+
+    function applyHVGL(line, hvUpper){
+      try{
+        const utilSel = line.querySelector('select[name="Utility Type"]');
+        const glNameSel = line.querySelector('select[name="EnrichedGLAccountName"]');
+        const glNumSel = line.querySelector('select[name="EnrichedGLAccountNumber"]');
+        if (!utilSel || (!glNameSel && !glNumSel)) return;
+        const stem = _utilToGlStem(utilSel.value || utilSel.getAttribute('data-orig') || '');
+        if (!stem) return;
+        const isHouse = (hvUpper === 'HOUSE');
+        const desiredName = _buildGlName(stem, isHouse);
+        // First set GL Name if present
+        if (glNameSel){ setSelectValue(glNameSel, desiredName); }
+        // Then set GL Number using map, if available
+        try{
+          const map = (window._glNameToNum||{});
+          const num = map[desiredName] || '';
+          if (num && glNumSel){ setSelectValue(glNumSel, num); }
+        }catch(_){ }
+        // If only number exists but name select missing, try backfilling name from number
+        if (!glNameSel && glNumSel){
+          try{
+            const rev = (window._glNumToName||{});
+            const nm = rev[glNumSel.value] || '';
+            if (nm && nm !== desiredName){ /* nothing to set without name select */ }
+          }catch(_){ }
+        }
+      }catch(_){ }
+    }
+
+    function flipAllHouse(){
+      try{
+        let needsRetry = false;
+        document.querySelectorAll('.line').forEach(line => {
+          try{
+            const hv = line.querySelector('select[name="House Or Vacant"]');
+            if (!hv) return;
+            // if options not loaded yet, mark for retry
+            if (!hv.options || hv.options.length === 0){ needsRetry = true; return; }
+            const map = _hvOptionMap(hv);
+            const curRaw = String(hv.value || hv.getAttribute('data-orig') || '').trim();
+            const cur = curRaw.toUpperCase();
+            const isCurHouse = (cur === 'HOUSE' || cur === '');
+            const nextVal = isCurHouse ? map.vacant : map.house;
+
+            // Set HoV directly
+            hv.value = nextVal;
+
+            // Get GL selects
+            const glNameSel = line.querySelector('select[name="EnrichedGLAccountName"]');
+            const glNumSel = line.querySelector('select[name="EnrichedGLAccountNumber"]');
+            const utilSel = line.querySelector('select[name="Utility Type"]');
+
+            // Calculate desired GL Name
+            // isCurHouse means current state is House, so we're flipping TO Vacant (isHouse=false)
+            // !isCurHouse means current state is Vacant, so we're flipping TO House (isHouse=true)
+            const isFlippingToHouse = !isCurHouse;
+            const stem = _utilToGlStem(utilSel?.value || utilSel?.getAttribute('data-orig') || '');
+            const desiredName = stem ? _buildGlName(stem, isFlippingToHouse) : '';
+
+            if (desiredName && glNameSel) {
+              // Try to find exact match first
+              let found = false;
+              for (const opt of glNameSel.options) {
+                if (opt.value === desiredName || opt.text === desiredName) {
+                  glNameSel.value = desiredName;
+                  found = true;
+                  break;
+                }
+              }
+              // If no exact match, try case-insensitive
+              if (!found) {
+                const desiredLower = desiredName.toLowerCase();
+                for (const opt of glNameSel.options) {
+                  if ((opt.value||'').toLowerCase() === desiredLower || (opt.text||'').toLowerCase() === desiredLower) {
+                    glNameSel.value = opt.value;
+                    found = true;
+                    break;
+                  }
+                }
+              }
+              // If still not found, add it as an option and select it
+              if (!found) {
+                const newOpt = document.createElement('option');
+                newOpt.value = desiredName;
+                newOpt.text = desiredName;
+                glNameSel.insertBefore(newOpt, glNameSel.firstChild);
+                glNameSel.value = desiredName;
+              }
+
+              // Update Choices.js display if wrapped
+              const inst = _choicesMap?.get(glNameSel);
+              if (inst) {
+                try { inst.setChoiceByValue(glNameSel.value); } catch(_) {}
+              }
+
+              // Set GL Number from mapping
+              if (glNumSel) {
+                const num = (window._glNameToNum||{})[glNameSel.value] || '';
+                if (num) {
+                  glNumSel.value = num;
+                  const numInst = _choicesMap?.get(glNumSel);
+                  if (numInst) {
+                    try { numInst.setChoiceByValue(num); } catch(_) {}
+                  }
+                }
+              }
+            }
+
+            saveDraft(line);
+          }catch(e){ console.error('flipAllHouse error:', e); }
+        });
+        if (needsRetry){ setTimeout(flipAllHouse, 250); }
+      }catch(_){ }
+    }
+
+    // simple debounce
+    function debounce(fn, ms){ let t; return function(){ const ctx=this, args=arguments; clearTimeout(t); t=setTimeout(()=>fn.apply(ctx,args), ms); }; }
+
+    const debouncedSaves = new WeakMap();
+    const lastLineSig = new WeakMap();
+
+    async function saveDraft(lineBox){
+      // Skip autosave while loading drafts to prevent overwriting __final__ drafts with stale S3 values
+      if (_loadingDrafts) return;
+      const payload = {
+        pdf_id: lineBox.getAttribute('data-pdf-id'),
+        line_id: lineBox.getAttribute('data-line-id'),
+        date: dateVal,
+        invoice: invoiceVal,
+        fields: (()=>{ const f = collectFields(lineBox); if (lineBox.hasAttribute('data-deleted')) f['__deleted__'] = '1'; return f; })()
+      };
+      try{
+        const sig = JSON.stringify(payload.fields);
+        if (lastLineSig.get(lineBox) === sig) return; // no changes
+        const resp = await fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        if (resp.ok) lastLineSig.set(lineBox, sig);
+      } catch(_){ /* swallow to avoid blocking UI */ }
+    }
+
+    // Immediately persist all current values for header and lines (no debounce)
+    // WARNING: Should not be called while _loadingDrafts is true - select values may be corrupt
+    async function saveAllDrafts(){
+      if (_loadingDrafts) {
+        console.warn('[review] saveAllDrafts called while _loadingDrafts=true, selects may have corrupt values');
+      }
+      const tasks = [];
+      try{
+        const first = document.querySelector('.line');
+        if (first){
+          // header draft
+          const headerPayload = {
+            pdf_id: first.getAttribute('data-pdf-id'),
+            line_id: '__header__',
+            date: dateVal,
+            invoice: invoiceVal,
+            fields: collectHeader()
+          };
+          tasks.push(fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(headerPayload)}));
+        }
+      }catch(_){ }
+      // line drafts
+      document.querySelectorAll('.line').forEach(lineBox => {
+        try{
+          const payload = {
+            pdf_id: lineBox.getAttribute('data-pdf-id'),
+            line_id: lineBox.getAttribute('data-line-id'),
+            date: dateVal,
+            invoice: invoiceVal,
+            fields: collectFields(lineBox)
+          };
+          tasks.push(fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}));
+        }catch(_){ }
+      });
+      try{ await Promise.allSettled(tasks); } catch(_){ }
+    }
+
+    // autosave on change (inputs and selects)
+    document.querySelectorAll('.line input').forEach(inp => {
+      const line = inp.closest('.line');
+      if (!debouncedSaves.has(line)) debouncedSaves.set(line, debounce(saveDraft, 250));
+      const saver = debouncedSaves.get(line);
+      inp.addEventListener('change', e => saver(e.target.closest('.line')));
+      inp.addEventListener('input', e => saver(e.target.closest('.line')));
+      // Update total when Line Item Charge changes
+      if (inp.name === 'Line Item Charge'){
+        inp.addEventListener('input', updateLineItemsTotal);
+        inp.addEventListener('change', updateLineItemsTotal);
+      }
+    });
+    document.querySelectorAll('.line select').forEach(sel => {
+      const line = sel.closest('.line');
+      if (!debouncedSaves.has(line)) debouncedSaves.set(line, debounce(saveDraft, 250));
+      const saver = debouncedSaves.get(line);
+      sel.addEventListener('change', e => saver(e.target.closest('.line')));
+    });
+
+    // initial load drafts (batch mode for performance - 1 request instead of N)
+    // Then load any new lines that were added in previous sessions
+    // NOTE: _loadingDrafts stays TRUE until initOptions completes to prevent race condition
+    // where initLineSelects overwrites draft GL values with old data-orig values
+    _loadingDrafts = true;  // Prevent autosave during draft loading - stays true until initOptions finishes
+    loadAllDraftsBatch().then(() => {
+      loadNewLinesFromDrafts();
+    });
+    // DO NOT set _loadingDrafts = false here! It's done in initOptions after options are loaded
+
+    // SAFETY TIMEOUT: If _loadingDrafts is still true after 15 seconds, something went wrong
+    // Force it to false so the page isn't stuck in a broken state
+    setTimeout(() => {
+      if (_loadingDrafts) {
+        console.error('[review] SAFETY: _loadingDrafts still true after 15s, forcing to false');
+        _loadingDrafts = false;
+      }
+    }, 15000);
+
+    // Calculate initial total after page loads
+    setTimeout(updateLineItemsTotal, 100);
+
+    // --- Dropdown options for Enriched fields ---
+    // Datalists are placed at the end of body
+    function initOptions(){
+      if (window._optionsInitStarted) { try{ console.log('[review] initOptions: already started'); }catch(_){ } return; }
+      window._optionsInitStarted = true;
+      try{ console.log('[review] initOptions: start'); }catch(_){ }
+      // Load full master catalogs (properties, vendors, gl accounts, utilities)
+      fetch(`/api/catalogs`, { credentials: 'same-origin' })
+        .then(async r => {
+          if (!r.ok){
+            const txt = await r.text().catch(()=> '');
+            console.error('[review] /api/catalogs error', r.status, txt);
+            throw new Error('options http ' + r.status);
+          }
+          return r.json();
+        })
+        .then(data => {
+          try{ console.log('[review] initOptions: catalogs loaded', { p:(data?.properties||[]).length, v:(data?.vendors||[]).length, g:(data?.gl_accounts||[]).length }); }catch(_){ }
+          // Store catalog data globally for bulk GL assignment
+          window._catalogData = data;
+          // helper: enhance a native select with Choices.js search if marked
+          const enhanceSearch = (sel) => {
+            if (!sel || sel.dataset.enhanced === '1') return null;
+            const c = new Choices(sel, {
+              searchEnabled: true,
+              shouldSort: false,
+              searchResultLimit: 1000,
+              itemSelectText: '',
+              placeholder: true,
+              allowHTML: false,
+            });
+            sel.dataset.enhanced = '1';
+            _choicesMap.set(sel, c);
+            // After Choices enhances, ensure change events persist drafts
+            if (!sel.dataset.bound){
+              sel.addEventListener('change', (e) => {
+                const line = sel.closest('.line');
+                if (line) {
+                  saveDraft(line);
+                } else if (sel.closest('#headerBox')) {
+                  saveHeader();
+                }
+              });
+              sel.addEventListener('choice', () => {
+                const line = sel.closest('.line');
+                if (line) { saveDraft(line); } else if (sel.closest('#headerBox')) { saveHeader(); }
+              });
+              sel.dataset.bound='1';
+            }
+            return c;
+          };
+          // set value on native or Choices-backed select
+          const setSelectValue = (sel, value) => {
+            const v = value == null ? '' : String(value);
+            const inst = _choicesMap.get(sel);
+            if (inst) {
+              try { inst.setChoiceByValue(v); } catch(e) { sel.value = v; }
+            } else {
+              sel.value = v;
+            }
+          };
+          window.setSelectValue = setSelectValue; // Expose globally for bulk GL assignment
+          // Initialize selects inside a newly added/duplicated line
+          window.initLineSelects = (line) => {
+            if (!line) return;
+            // Wait until catalogs are loaded
+            if (!window._optHTML || !window._optHTML.glOpts){ setTimeout(() => window.initLineSelects(line), 150); return; }
+            // Ensure entire line is interactive
+            try{ line.removeAttribute('data-deleted'); line.style.opacity=''; }catch(_){ }
+            line.querySelectorAll('input,select,button,textarea').forEach(el => { try{ el.disabled=false; el.style.pointerEvents='auto'; }catch(_){} });
+            const rebuildFreshNative = (selectorName, html) => {
+              try{
+                // Prefer replacing the specific .choices wrapper that owns this select
+                let oldSel = line.querySelector(`.choices select[name="${selectorName}"]`) || line.querySelector(`select[name="${selectorName}"]`);
+                if (!oldSel) return null;
+                const wrapper = oldSel.closest('.choices');
+                const fresh = document.createElement('select');
+                fresh.setAttribute('name', selectorName);
+                fresh.style.display = '';
+                fresh.style.pointerEvents = 'auto';
+                fresh.className = '';
+                fresh.innerHTML = html;
+                try{ fresh.removeAttribute('hidden'); }catch(_){ }
+                try{ fresh.removeAttribute('data-search'); }catch(_){ }
+                try{ fresh.disabled = false; }catch(_){ }
+                try{ fresh.readOnly = false; }catch(_){ }
+                try{ fresh.tabIndex = 0; }catch(_){ }
+                if (wrapper && wrapper.parentElement){ wrapper.parentElement.replaceChild(fresh, wrapper); }
+                else { oldSel.replaceWith(fresh); }
+                // Keep as native select for reliability on new/duplicated lines
+                // After the DOM settles, remove any stray .choices wrappers that may get added
+                try{ setTimeout(() => { const w = fresh.closest('.line'); w && w.querySelectorAll('.choices').forEach(x => { try{ x.remove(); }catch(_){} }); }, 0); }catch(_){ }
+                return fresh;
+              }catch(_){ return null; }
+            };
+            try{
+              const htmls = (window._optHTML || {});
+              const numSel = rebuildFreshNative('EnrichedGLAccountNumber', htmls.glOpts || '<option value=""></option>');
+              const nameSel = rebuildFreshNative('EnrichedGLAccountName', htmls.glNameOpts || '<option value=""></option>');
+              const utilSel = rebuildFreshNative('Utility Type', (htmls.utilOpts || '<option value=""></option>'));
+              // Bind autosave on change for the new selects
+              const saver = (ln => (e) => saveDraft(ln))(line);
+              const syncFromNum = (e) => {
+                try{
+                  const num = (numSel && numSel.value) || '';
+                  const mapped = (window._glNumToName||{})[num] || '';
+                  if (nameSel && mapped && nameSel.value !== mapped){ setSelectValue(nameSel, mapped); }
+                  // Also update GL ID hidden field
+                  const idField = line.querySelector('input[name="EnrichedGLAccountID"]');
+                  const mappedId = (window._glNumToId||{})[num] || '';
+                  if (idField && mappedId) idField.value = mappedId;
+                }catch(_){ }
+                saver(e);
+              };
+              const syncFromName = (e) => {
+                try{
+                  const nm = (nameSel && nameSel.value) || '';
+                  const mapped = (window._glNameToNum||{})[nm] || '';
+                  if (numSel && mapped && numSel.value !== mapped){ setSelectValue(numSel, mapped); }
+                  // Also update GL ID hidden field
+                  const idField = line.querySelector('input[name="EnrichedGLAccountID"]');
+                  const mappedId = (window._glNumToId||{})[mapped] || '';
+                  if (idField && mappedId) idField.value = mappedId;
+                }catch(_){ }
+                saver(e);
+              };
+              if (numSel) numSel.addEventListener('change', syncFromNum);
+              if (nameSel) nameSel.addEventListener('change', syncFromName);
+              if (utilSel) utilSel.addEventListener('change', saver);
+            }catch(_){ }
+          };
+          // Helpers
+          const esc = (s) => String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+          const toTitle = (s) => String(s||'').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+          const propMap = {}; // name -> id
+          const propIdToName = {}; // id -> name
+          const vendMap = {}; // name -> id
+          const vendIdToCode = {}; // id -> code
+          const vendIdToName = {}; // id -> name
+          const glNumToName = {};   // number -> name
+          const glNameToNum = {};   // name -> number
+          const glNumToId = {};     // number -> id (for charge code mapping)
+          (data.properties||[]).forEach(o => { propMap[o.name] = o.id || ''; if (o.id) propIdToName[String(o.id)] = o.name || ''; });
+          // Build vendor maps - use ID as primary key since names can be duplicated
+          const vendorNameCounts = {};
+          (data.vendors||[]).forEach(o => {
+            const name = (o.name || '').trim();
+            vendorNameCounts[name] = (vendorNameCounts[name] || 0) + 1;
+          });
+          (data.vendors||[]).forEach(o => {
+            const name = (o.name || '').trim();
+            const code = (o.code || '').trim();
+            vendMap[name] = o.id || ''; // Keep for backward compat (will have last ID for dupes)
+            if (o.id) {
+              vendIdToCode[String(o.id)] = code;
+              vendIdToName[String(o.id)] = name;
+              // Include code in display name for all vendors that have codes
+              const displayName = code ? `${name} (${code})` : name;
+              vendIdToName[String(o.id) + '_display'] = displayName;
+            }
+          });
+          // DEBUG: Check if vendor codes are being loaded
+          const vendorsWithCode = (data.vendors||[]).filter(v => v.code).length;
+          console.log('[VendorCode Debug] Total vendors:', (data.vendors||[]).length, 'With code:', vendorsWithCode);
+          const dupeNames = Object.entries(vendorNameCounts).filter(([k,v]) => v > 1).map(([k,v]) => k);
+          if (dupeNames.length > 0) console.log('[VendorCode Debug] Duplicate vendor names:', dupeNames);
+          (data.gl_accounts||[]).forEach(o => {
+            glNumToName[o.number] = o.name || '';
+            if (o.name) glNameToNum[o.name] = o.number || '';
+            if (o.id) glNumToId[o.number] = o.id;
+          });
+
+          // Build option HTML strings once
+          const propOpts = ['<option value=""></option>'].concat((data.properties||[]).map(o => `<option value="${o.name.replace(/"/g,'&quot;')}">${o.name.replace(/</g,'&lt;')}</option>`)).join('');
+          // For vendors: use ID as value, show name with code for all vendors that have codes
+          const vendOpts = ['<option value=""></option>'].concat((data.vendors||[]).map(o => {
+            const name = (o.name || '').trim();
+            const id = (o.id || '').trim();
+            const code = (o.code || '').trim();
+            const displayName = code ? `${name} (${code})` : name;
+            return `<option value="${id.replace(/"/g,'&quot;')}" data-name="${name.replace(/"/g,'&quot;')}" data-code="${code.replace(/"/g,'&quot;')}">${displayName.replace(/</g,'&lt;')}</option>`;
+          })).join('');
+          const glOpts = ['<option value=""></option>'].concat((data.gl_accounts||[]).map(o => `<option value="${o.number.replace(/"/g,'&quot;')}">${o.number.replace(/</g,'&lt;')}</option>`)).join('');
+          const glNameOpts = ['<option value=""></option>'].concat((data.gl_accounts||[]).map(o => `<option value="${(o.name||'').replace(/"/g,'&quot;')}">${(o.name||'').replace(/</g,'&lt;')}</option>`)).join('');
+          // cache option HTML and GL maps for cloning/sync
+          window._optHTML = { propOpts, vendOpts, glOpts, glNameOpts };
+          window._vendIdToName = vendIdToName;
+          window._vendIdToCode = vendIdToCode;
+          window._glNumToName = glNumToName;
+          window._glNameToNum = glNameToNum;
+          window._glNumToId = glNumToId;
+          const utilOpts = ['<option value=""></option>']
+            .concat((data.utilities||[]).map(u => {
+              const t = toTitle(String(u||''));
+              return `<option value="${t.replace(/"/g,'&quot;')}">${t.replace(/</g,'&lt;')}</option>`
+            }))
+            .join('');
+          window._optHTML.utilOpts = utilOpts;
+
+          // Header selects
+          const propNameSel = document.getElementById('propName');
+          const propId = document.getElementById('propId');
+          const vendNameSel = document.getElementById('vendName');
+          const vendId = document.getElementById('vendId');
+          const vendCode = document.getElementById('vendCode');
+          if (propNameSel){
+            // Determine desired name using (select value) OR (header view text) OR (ID -> name)
+            const viewEl = document.getElementById('hdr_enrichedpropertyname_view');
+            const idEl = document.getElementById('propId');
+            const curId = (idEl && idEl.value ? String(idEl.value).trim() : '');
+            let desiredName = (propNameSel.value||'').trim() || (viewEl?.textContent?.trim() || '');
+            if (!desiredName && curId){ desiredName = propIdToName[curId] || ''; }
+            // If we have neither a name nor an id, do not touch current DOM values
+            if (desiredName || curId){
+              // Build options and preserve desiredName if not present
+              if (desiredName && !propOpts.includes(`value="${desiredName.replace(/"/g,'&quot;')}"`)){
+                propNameSel.innerHTML = `<option value="${desiredName.replace(/"/g,'&quot;')}">${desiredName.replace(/</g,'&lt;')}</option>` + propOpts;
+              } else {
+                propNameSel.innerHTML = propOpts;
+              }
+              enhanceSearch(propNameSel);
+              if (desiredName) setSelectValue(propNameSel, desiredName);
+              // Ensure ID mirrors name when we actually have a name; otherwise keep existing ID
+              const resolvedId = desiredName ? (propMap[desiredName] || curId || '') : curId;
+              if (idEl && resolvedId) idEl.value = resolvedId;
+              if (viewEl && desiredName) viewEl.textContent = desiredName;
+              const idView = document.getElementById('hdr_enrichedpropertyid_view');
+              if (idView && (idEl?.value||'').trim()) idView.textContent = idEl.value.trim();
+            }
+          }
+          if (vendNameSel){
+            // Vendor select now uses ID as value
+            const vendIdEl = document.getElementById('vendId');
+            const vendViewEl = document.getElementById('hdr_vendor_view');
+            // Get current vendor ID from hidden field
+            let curVendId = (vendIdEl?.value || '').trim();
+            let curVendName = vendViewEl?.textContent?.trim() || '';
+            // If no ID but have name, try to look up ID from name (backward compat)
+            if (!curVendId && curVendName) {
+              curVendId = vendMap[curVendName] || '';
+            }
+            // Build options - if current vendor ID not in list, add it with name as display
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(`<select>${vendOpts}</select>`, 'text/html');
+            const hasCur = curVendId && Array.from(doc.querySelectorAll('option')).some(o => o.value === curVendId);
+            const displayName = vendIdToName[curVendId + '_display'] || vendIdToName[curVendId] || curVendName || curVendId;
+            vendNameSel.innerHTML = (curVendId && !hasCur ? `<option value="${curVendId.replace(/"/g,'&quot;')}" data-name="${(curVendName||'').replace(/"/g,'&quot;')}">${displayName.replace(/</g,'&lt;')}</option>` : '') + vendOpts;
+            enhanceSearch(vendNameSel);
+            if (curVendId) setSelectValue(vendNameSel, curVendId);
+          }
+          const debSaveHeader = debounce(saveHeader, 200);
+          const syncProp = () => {
+            if (!propId || !propNameSel) return;
+            const name = (propNameSel.value || '').trim();
+            if (!name) return; // don't overwrite existing ID when nothing is selected
+            const newId = propMap[name] || '';
+            const oldId = propId.value || '';
+            if (newId !== oldId) { propId.value = newId; }
+            const vEl = document.getElementById('hdr_enrichedpropertyname_view');
+            if (vEl) vEl.textContent = name;
+            debSaveHeader();
+          };
+          const syncVend = () => {
+            if (vendId && vendNameSel){
+              // Vendor select now uses ID as value
+              const selectedId = vendNameSel.value || '';
+              if (selectedId) { vendId.value = selectedId; }
+              // Set vendorCode based on vendor ID
+              const mappedCode = selectedId ? (vendIdToCode[String(selectedId)] || '') : '';
+              const vendorName = vendIdToName[String(selectedId)] || '';
+              console.log('[syncVend Debug] vendId:', selectedId, 'vendorName:', vendorName, 'mappedCode:', mappedCode);
+              if (vendCode) { vendCode.value = mappedCode; }
+              const vEl = document.getElementById('hdr_vendor_view');
+              // Show vendor name (not ID) in the view
+              if (vEl) vEl.textContent = vendorName || '';
+              debSaveHeader();
+            }
+          };
+          if (propNameSel){ propNameSel.addEventListener('change', syncProp); }
+          if (vendNameSel){ vendNameSel.addEventListener('change', syncVend); syncVend(); }
+          // header selects are searchable via Choices.js
+
+          // Line selects initializer (reused for existing and newly added/duplicated lines)
+          function initLineSelects(line){
+            if (!line) return;
+            // Ensure controls are selects (in case created as inputs for new lines)
+            const ensureSelect = (line, name, dataOrig) => {
+              let el = line.querySelector(`select[name="${name}"]`);
+              if (!el){
+                const input = line.querySelector(`input[name="${name}"]`);
+                if (input){
+                  const sel = document.createElement('select');
+                  sel.name = name; if (dataOrig != null) sel.setAttribute('data-orig', dataOrig);
+                  sel.setAttribute('data-search','1');
+                  input.parentElement.replaceChild(sel, input);
+                  el = sel;
+                }
+              }
+              return el;
+            };
+
+            const glSel = ensureSelect(line, 'EnrichedGLAccountNumber', line.querySelector('input[name="EnrichedGLAccountNumber"]')?.getAttribute('data-orig')) || line.querySelector('select[name="EnrichedGLAccountNumber"]');
+            const glNameSel = ensureSelect(line, 'EnrichedGLAccountName', line.querySelector('input[name="EnrichedGLAccountName"]')?.getAttribute('data-orig')) || line.querySelector('select[name="EnrichedGLAccountName"]');
+            const utilSel = ensureSelect(line, 'Utility Type', line.querySelector('input[name="Utility Type"]')?.getAttribute('data-orig')) || line.querySelector('select[name="Utility Type"]');
+            const hovSel = ensureSelect(line, 'House Or Vacant', line.querySelector('input[name="House Or Vacant"]')?.getAttribute('data-orig')) || line.querySelector('select[name="House Or Vacant"]');
+
+            if (glSel){
+              const cur = (glSel.value || glSel.getAttribute('data-orig') || '').trim();
+              const esc2 = (s) => String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+              if (cur && !(cur in glNumToName)){
+                glSel.innerHTML = `<option value="${esc2(cur)}">${esc2(cur)}</option>` + glOpts;
+              } else {
+                glSel.innerHTML = glOpts;
+              }
+              enhanceSearch(glSel);
+              setSelectValue(glSel, cur || glSel.value || '');
+            }
+            if (glNameSel){
+              const curNm = (glNameSel.value || glNameSel.getAttribute('data-orig') || '').trim();
+              const esc2 = (s) => String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+              if (curNm && !(curNm in glNameToNum)){
+                glNameSel.innerHTML = `<option value="${esc2(curNm)}">${esc2(curNm)}</option>` + glNameOpts;
+              } else {
+                glNameSel.innerHTML = glNameOpts;
+              }
+              enhanceSearch(glNameSel);
+              setSelectValue(glNameSel, curNm || glNameSel.value || '');
+            }
+            if (utilSel){
+              const curU = (utilSel.value || utilSel.getAttribute('data-orig') || '').trim();
+              const curUTitle = toTitle(curU);
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(`<select>${utilOpts}</select>`, 'text/html');
+              const hasCur = Array.from(doc.querySelectorAll('option')).some(o => (o.value||'').toLowerCase() === curUTitle.toLowerCase());
+              utilSel.innerHTML = (curU && !hasCur ? `<option value="${curUTitle.replace(/"/g,'&quot;')}">${curUTitle.replace(/</g,'&lt;')}</option>` : '') + utilOpts;
+              enhanceSearch(utilSel);
+              setSelectValue(utilSel, curUTitle || utilSel.value || '');
+            }
+            if (hovSel){
+              const esc2 = (s) => String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+              const cur = (hovSel.value || hovSel.getAttribute('data-orig') || '').trim();
+              const opts = ['','House','Vacant'];
+              hovSel.innerHTML = opts.map(v => `<option value="${esc2(v)}">${esc2(v)}</option>`).join('');
+              setSelectValue(hovSel, cur || '');
+            }
+            // Sync both ways
+            if (glSel && glNameSel){
+              const isVacantName = (s) => /\bvacant\b/i.test(String(s||''));
+              const pickOptionByText = (sel, text) => {
+                if (!sel || !text) return false;
+                const t = String(text).trim().toLowerCase();
+                const opt = Array.from(sel.options).find(o => (o.text||'').trim().toLowerCase() === t);
+                if (opt){ setSelectValue(sel, opt.value); return true; }
+                return false;
+              };
+              const syncFromNum = () => {
+                const key = (glSel.value||'').trim();
+                const nm = glNumToName[key];
+                if (nm) setSelectValue(glNameSel, nm);
+                // Also update GL ID hidden field for charge code mapping
+                const idField = line.querySelector('input[name="EnrichedGLAccountID"]');
+                const mappedId = (window._glNumToId||{})[key] || '';
+                if (idField && mappedId) idField.value = mappedId;
+                // House/Vacant follows GL Name: only 'Vacant' terms flip to Vacant
+                const hov = line.querySelector('select[name="House Or Vacant"]');
+                if (hov){ setSelectValue(hov, isVacantName(glNameSel.value||nm) ? 'Vacant' : 'House'); }
+                saveDraft(line);
+              };
+              const syncFromName = () => {
+                const nm = (glNameSel.value||'').trim();
+                const num = glNameToNum[nm];
+                if (num) setSelectValue(glSel, num);
+                // Also update GL ID hidden field for charge code mapping
+                const idField = line.querySelector('input[name="EnrichedGLAccountID"]');
+                const mappedId = (window._glNumToId||{})[num] || '';
+                if (idField && mappedId) idField.value = mappedId;
+                const hov = line.querySelector('select[name="House Or Vacant"]');
+                if (hov){ setSelectValue(hov, isVacantName(nm) ? 'Vacant' : 'House'); }
+                saveDraft(line);
+              };
+              glSel.addEventListener('change', syncFromNum);
+              glNameSel.addEventListener('change', syncFromName);
+              if (glSel.value && !glNameSel.value) syncFromNum();
+              if (glNameSel.value && !glSel.value) syncFromName();
+
+              // When House/Vacant changes, gently steer GL Name, but only switch to Vacant names when Vacant selected
+              const hovSel = line.querySelector('select[name="House Or Vacant"]');
+              if (hovSel){
+                const toTitle = (s) => String(s||'').toLowerCase().replace(/\b\w/g, c=>c.toUpperCase());
+                const houseForVacant = {
+                  'Vacant Electric': 'House Electric',
+                  'Vacant Gas': 'Gas',
+                  'Vacant Water': 'Water',
+                  'Vacant Sewer': 'Sewer',
+                  'Vacant Activation': ''
+                };
+                hovSel.addEventListener('change', () => {
+                  const val = (hovSel.value||'').trim();
+                  const curName = (glNameSel.value||'').trim();
+                  if (val === 'Vacant'){
+                    // Try to pick a Vacant GL aligned to current name or utility
+                    const util = toTitle(line.querySelector('select[name="Utility Type"]')?.value || '');
+                    const candidates = [
+                      `Vacant ${util}`,
+                      curName.replace(/^House\s+/i,'Vacant '),
+                      curName.startsWith('Vacant ') ? curName : ''
+                    ].filter(Boolean);
+                    for (const c of candidates){ if (pickOptionByText(glNameSel, c)) { syncFromName(); return; } }
+                    // Fallback: pick first Vacant* option available
+                    const anyVac = Array.from(glNameSel.options).map(o=>o.text||'').find(t=>/\bvacant\b/i.test(t));
+                    if (anyVac){ pickOptionByText(glNameSel, anyVac); syncFromName(); }
+                  } else {
+                    // House selected: if current is a Vacant* name, try to map back
+                    if (isVacantName(curName)){
+                      const mapped = houseForVacant[curName] || curName.replace(/^Vacant\s+/i,'').replace(/^Electric$/i,'House Electric');
+                      if (mapped){ if (pickOptionByText(glNameSel, mapped)) { syncFromName(); return; } }
+                    }
+                    // Otherwise do not force change; keep non-vacant selection
+                    saveDraft(line);
+                  }
+                });
+              }
+            }
+            // When utility type changes, update GL Account based on House/Vacant + Utility
+            if (utilSel){ utilSel.addEventListener('change', () => {
+              try {
+                const hv = line.querySelector('select[name="House Or Vacant"]');
+                const hvVal = (hv?.value || hv?.getAttribute('data-orig') || 'HOUSE').toUpperCase();
+                applyHVGL(line, hvVal);
+              } catch(_) {}
+              saveDraft(line);
+            }); }
+            if (hovSel){ hovSel.addEventListener('change', () => saveDraft(line)); }
+          }
+
+          // Initialize existing lines now
+          document.querySelectorAll('.line').forEach(initLineSelects);
+          // Expose initializer for dynamically added/duplicated lines
+          window.initLineSelects = initLineSelects;
+          // IMPORTANT: re-apply header and line drafts after options/Choices are in place
+          // Then finally enable autosave by setting _loadingDrafts = false
+          try {
+            if (typeof loadAllDraftsBatch === 'function') {
+              loadAllDraftsBatch().finally(() => {
+                _loadingDrafts = false;  // NOW safe to enable autosave after drafts applied to populated selects
+                console.log('[review] Draft loading complete, autosave enabled');
+              });
+            } else {
+              _loadingDrafts = false;
+            }
+          } catch(_){ _loadingDrafts = false; }
+        }).catch(() => {
+          // Fallback: build datalists from current page DOM values so user still sees choices
+          const propList = document.getElementById('propList');
+          const vendList = document.getElementById('vendList');
+          const glList = document.getElementById('glList');
+          const utilList = document.getElementById('utilList');
+          const seen = new Set();
+          function addOpt(list, val){ if (!list || !val) return; if (seen.has(list.id+val)) return; const o=document.createElement('option'); o.value = val; list.appendChild(o); seen.add(list.id+val); }
+          const pn = document.getElementById('propName')?.value?.trim(); addOpt(propList, pn);
+          const vn = document.getElementById('vendName')?.value?.trim(); addOpt(vendList, vn);
+          document.querySelectorAll('input[name="EnrichedGLAccountNumber"]').forEach(i => addOpt(glList, i.value.trim()));
+          document.querySelectorAll('input[name="Utility Type"]').forEach(i => addOpt(utilList, (i.value||'').trim().toUpperCase()));
+          try{ console.log('[review] initOptions: done (fallback)'); }catch(_){ }
+          // After options are populated, re-apply drafts to ensure selects pick saved values
+          // Then enable autosave
+          try {
+            if (typeof loadAllDraftsBatch === 'function') {
+              loadAllDraftsBatch().finally(() => {
+                _loadingDrafts = false;  // Enable autosave after drafts applied
+                console.log('[review] Draft loading complete (fallback), autosave enabled');
+              });
+            } else {
+              _loadingDrafts = false;
+            }
+          } catch(_){ _loadingDrafts = false; }
+        })
+        .catch(err => {
+          try{ console.error('[review] initOptions failed', err); }catch(_){ }
+          _loadingDrafts = false;  // Safety: ensure autosave is eventually enabled even on errors
+        });
+    }
+    window.initOptions = initOptions;
+
+    // --- Helpers for dynamically added lines ---
+    function bindLineAutosave(line){
+      if (!line) return;
+      if (!debouncedSaves.has(line)) debouncedSaves.set(line, debounce(saveDraft, 250));
+      const saver = debouncedSaves.get(line);
+      line.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', e => saver(e.target.closest('.line')));
+        inp.addEventListener('input', e => saver(e.target.closest('.line')));
+        // Update total when Line Item Charge changes
+        if (inp.name === 'Line Item Charge'){
+          inp.addEventListener('input', updateLineItemsTotal);
+          inp.addEventListener('change', updateLineItemsTotal);
+        }
+      });
+      line.querySelectorAll('select').forEach(sel => {
+        sel.addEventListener('change', e => saver(e.target.closest('.line')));
+      });
+    }
+
+    function renumberLines(){
+      let n = 1;
+      document.querySelectorAll('.line .line-num').forEach(el => { el.textContent = 'Line #' + (n++); });
+    }
+
+    // Calculate and update line items total
+    function updateLineItemsTotal(){
+      let total = 0;
+      const lines = document.querySelectorAll('.line:not([data-deleted="1"])');
+      lines.forEach(line => {
+        const chargeInput = line.querySelector('input[name="Line Item Charge"]');
+        if (chargeInput && chargeInput.value){
+          const val = parseFloat(String(chargeInput.value).replace(/[^0-9.-]/g, ''));
+          if (!isNaN(val)) total += val;
+        }
+      });
+      const display = document.getElementById('lineItemsTotal');
+      if (display){
+        display.textContent = '$' + total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      }
+    }
+
+    // Force specific selects in a line to be native and interactive
+    function forceNativeLineSelects(line){
+      if (!line) return;
+      const htmls = window._optHTML || {};
+      const rebuild = (selectorName, html) => {
+        try{
+          // Always target the original hidden select, then remove its Choices wrapper sibling
+          const oldSel = line.querySelector(`select[name="${selectorName}"]`);
+          if (!oldSel) return null;
+          let wrapper = null;
+          // The Choices wrapper is typically the next sibling
+          if (oldSel.nextElementSibling && oldSel.nextElementSibling.classList && oldSel.nextElementSibling.classList.contains('choices')){
+            wrapper = oldSel.nextElementSibling;
+          } else {
+            // Fallback: search nearby
+            wrapper = line.querySelector(`.choices ~ select[name="${selectorName}"]`) ? line.querySelector('.choices') : line.querySelector('.choices');
+            if (wrapper && !wrapper.parentElement) wrapper = null;
+          }
+          const fresh = document.createElement('select');
+          fresh.setAttribute('name', selectorName);
+          fresh.innerHTML = html || '<option value=""></option>';
+          try{ fresh.removeAttribute('hidden'); fresh.removeAttribute('data-search'); }catch(_){ }
+          try{ fresh.disabled = false; fresh.readOnly = false; fresh.tabIndex = 0; }catch(_){ }
+          // Insert fresh right before wrapper (if present) to keep layout stable, then remove both old pieces
+          if (wrapper && wrapper.parentElement){ wrapper.parentElement.insertBefore(fresh, wrapper); }
+          else { oldSel.parentElement && oldSel.parentElement.insertBefore(fresh, oldSel); }
+          try{ oldSel.remove(); }catch(_){ }
+          try{ wrapper && wrapper.remove(); }catch(_){ }
+          return fresh;
+        }catch(_){ return null; }
+      };
+      const numSel = rebuild('EnrichedGLAccountNumber', htmls.glOpts);
+      const nameSel = rebuild('EnrichedGLAccountName', htmls.glNameOpts);
+      const utilSel = rebuild('Utility Type', htmls.utilOpts);
+      const saver = (ln => () => saveDraft(ln))(line);
+      if (numSel) numSel.addEventListener('change', saver);
+      if (nameSel) nameSel.addEventListener('change', saver);
+      // When utility type changes, update GL Account based on House/Vacant + Utility
+      if (utilSel) utilSel.addEventListener('change', () => {
+        try {
+          const hovSel = line.querySelector('select[name="House Or Vacant"]');
+          const hvVal = (hovSel?.value || hovSel?.getAttribute('data-orig') || 'HOUSE').toUpperCase();
+          applyHVGL(line, hvVal);
+        } catch(_) {}
+        saver();
+      });
+      setTimeout(() => { try{ line.querySelectorAll('.choices').forEach(x => x.remove()); }catch(_){ } }, 0);
+    }
+
+    // Jump to a specific page in the PDF viewer
+    function jumpToPage(pageNum) {
+      const pdfFrame = document.getElementById('pdfFrame');
+      if (!pdfFrame || !pdfFrame.src) return;
+      // Update iframe URL with page parameter
+      // Most PDF viewers support #page=N fragment
+      let currentSrc = pdfFrame.src;
+      // Remove any existing hash fragment (not just #page=N)
+      currentSrc = currentSrc.replace(/#.*$/, '');
+      // Add page parameter
+      pdfFrame.src = currentSrc + '#page=' + pageNum;
+      // Scroll PDF viewer into view for better UX
+      pdfFrame.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Create a new empty line based on first line structure
+    function addLine(){
+      const first = document.querySelector('.line');
+      const container = document.getElementById('lines');
+      if (!first || !container){ alert('No template line to duplicate.'); return; }
+      const clone = first.cloneNode(true);
+      clone.setAttribute('data-new','1');
+      clone.removeAttribute('data-orig-id');
+      clone.setAttribute('data-line-id', 'new-' + Date.now());
+      // clear inputs
+      clone.querySelectorAll('input[type=text]').forEach(i => { i.value = ''; i.setAttribute('data-orig', ''); });
+      // clear readonly display divs inside .field (they show cloned values otherwise)
+      clone.querySelectorAll('.field > div:not(.lbl)').forEach(d => {
+        // Don't clear the label div, only the value display div
+        if (!d.classList.contains('lbl') && !d.querySelector('input') && !d.querySelector('select')) {
+          d.textContent = '';
+        }
+      });
+      // reset picks
+      const pick = clone.querySelector('.line-pick'); if (pick) pick.checked = false;
+      // reset page badge for new lines (no page metadata for user-added lines)
+      const pageBadge = clone.querySelector('.page-badge');
+      if (pageBadge) {
+        pageBadge.classList.add('no-page');
+        pageBadge.setAttribute('title', 'Page info not available');
+        pageBadge.removeAttribute('onclick');
+        pageBadge.innerHTML = '<span class="page-icon">📄</span>—';
+      }
+      clone.setAttribute('data-page-start', '0');
+      clone.setAttribute('data-page-end', '0');
+      clone.setAttribute('data-chunk', '0');
+      // Remove Choices.js wrappers but preserve/recreate the select elements inside
+      clone.querySelectorAll('.choices').forEach(wrapper => {
+        try {
+          const sel = wrapper.querySelector('select');
+          if (sel) {
+            // Clone the select (without Choices.js attributes) and insert after wrapper
+            const freshSel = document.createElement('select');
+            freshSel.name = sel.name;
+            freshSel.setAttribute('data-orig', '');
+            if (sel.hasAttribute('data-search')) freshSel.setAttribute('data-search', '1');
+            wrapper.parentElement.insertBefore(freshSel, wrapper);
+          }
+          wrapper.remove();
+        } catch(_) { wrapper.remove(); }
+      });
+      // reset any remaining selects to empty
+      clone.querySelectorAll('select').forEach(s => { try { s.value=''; s.setAttribute('data-orig', ''); } catch(_) {} });
+      // mount
+      container.appendChild(clone);
+      // re-init selects with options and sync listeners (don't use forceNativeLineSelects - it breaks sync)
+      if (window.initLineSelects) window.initLineSelects(clone);
+      bindLineAutosave(clone);
+      renumberLines();
+      updateLineItemsTotal();
+    }
+
+    function duplicateSelectedLines(){
+      const picks = getSelectedLines();
+      if (!picks.length){ alert('Select at least one line to duplicate.'); return; }
+      const container = document.getElementById('lines');
+      picks.forEach(src => {
+        // Capture current values from source BEFORE cloning (Choices.js may hide actual select value)
+        const srcValues = {};
+        ['EnrichedGLAccountNumber', 'EnrichedGLAccountName', 'Utility Type', 'House Or Vacant'].forEach(name => {
+          const sel = src.querySelector(`select[name="${name}"]`);
+          if (sel) srcValues[name] = sel.value || sel.getAttribute('data-orig') || '';
+        });
+        src.querySelectorAll('input[type="text"]').forEach(inp => {
+          if (inp.name) srcValues[inp.name] = inp.value || '';
+        });
+
+        const dup = src.cloneNode(true);
+        dup.setAttribute('data-new','1');
+        dup.removeAttribute('data-orig-id');
+        dup.setAttribute('data-line-id', 'new-' + Date.now() + '-' + Math.floor(Math.random()*1000));
+        // keep values, but uncheck picker
+        const pick = dup.querySelector('.line-pick'); if (pick) pick.checked = false;
+        // reset page badge for duplicated lines (no page metadata for user-added lines)
+        const pageBadge = dup.querySelector('.page-badge');
+        if (pageBadge) {
+          pageBadge.classList.add('no-page');
+          pageBadge.setAttribute('title', 'Page info not available');
+          pageBadge.removeAttribute('onclick');
+          pageBadge.innerHTML = '<span class="page-icon">📄</span>—';
+        }
+        dup.setAttribute('data-page-start', '0');
+        dup.setAttribute('data-page-end', '0');
+        dup.setAttribute('data-chunk', '0');
+        // Remove Choices.js wrappers but preserve/recreate the select elements inside
+        dup.querySelectorAll('.choices').forEach(wrapper => {
+          try {
+            const sel = wrapper.querySelector('select');
+            if (sel) {
+              const freshSel = document.createElement('select');
+              freshSel.name = sel.name;
+              freshSel.setAttribute('data-orig', sel.getAttribute('data-orig') || '');
+              if (sel.hasAttribute('data-search')) freshSel.setAttribute('data-search', '1');
+              wrapper.parentElement.insertBefore(freshSel, wrapper);
+            }
+            wrapper.remove();
+          } catch(_) { wrapper.remove(); }
+        });
+        container.appendChild(dup);
+        // re-init selects with options and sync listeners (don't use forceNativeLineSelects - it breaks sync)
+        if (window.initLineSelects) window.initLineSelects(dup);
+
+        // Restore captured values AFTER rebuild
+        Object.keys(srcValues).forEach(name => {
+          const val = srcValues[name];
+          if (!val) return;
+          const sel = dup.querySelector(`select[name="${name}"]`);
+          if (sel) { setSelectValue(sel, val); return; }
+          const inp = dup.querySelector(`input[name="${name}"]`);
+          if (inp) inp.value = val;
+        });
+
+        bindLineAutosave(dup);
+      });
+      renumberLines();
+      updateLineItemsTotal();
+      clearAllLineChecks();
+    }
+
+    // Reset selected lines to their original values (from data-orig)
+    function resetSelected(){
+      const picks = getSelectedLines();
+      if (!picks.length){ alert('Select at least one line to reset.'); return; }
+      picks.forEach(line => {
+        // Un-delete if previously marked deleted
+        if (line.hasAttribute('data-deleted')){
+          line.removeAttribute('data-deleted');
+          line.style.opacity = '';
+          // Re-enable all controls that were disabled
+          line.querySelectorAll('input,select,button,textarea').forEach(el => {
+            try { el.disabled = false; } catch(_){ }
+          });
+        }
+        // For inputs
+        line.querySelectorAll('input[type=text]').forEach(inp => {
+          if (inp.hasAttribute('data-orig')){
+            inp.value = inp.getAttribute('data-orig') || '';
+          }
+        });
+        // For selects (Choices-aware)
+        line.querySelectorAll('select').forEach(sel => {
+          const orig = sel.getAttribute('data-orig');
+          if (orig != null){ setSelectValue(sel, orig); }
+        });
+        // Persist reset via autosave
+        saveDraft(line);
+      });
+      updateLineItemsTotal();
+      clearAllLineChecks();
+    }
+
+    // Delete selected lines: remove brand-new ones, mark existing originals as deleted
+    function deleteSelectedLines(){
+      const picks = getSelectedLines();
+      if (!picks.length){ alert('Select at least one line to delete.'); return; }
+      const container = document.getElementById('lines');
+      picks.forEach(line => {
+        if (line.hasAttribute('data-new')){
+          // entirely remove brand-new, unsaved lines
+          if (container) container.removeChild(line);
+          return;
+        }
+        // mark original line as deleted and disable controls (but keep checkbox enabled for undelete)
+        line.setAttribute('data-deleted','1');
+        line.style.opacity = '0.5';
+        line.querySelectorAll('input,select,button,textarea').forEach(el => {
+          try {
+            // Keep checkbox enabled so user can select and reset/undelete
+            if (el.classList.contains('line-pick')) return;
+            el.disabled = true;
+          } catch(_){ }
+        });
+        // persist deletion to draft for this line
+        saveDraft(line);
+      });
+      renumberLines();
+      updateLineItemsTotal();
+      clearAllLineChecks();
+    }
+
+    // Fallback: if something stops the loadHeader->initOptions path, ensure catalogs still fetch
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => { if (!window._catalogsLoaded && !window._optionsInitStarted) try { initOptions(); } catch(_){} }, 800);
+    });
+
+    function getSelectedLines(){
+      return Array.from(document.querySelectorAll('.line')).filter(l => l.querySelector('.line-pick')?.checked);
+    }
+
+    function clearAllLineChecks(){
+      document.querySelectorAll('.line-pick').forEach(cb => { cb.checked = false; });
+    }
+
+    function selectAllLines(){
+      document.querySelectorAll('.line-pick').forEach(cb => { cb.checked = true; });
+    }
+
+    // === BULK GL ASSIGNMENT ===
+    let allGLAccounts = [];
+
+    function loadGLAccountsForBulk() {
+      allGLAccounts = (window._catalogData?.gl_accounts || []);
+    }
+
+    function showBulkGLModal() {
+      const picks = getSelectedLines();
+      if (!picks.length) {
+        alert('Please select at least one line item first.');
+        return;
+      }
+      if (!allGLAccounts.length) loadGLAccountsForBulk();
+      if (!allGLAccounts.length) {
+        alert('GL accounts are still loading. Please wait a moment and try again.');
+        return;
+      }
+      document.getElementById('bulkGLCount').textContent = picks.length;
+      document.getElementById('bulkGLSearch').value = '';
+      document.getElementById('selectedGLNumber').value = '';
+      document.getElementById('selectedGLName').value = '';
+      document.getElementById('selectedGLId').value = '';
+      renderBulkGLList('');
+      document.getElementById('bulkGLModal').style.display = 'flex';
+    }
+
+    function closeBulkGLModal() {
+      document.getElementById('bulkGLModal').style.display = 'none';
+    }
+
+    function filterBulkGLList(query) {
+      renderBulkGLList(query);
+    }
+
+    function renderBulkGLList(filter) {
+      const lc = (filter || '').toLowerCase();
+      const filtered = allGLAccounts.filter(gl => {
+        if (!lc) return true;
+        const num = (gl.number || '').toLowerCase();
+        const name = (gl.name || '').toLowerCase();
+        return num.includes(lc) || name.includes(lc);
+      });
+      const container = document.getElementById('bulkGLList');
+      if (!filtered.length) {
+        container.innerHTML = '<div style="padding:10px;color:#666">No matching GL accounts</div>';
+        return;
+      }
+      // HTML escape for display text
+      const escHtml = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      // Use data attributes instead of inline onclick to avoid escaping issues
+      container.innerHTML = filtered.map((gl, idx) => {
+        const numDisplay = escHtml(gl.number || '(no number)');
+        const nameDisplay = escHtml(gl.name || '(no name)');
+        return `<div class="bulk-gl-item" data-idx="${idx}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #eee"><strong>${numDisplay}</strong> - ${nameDisplay}</div>`;
+      }).join('');
+      // Attach click handlers via event delegation to avoid escaping issues
+      container.querySelectorAll('.bulk-gl-item').forEach(el => {
+        el.onclick = function() {
+          const idx = parseInt(this.dataset.idx, 10);
+          const gl = filtered[idx];
+          if (gl) selectBulkGL(this, gl.number || '', gl.name || '', gl.id || '');
+        };
+      });
+    }
+
+    function selectBulkGL(el, number, name, id) {
+      document.querySelectorAll('.bulk-gl-item').forEach(item => { item.style.background = ''; });
+      el.style.background = '#e3f2fd';
+      document.getElementById('selectedGLNumber').value = number;
+      document.getElementById('selectedGLName').value = name;
+      document.getElementById('selectedGLId').value = id || '';
+    }
+
+    // Extract House/Vacant from GL name
+    function _glNameToHouseVacant(glName) {
+      return /\bvacant\b/i.test(glName || '') ? 'Vacant' : 'House';
+    }
+
+    // Extract Utility Type from GL name - comprehensive mapping for all GL accounts
+    function _glNameToUtilType(glName) {
+      const name = (glName || '').toLowerCase().trim();
+      if (!name) return '';
+
+      // Electric variants: House Electric, Vacant Electric, Bundled Resident Electric
+      if (/electric/i.test(name)) return 'Electricity';
+
+      // Gas variants: Gas, Vacant Gas
+      if (/\bgas\b/i.test(name)) return 'Gas';
+
+      // Water variants: Water, Vacant Water, Water- Irrigation, Water - Fire Lines
+      // Check water first, but not irrigation alone
+      if (/\bwater\b/i.test(name)) return 'Water';
+
+      // Sewer variants: Sewer, Vacant Sewer
+      if (/\bsewer\b/i.test(name)) return 'Sewer';
+
+      // Trash variants: Trash Removal, Valet Trash, Bulk Trash Pickup
+      if (/\btrash\b/i.test(name)) return 'Trash';
+
+      // Stormwater / Drainage
+      if (/\bstorm/i.test(name)) return 'Stormwater';
+      if (/\bdrainage\b/i.test(name)) return 'Stormwater';
+      if (/\birrigation\b/i.test(name) && !/water/i.test(name)) return 'Stormwater';
+
+      // Other utility-adjacent accounts (may not have exact utility type match)
+      if (/\bcable\b/i.test(name) || /\btv\b/i.test(name)) return 'Cable';
+      if (/\bphone/i.test(name) || /\btelephone/i.test(name)) return 'Telephone';
+
+      // Vacant Activation is a special case - Electric activation fee
+      if (/\bactivation\b/i.test(name)) return 'Electricity';
+
+      // City Fee - Utility, Deposits - Utility, Penalties - no clear utility type
+      // Leave empty so we don't override what the user already has
+      return '';
+    }
+
+    function applyBulkGL() {
+      const glNumber = document.getElementById('selectedGLNumber').value;
+      const glName = document.getElementById('selectedGLName').value;
+      const glId = document.getElementById('selectedGLId').value;
+      if (!glNumber && !glName) {
+        alert('Please select a GL account first.');
+        return;
+      }
+      const picks = getSelectedLines();
+      if (!picks.length) {
+        closeBulkGLModal();
+        return;
+      }
+
+      // Derive House/Vacant and Utility Type from the GL name
+      const derivedHV = _glNameToHouseVacant(glName);
+      const derivedUtil = _glNameToUtilType(glName);
+
+      picks.forEach(lineBox => {
+        const numSel = lineBox.querySelector('select[name="EnrichedGLAccountNumber"]');
+        if (numSel && glNumber) {
+          setSelectValue(numSel, glNumber);
+        }
+        const nameSel = lineBox.querySelector('select[name="EnrichedGLAccountName"]');
+        if (nameSel && glName) {
+          setSelectValue(nameSel, glName);
+        }
+        const idField = lineBox.querySelector('input[name="EnrichedGLAccountID"]');
+        if (idField && glId) {
+          idField.value = glId;
+        }
+        // Auto-set House/Vacant based on GL name
+        const hvSel = lineBox.querySelector('select[name="House Or Vacant"]');
+        if (hvSel && derivedHV) {
+          setSelectValue(hvSel, derivedHV);
+        }
+        // Auto-set Utility Type based on GL name
+        const utilSel = lineBox.querySelector('select[name="Utility Type"]');
+        if (utilSel && derivedUtil) {
+          setSelectValue(utilSel, derivedUtil);
+        }
+        saveDraft(lineBox);
+      });
+      clearAllLineChecks();
+      closeBulkGLModal();
+      alert(`GL assigned to ${picks.length} line(s). House/Vacant: ${derivedHV}${derivedUtil ? ', Utility: ' + derivedUtil : ''}`);
+    }
+    // === END BULK GL ASSIGNMENT ===
+
+    // Toggle minimize/expand for a line item
+    function toggleMinimize(btn){
+      try{
+        const line = btn.closest('.line');
+        if (!line) return;
+        const isMinimized = line.getAttribute('data-minimized') === '1';
+        if (isMinimized){
+          line.removeAttribute('data-minimized');
+          btn.textContent = 'Minimize';
+        } else {
+          line.setAttribute('data-minimized', '1');
+          btn.textContent = 'Expand';
+        }
+      }catch(_){ }
+    }
+
+    // --- Header draft helpers (ensure defined before used) ---
+    const headerBox = document.getElementById('headerBox');
+    let lastHeaderSig = '';
+    function collectHeader(){
+      const fields = {};
+      if (headerBox){
+        headerBox.querySelectorAll('input').forEach(i => fields[i.name] = i.value);
+        headerBox.querySelectorAll('select').forEach(s => {
+          // For vendor select: value is ID, but we save NAME for EnrichedVendorName
+          if (s.name === 'EnrichedVendorName') {
+            const vendId = s.value || '';
+            const vendName = (window._vendIdToName || {})[vendId] || '';
+            fields[s.name] = vendName;
+          } else {
+            fields[s.name] = s.value;
+          }
+        });
+      }
+      return fields;
+    }
+    async function saveHeader(){
+      // Skip autosave while loading drafts to prevent overwriting __final__ drafts with stale S3 values
+      if (_loadingDrafts) return;
+      try{
+        const payload = {
+          pdf_id: document.querySelector('.line')?.getAttribute('data-pdf-id') || '',
+          line_id: '__header__',
+          date: dateVal,
+          invoice: invoiceVal,
+          fields: collectHeader()
+        };
+        const sig = JSON.stringify(payload.fields);
+        if (sig === lastHeaderSig) return; // no change
+        const resp = await fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        if (resp.ok) lastHeaderSig = sig;
+      }catch(_){ }
+    }
+
+    async function manualSaveHeader(){
+      const btn = document.getElementById('saveHeaderBtn');
+      const status = document.getElementById('headerSaveStatus');
+      try{
+        btn.disabled = true;
+        status.textContent = 'Saving...';
+        status.style.color = '#666';
+        const payload = {
+          pdf_id: document.querySelector('.line')?.getAttribute('data-pdf-id') || '',
+          line_id: '__header__',
+          date: dateVal,
+          invoice: invoiceVal,
+          fields: collectHeader()
+        };
+        const resp = await fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        if (resp.ok) {
+          lastHeaderSig = JSON.stringify(payload.fields);
+          status.textContent = 'Saved!';
+          status.style.color = '#28a745';
+          setTimeout(() => { status.textContent = ''; }, 2000);
+        } else {
+          status.textContent = 'Save failed';
+          status.style.color = '#dc3545';
+        }
+      }catch(e){
+        status.textContent = 'Error: ' + e.message;
+        status.style.color = '#dc3545';
+      }finally{
+        btn.disabled = false;
+      }
+    }
+
+    async function loadHeader(){
+      const first = document.querySelector('.line');
+      if (!first) return;
+      const pdf_id = first.getAttribute('data-pdf-id');
+      const r = await fetch(`/api/drafts?pdf_id=${encodeURIComponent(pdf_id)}&line_id=${encodeURIComponent('__header__')}`, { credentials: 'same-origin' });
+      const j = await r.json();
+      if (j && j.draft && j.draft.fields) {
+        // Get vendor ID from draft fields for mapping name -> ID
+        const draftVendorId = j.draft.fields['EnrichedVendorID'] || '';
+        for (const [k,v] of Object.entries(j.draft.fields)) {
+          const inp = headerBox.querySelector(`input[name="${k}"]`);
+          // Map to actual view ids for vendor fields
+          const viewId = (k === 'EnrichedVendorName') ? 'hdr_vendor_view'
+                        : (k === 'EnrichedVendorID') ? 'hdr_vendorid_view'
+                        : `hdr_${k.replaceAll(' ','_').toLowerCase()}_view`;
+          const view = document.getElementById(viewId);
+          if (inp && v != null && String(v).trim() !== '') inp.value = v;
+          const sel = headerBox.querySelector(`select[name="${k}"]`);
+          if (sel && v != null && String(v).trim() !== '') {
+            // For vendor select: draft has NAME but select uses ID as value
+            if (k === 'EnrichedVendorName' && draftVendorId) {
+              setSelectValue(sel, draftVendorId);
+            } else {
+              setSelectValue(sel, v);
+            }
+          }
+          if (view && v != null && String(v).trim() !== '') view.textContent = v;
+        }
+        lastHeaderSig = JSON.stringify(j.draft.fields||{});
+      }
+    }
+    headerBox.querySelectorAll('input').forEach(inp => { if (!inp.dataset.bound){ inp.addEventListener('change', saveHeader); inp.dataset.bound='1'; }});
+    headerBox.querySelectorAll('select').forEach(sel => { if (!sel.dataset.bound){ sel.addEventListener('change', saveHeader); sel.dataset.bound='1'; }});
+    // Defer options init until header draft is applied
+    (async ()=>{ try { await loadHeader(); } finally { if (window.initOptions) window.initOptions(); } })();
+
+    async function submitAll(ev){
+      ev.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      const form = document.getElementById('submitForm');
+      const toast = document.getElementById('submitToast');
+      const body = document.getElementById('toastBody');
+
+      // CRITICAL: Block submit while page is still loading - select values may be corrupt
+      if (_loadingDrafts) {
+        alert('Please wait - page is still loading. Try again in a moment.');
+        console.warn('[submitAll] Blocked submit while _loadingDrafts=true');
+        return;
+      }
+
+      // Force-flush any pending draft changes to the server before computing ids/extras
+      try { await saveAllDrafts(); } catch(_){ }
+
+      // Validate required header fields (Bill Date, Service Period Start/End)
+      const requiredHeaderErrors = [];
+      const bpsInput = document.getElementById('hdr_bps_input') || document.querySelector('input[name="Bill Period Start"]');
+      const bpeInput = document.getElementById('hdr_bpe_input') || document.querySelector('input[name="Bill Period End"]');
+      const bdInput = document.getElementById('hdr_bd_input') || document.querySelector('input[name="Bill Date"]');
+
+      const bpsVal = (bpsInput?.value || '').trim();
+      const bpeVal = (bpeInput?.value || '').trim();
+      const bdVal = (bdInput?.value || '').trim();
+
+      if (!bpsVal) {
+        requiredHeaderErrors.push('Bill Period Start is required');
+        if (bpsInput) bpsInput.style.border = '2px solid #ef4444';
+      } else if (bpsInput) {
+        bpsInput.style.border = '';
+      }
+
+      if (!bpeVal) {
+        requiredHeaderErrors.push('Bill Period End is required');
+        if (bpeInput) bpeInput.style.border = '2px solid #ef4444';
+      } else if (bpeInput) {
+        bpeInput.style.border = '';
+      }
+
+      if (!bdVal) {
+        requiredHeaderErrors.push('Bill Date is required');
+        if (bdInput) bdInput.style.border = '2px solid #ef4444';
+      } else if (bdInput) {
+        bdInput.style.border = '';
+      }
+
+      // Date format validation - must be MM/DD/YYYY
+      function isValidDateFormat(dateStr) {
+        if (!dateStr) return true; // Empty is OK (handled by required check)
+        const regex = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
+        if (!regex.test(dateStr)) return false;
+        // Also validate it's a real date
+        const [mm, dd, yyyy] = dateStr.split('/').map(Number);
+        const testDate = new Date(yyyy, mm - 1, dd);
+        return testDate.getMonth() === mm - 1 && testDate.getDate() === dd;
+      }
+
+      const dateFormatErrors = [];
+      const ddInput = document.querySelector('input[name="Due Date"]');
+      const ddVal = (ddInput?.value || '').trim();
+
+      if (bpsVal && !isValidDateFormat(bpsVal)) {
+        dateFormatErrors.push('Bill Period Start must be MM/DD/YYYY format (e.g., 01/15/2025)');
+        if (bpsInput) bpsInput.style.border = '2px solid #ef4444';
+      }
+      if (bpeVal && !isValidDateFormat(bpeVal)) {
+        dateFormatErrors.push('Bill Period End must be MM/DD/YYYY format (e.g., 02/15/2025)');
+        if (bpeInput) bpeInput.style.border = '2px solid #ef4444';
+      }
+      if (bdVal && !isValidDateFormat(bdVal)) {
+        dateFormatErrors.push('Bill Date must be MM/DD/YYYY format (e.g., 01/20/2025)');
+        if (bdInput) bdInput.style.border = '2px solid #ef4444';
+      }
+      if (ddVal && !isValidDateFormat(ddVal)) {
+        dateFormatErrors.push('Due Date must be MM/DD/YYYY format (e.g., 02/01/2025)');
+        if (ddInput) ddInput.style.border = '2px solid #ef4444';
+      }
+
+      if (dateFormatErrors.length > 0) {
+        alert('Cannot submit - Invalid date format:\n\n' + dateFormatErrors.join('\n') + '\n\nAll dates must be MM/DD/YYYY (with leading zeros).');
+        btn.disabled = false; btn.textContent = 'Submit';
+        return;
+      }
+
+      if (requiredHeaderErrors.length > 0) {
+        alert('Cannot submit - Required fields missing:\n\n' + requiredHeaderErrors.join('\n') + '\n\nPlease fill in all required fields before submitting.');
+        btn.disabled = false; btn.textContent = 'Submit';
+        return;
+      }
+
+      // Validate Line Item Charge values before submit
+      const validationErrors = [];
+      const allLines = Array.from(document.querySelectorAll('.line'));
+      allLines.forEach((line, idx) => {
+        // Skip deleted lines
+        if (line.hasAttribute('data-deleted')) return;
+
+        const chargeInput = line.querySelector('input[name="Line Item Charge"]');
+        if (!chargeInput) return;
+
+        const chargeVal = chargeInput.value.trim();
+        const lineNum = line.querySelector('.line-num')?.textContent?.trim() || `Line ${idx + 1}`;
+
+        // Check if empty
+        if (!chargeVal) {
+          validationErrors.push(`${lineNum}: Line Item Charge is empty`);
+          chargeInput.style.border = '2px solid #ef4444';
+          return;
+        }
+
+        // Check if it's a valid number (allow negative, decimals, but no other characters)
+        const cleanedVal = chargeVal.replace(/,/g, '').replace(/^\$/, ''); // Remove commas and leading $ for validation
+        const numVal = parseFloat(cleanedVal);
+
+        if (isNaN(numVal)) {
+          validationErrors.push(`${lineNum}: Line Item Charge "${chargeVal}" is not a valid number`);
+          chargeInput.style.border = '2px solid #ef4444';
+          return;
+        }
+
+        // Check if zero
+        if (numVal === 0) {
+          validationErrors.push(`${lineNum}: Line Item Charge cannot be $0.00`);
+          chargeInput.style.border = '2px solid #ef4444';
+          return;
+        }
+
+        // Valid - reset border
+        chargeInput.style.border = '';
+      });
+
+      // If validation errors, block submit entirely
+      if (validationErrors.length > 0) {
+        const errorList = validationErrors.slice(0, 10).join('\n');
+        const moreMsg = validationErrors.length > 10 ? `\n...and ${validationErrors.length - 10} more issues` : '';
+        alert(`Cannot submit - Line Item Charge validation errors:\n\n${errorList}${moreMsg}\n\nPlease fix these issues before submitting.`);
+        return;
+      }
+
+      const allOrigIds = [];
+      const deletedIds = [];
+      const boxes = allLines;
+      const total = boxes.length;
+      const missing = [];
+      const extras = [];
+      boxes.forEach(b => {
+        const oid = b.getAttribute('data-orig-id');
+        if (oid){
+          allOrigIds.push(oid);
+          if (b.hasAttribute('data-deleted')) deletedIds.push(oid);
+        } else if (b.hasAttribute('data-new')) {
+          // collect new line fields
+          const obj = {};
+          b.querySelectorAll('input[type=text]').forEach(i => obj[i.name] = i.value);
+          extras.push(obj);
+        } else {
+          // derive a friendly line label
+          const numEl = b.querySelector('.line-num');
+          const label = numEl ? numEl.textContent.trim() : (b.getAttribute('data-line-id') || 'unknown');
+          missing.push(label);
+        }
+      });
+      document.getElementById('idsField').value = allOrigIds.join('|||');
+      // attach extras JSON as hidden field for submit
+      let extrasField = document.getElementById('extrasField');
+      if (!extrasField){ extrasField = document.createElement('input'); extrasField.type='hidden'; extrasField.name='extras'; extrasField.id='extrasField'; form.appendChild(extrasField); }
+      extrasField.value = JSON.stringify(extras);
+      // attach deleted_ids as separate hidden field for backend to update status but exclude from merged
+      let delField = document.getElementById('deletedIdsField');
+      if (!delField){ delField = document.createElement('input'); delField.type='hidden'; delField.name='deleted_ids'; delField.id='deletedIdsField'; form.appendChild(delField); }
+      delField.value = deletedIds.join('|||');
+      btn.disabled = true; btn.textContent = 'Submitting…';
+      let shouldReEnable = true;
+      try{
+        const fd = new FormData(form);
+        const r = await fetch('/api/submit', { method:'POST', body: fd });
+        const j = await r.json();
+        if (r.ok && j && j.ok){
+          // Redirect immediately - no toast needed for success
+          // Keep button disabled during redirect
+          shouldReEnable = false;
+          window.location.href = `/invoices?date=${encodeURIComponent(dateVal)}&cb=${Date.now()}`;
+          return;
+        } else if (j && j.error === 'missing_units' && j.missing_units && j.missing_units.length > 0) {
+          // Show modal for user to enter apartment/unit numbers
+          // Keep button disabled while modal is shown
+          shouldReEnable = false;
+          showUnitModal(j.missing_units, form, btn);
+          return; // Don't show toast, modal handles it
+        } else {
+          body.innerHTML = `<div class="err"><strong>Failed.</strong></div><pre style="white-space:pre-wrap">${(j && (j.error||JSON.stringify(j))) || 'Unknown error'}</pre>`;
+          toast.classList.add('show');
+        }
+      }catch(e){
+        body.innerHTML = `<div class="err"><strong>Error.</strong></div><pre style="white-space:pre-wrap">${e}</pre>`;
+        toast.classList.add('show');
+      } finally {
+        if (shouldReEnable) {
+          btn.disabled = false; btn.textContent = 'Submit';
+        }
+      }
+      return false;
+    }
+
+    // --- Missing Unit Numbers Modal ---
+    function showUnitModal(missingUnits, form, btn) {
+      const modal = document.getElementById('unitModal');
+      const bodyEl = document.getElementById('unitModalBody');
+      const cancelBtn = document.getElementById('cancelUnitModal');
+      const submitBtn = document.getElementById('submitUnitModal');
+
+      // Build form inputs for each missing line
+      let html = '';
+      missingUnits.forEach((item, idx) => {
+        const desc = item.line_description || 'Unknown';
+        const charge = item.line_charge ? `$${parseFloat(item.line_charge).toFixed(2)}` : '';
+        const addr = item.service_address || 'No address';
+        const meter = item.meter_number || '';
+        const glName = item.gl_name || '';
+
+        html += `
+          <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;background:#f8fafc">
+            <div style="font-weight:600;margin-bottom:4px">${desc} ${charge}</div>
+            <div style="font-size:12px;color:#64748b;margin-bottom:4px">
+              Address: ${addr}<br>
+              GL: ${glName}${meter ? ' | Meter: ' + meter : ''}
+            </div>
+            <label style="display:block;margin-top:8px;font-weight:500">
+              Apartment/Unit Number <span style="font-weight:normal;color:#64748b">(leave blank if none)</span>:
+              <input type="text" class="unit-input" data-line-id="${item.line_id}"
+                     style="width:100%;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:4px"
+                     placeholder="e.g., 101, A, 2B or leave blank" />
+            </label>
+          </div>
+        `;
+      });
+      bodyEl.innerHTML = html;
+
+      // Show modal
+      modal.style.display = 'flex';
+
+      // Handle cancel
+      const hideModal = () => {
+        modal.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = 'Submit';
+      };
+      cancelBtn.onclick = hideModal;
+      modal.onclick = (e) => { if (e.target === modal) hideModal(); };
+
+      // Handle submit with unit numbers
+      submitBtn.onclick = async () => {
+        // Collect unit overrides (empty values allowed - user confirms no unit)
+        const overrides = {};
+        document.querySelectorAll('#unitModalBody .unit-input').forEach(inp => {
+          const lineId = inp.getAttribute('data-line-id');
+          const val = inp.value.trim();
+          // Store value even if empty - empty means "confirmed no unit"
+          overrides[lineId] = val;
+        });
+
+        // Hide modal and re-submit
+        modal.style.display = 'none';
+        btn.disabled = true;
+        btn.textContent = 'Submitting...';
+
+        // Add unit_overrides to form
+        let overridesField = document.getElementById('unitOverridesField');
+        if (!overridesField) {
+          overridesField = document.createElement('input');
+          overridesField.type = 'hidden';
+          overridesField.name = 'unit_overrides';
+          overridesField.id = 'unitOverridesField';
+          form.appendChild(overridesField);
+        }
+        overridesField.value = JSON.stringify(overrides);
+
+        // Re-submit
+        try {
+          const fd = new FormData(form);
+          const r = await fetch('/api/submit', { method: 'POST', body: fd });
+          const j = await r.json();
+          const toast = document.getElementById('submitToast');
+          const toastBody = document.getElementById('toastBody');
+
+          if (r.ok && j && j.ok) {
+            toastBody.innerHTML = `<div class="ok"><strong>Submitted successfully with unit numbers.</strong></div>
+                     <div style="margin-top:8px">Pre-Entrata: <code>${j.preentrata_key}</code></div>
+                     <div id="liveStatus" class="muted" style="margin-top:10px">Redirecting to invoice list...</div>`;
+            toast.classList.add('show');
+            setTimeout(() => {
+              window.location.href = `/invoices?date=${encodeURIComponent(dateVal)}&cb=${Date.now()}`;
+            }, 2500);
+          } else if (j && j.error === 'missing_units') {
+            // Still have missing units - show modal again
+            showUnitModal(j.missing_units, form, btn);
+          } else {
+            toastBody.innerHTML = `<div class="err"><strong>Failed.</strong></div><pre style="white-space:pre-wrap">${(j && (j.error || JSON.stringify(j))) || 'Unknown error'}</pre>`;
+            toast.classList.add('show');
+          }
+        } catch (e) {
+          const toast = document.getElementById('submitToast');
+          const toastBody = document.getElementById('toastBody');
+          toastBody.innerHTML = `<div class="err"><strong>Error.</strong></div><pre style="white-space:pre-wrap">${e}</pre>`;
+          toast.classList.add('show');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Submit';
+        }
+      };
+    }
+
+    // --- Resizable PDF panel ---
+    (function enableResizer(){
+      const root = document.documentElement;
+      const grid = document.querySelector('.row');
+      const leftCard = grid ? grid.children[0] : null;
+      const resizer = document.getElementById('resizer');
+      if (!grid || !leftCard || !resizer) return;
+      // restore saved width
+      const saved = localStorage.getItem('review_leftW');
+      if (saved) root.style.setProperty('--leftW', saved);
+      let dragging = false; let startX = 0;
+      resizer.addEventListener('mousedown', (e) => {
+        dragging = true; startX = e.clientX; document.body.style.cursor = 'col-resize'; e.preventDefault();
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rect = grid.getBoundingClientRect();
+        const leftRect = leftCard.getBoundingClientRect();
+        const minLeft = 320; // px
+        const maxLeft = Math.max(600, rect.width - 600 - 40); // leave room for right min + gaps
+        let newW = Math.min(maxLeft, Math.max(minLeft, leftRect.width + (e.clientX - startX)));
+        root.style.setProperty('--leftW', newW + 'px');
+        startX = e.clientX;
+      });
+      window.addEventListener('mouseup', () => {
+        if (!dragging) return; dragging = false; document.body.style.cursor='';
+        const val = getComputedStyle(root).getPropertyValue('--leftW').trim();
+        localStorage.setItem('review_leftW', val);
+      });
+    })();
+
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+
+    // -------- Invoice Timing Tracker --------
+    (function(){
+      // Get invoice ID from the first line's pdf_id or fall back to account+date
+      const firstLine = document.querySelector('.line[data-pdf-id]');
+      const invoiceId = firstLine ? firstLine.getAttribute('data-pdf-id') : '{{ account }}_{{ date }}';
+
+      if (!invoiceId) {
+        console.log('[TIMING] No invoice ID found, timing disabled');
+        return;
+      }
+
+      let sessionStartTime = Date.now();
+      let totalPreviousSeconds = 0;
+      let heartbeatInterval = null;
+      let displayInterval = null;
+
+      // Format seconds as M:SS or H:MM:SS
+      function formatTime(totalSeconds) {
+        const hours = Math.floor(totalSeconds / 3600);
+        const mins = Math.floor((totalSeconds % 3600) / 60);
+        const secs = Math.floor(totalSeconds % 60);
+        if (hours > 0) {
+          return `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+      }
+
+      // Update the timer display
+      function updateDisplay() {
+        const currentSessionSeconds = Math.floor((Date.now() - sessionStartTime) / 1000);
+        const totalSeconds = totalPreviousSeconds + currentSessionSeconds;
+        const timerEl = document.getElementById('timerValue');
+        if (timerEl) {
+          timerEl.textContent = formatTime(totalSeconds);
+        }
+      }
+
+      // Start timing session
+      async function startTiming() {
+        try {
+          // First get existing timing to show accumulated time
+          const getResp = await fetch(`/api/timing/${encodeURIComponent(invoiceId)}`, { credentials: 'same-origin' });
+          if (getResp.ok) {
+            const data = await getResp.json();
+            totalPreviousSeconds = data.total_seconds || 0;
+          }
+
+          // Start the timing session
+          await fetch(`/api/timing/${encodeURIComponent(invoiceId)}/start`, {
+            method: 'POST',
+            credentials: 'same-origin'
+          });
+
+          sessionStartTime = Date.now();
+          updateDisplay();
+
+          // Update display every second
+          displayInterval = setInterval(updateDisplay, 1000);
+
+          // Send heartbeat every 30 seconds
+          heartbeatInterval = setInterval(async () => {
+            try {
+              await fetch(`/api/timing/${encodeURIComponent(invoiceId)}/heartbeat`, {
+                method: 'POST',
+                credentials: 'same-origin'
+              });
+            } catch (e) {
+              console.log('[TIMING] Heartbeat failed:', e);
+            }
+          }, 30000);
+
+          console.log('[TIMING] Started timing for invoice:', invoiceId);
+        } catch (e) {
+          console.log('[TIMING] Start failed:', e);
+        }
+      }
+
+      // Stop timing session
+      async function stopTiming() {
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        if (displayInterval) clearInterval(displayInterval);
+
+        try {
+          const resp = await fetch(`/api/timing/${encodeURIComponent(invoiceId)}/stop`, {
+            method: 'POST',
+            credentials: 'same-origin'
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            console.log('[TIMING] Stopped. Total minutes:', data.total_minutes);
+          }
+        } catch (e) {
+          console.log('[TIMING] Stop failed:', e);
+        }
+      }
+
+      // Start timing when page loads
+      startTiming();
+
+      // Stop timing when page unloads
+      window.addEventListener('beforeunload', () => {
+        // Use sendBeacon for reliable delivery during unload
+        navigator.sendBeacon(`/api/timing/${encodeURIComponent(invoiceId)}/stop`);
+      });
+
+      // Also stop on visibility change (user switches tabs)
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          // Page is hidden - send heartbeat to save progress
+          fetch(`/api/timing/${encodeURIComponent(invoiceId)}/heartbeat`, {
+            method: 'POST',
+            credentials: 'same-origin'
+          }).catch(() => {});
+        }
+      });
+    })();
+
+    // === KEYBOARD NAVIGATION FOR HEADER + LINE MINIMIZE ===
+    (function() {
+      // Get header summary (the triangle toggle) and all line minimize buttons
+      function getHeaderSummary() {
+        return document.querySelector('#headerBox > summary');
+      }
+      function getMinimizeButtons() {
+        return Array.from(document.querySelectorAll('#lines .line .minimize-btn'));
+      }
+
+      // Focus header summary (triangle) when page loads
+      setTimeout(() => {
+        const summary = getHeaderSummary();
+        if (summary) {
+          summary.focus();
+        }
+      }, 500);
+
+      // Handle keyboard events
+      document.addEventListener('keydown', function(e) {
+        // Ctrl+D = Delete selected lines (works anywhere)
+        if (e.ctrlKey && e.key === 'd') {
+          e.preventDefault();
+          deleteSelectedLines();
+          return;
+        }
+
+        // Escape = Jump to first line minimize button (re-enter keyboard nav flow)
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          const btns = getMinimizeButtons();
+          if (btns.length > 0) {
+            btns[0].focus();
+            btns[0].closest('.line')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          return;
+        }
+
+        const active = document.activeElement;
+        const summary = getHeaderSummary();
+        const btns = getMinimizeButtons();
+
+        // Helper to focus and scroll line into view
+        function focusAndScroll(btn) {
+          btn.focus();
+          const line = btn.closest('.line');
+          if (line) {
+            line.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+
+        // If focused on header summary
+        if (active && active.tagName === 'SUMMARY' && active.closest('#headerBox')) {
+          if (e.key === 'Enter') {
+            // Let browser handle toggle (default behavior)
+            return;
+          } else if (e.key === 'Tab' && !e.shiftKey) {
+            // Tab from header -> first line minimize button
+            e.preventDefault();
+            if (btns.length > 0) {
+              focusAndScroll(btns[0]);
+            }
+          }
+          return;
+        }
+
+        const submitBtn = document.getElementById('submitBtn');
+
+        // If focused on Submit button
+        if (active && active.id === 'submitBtn') {
+          if (e.key === 'Tab' && e.shiftKey) {
+            // Shift+Tab from Submit -> last minimize button
+            e.preventDefault();
+            if (btns.length > 0) {
+              focusAndScroll(btns[btns.length - 1]);
+            }
+          }
+          // Enter will naturally submit the form
+          return;
+        }
+
+        // If focused on a minimize button
+        if (!active || !active.classList.contains('minimize-btn')) return;
+
+        const idx = btns.indexOf(active);
+        if (idx === -1) return;
+
+        if (e.key === 'Enter') {
+          // Toggle minimize on the focused button
+          e.preventDefault();
+          toggleMinimize(active);
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          // Delete the line
+          e.preventDefault();
+          const line = active.closest('.line');
+          if (line) {
+            // Focus next or previous button before deleting
+            const nextIdx = idx + 1;
+            const prevIdx = idx - 1;
+            const newBtns = getMinimizeButtons();
+
+            // Delete the line using same logic as deleteSelectedLines
+            const container = document.getElementById('lines');
+            if (line.hasAttribute('data-new')) {
+              // Brand-new unsaved line - remove entirely
+              if (container) container.removeChild(line);
+            } else {
+              // Mark original line as deleted (keep checkbox enabled for undelete)
+              line.setAttribute('data-deleted', '1');
+              line.style.opacity = '0.5';
+              line.querySelectorAll('input,select,button,textarea').forEach(el => {
+                try {
+                  if (el.classList.contains('line-pick')) return;
+                  el.disabled = true;
+                } catch(_) {}
+              });
+              saveDraft(line);
+            }
+            renumberLines();
+            updateLineItemsTotal();
+
+            // Focus next available button
+            const remainingBtns = getMinimizeButtons();
+            if (remainingBtns.length > 0) {
+              const focusIdx = Math.min(idx, remainingBtns.length - 1);
+              focusAndScroll(remainingBtns[focusIdx]);
+            } else if (submitBtn) {
+              submitBtn.focus();
+            }
+          }
+        } else if (e.key === 'Tab' && !e.shiftKey) {
+          // Move to next minimize button, or to Submit if at the end
+          e.preventDefault();
+          const nextIdx = idx + 1;
+          if (nextIdx < btns.length) {
+            focusAndScroll(btns[nextIdx]);
+          } else if (submitBtn) {
+            // Last minimize button -> go to Submit
+            submitBtn.focus();
+            submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        } else if (e.key === 'Tab' && e.shiftKey) {
+          // Move to previous minimize button, or back to header summary
+          e.preventDefault();
+          const prevIdx = idx - 1;
+          if (prevIdx >= 0) {
+            focusAndScroll(btns[prevIdx]);
+          } else if (summary) {
+            summary.focus();
+            summary.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+      });
+    })();
+
+    // === PDF PAGE NAVIGATION ===
+    (function() {
+      let pdfCurrentPage = 1;
+      const pdfFrame = document.getElementById('pdfFrame');
+
+      // Show current page in helper text
+      function updatePageDisplay() {
+        const helper = document.getElementById('pdfHelper');
+        if (helper) {
+          helper.innerHTML = `Page ${pdfCurrentPage} <span style="color:#94a3b8">(press \` for next, ~ for previous)</span>`;
+        }
+      }
+
+      // Navigate PDF to specific page using URL fragment
+      function goToPage(page) {
+        if (page < 1) page = 1;
+        pdfCurrentPage = page;
+        if (pdfFrame && pdfFrame.src) {
+          // Remove existing page fragment and add new one
+          const baseUrl = pdfFrame.src.split('#')[0];
+          pdfFrame.src = baseUrl + '#page=' + page;
+        }
+        updatePageDisplay();
+      }
+
+      // Initialize page display once frame loads
+      if (pdfFrame) {
+        pdfFrame.addEventListener('load', () => {
+          setTimeout(updatePageDisplay, 500);
+        });
+      }
+
+      // Global keyboard listener for PDF navigation
+      document.addEventListener('keydown', function(e) {
+        // Don't trigger if user is typing in an input/textarea/select
+        const tag = document.activeElement.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+        if (e.key === '`') {
+          // Next page
+          e.preventDefault();
+          goToPage(pdfCurrentPage + 1);
+        } else if (e.key === '~') {
+          // Previous page
+          e.preventDefault();
+          goToPage(pdfCurrentPage - 1);
+        }
+      });
+    })();
+
+    // === KNOWLEDGE BASE INTEGRATION ===
+    // Loads and displays relevant knowledge notes for current vendor/property
+    (function initKnowledgePanel() {
+      let lastVendorId = '';
+      let lastPropertyId = '';
+
+      async function loadKnowledge() {
+        const vendNameSel = document.getElementById('vendName');
+        const propNameSel = document.getElementById('propName');
+        const propIdField = document.getElementById('propId');
+        const kbBody = document.getElementById('kbBody');
+        const kbCount = document.getElementById('kbCount');
+
+        if (!kbBody) return;
+
+        // Get current vendor ID and property ID/name
+        const vendorId = vendNameSel?.value || '';
+        const vendorName = (window._vendIdToName || {})[vendorId] || '';
+        const propertyId = propIdField?.value || '';
+        const propertyName = propNameSel?.value || '';
+
+        // Skip if nothing changed
+        const cacheKey = `${vendorId}|${propertyId}`;
+        if (cacheKey === `${lastVendorId}|${lastPropertyId}`) return;
+        lastVendorId = vendorId;
+        lastPropertyId = propertyId;
+
+        // Skip if neither is set
+        if (!vendorId && !propertyId) {
+          kbBody.innerHTML = '<div class="kb-empty">Select a vendor or property to see relevant notes.</div>';
+          kbCount.style.display = 'none';
+          return;
+        }
+
+        try {
+          // Build query params - API accepts vendor_id, vendor_name, property_id, property_name
+          const params = new URLSearchParams();
+          if (vendorId) params.set('vendor_id', vendorId);
+          if (vendorName) params.set('vendor_name', vendorName);
+          if (propertyId) params.set('property_id', propertyId);
+          if (propertyName) params.set('property_name', propertyName);
+
+          const resp = await fetch('/api/knowledge/for-invoice?' + params.toString(), { credentials: 'same-origin' });
+          const data = await resp.json();
+
+          if (!data.notes || data.notes.length === 0) {
+            const vendorName = (window._vendIdToName || {})[vendorId] || vendorId;
+            kbBody.innerHTML = `<div class="kb-empty">No knowledge found for this vendor/property. <a href="/knowledge-base" target="_blank">Add some</a></div>`;
+            kbCount.style.display = 'none';
+            return;
+          }
+
+          // Show count badge
+          kbCount.textContent = data.notes.length;
+          kbCount.style.display = 'inline';
+
+          // Render notes
+          const escHtml = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const catLabel = cat => ({
+            'billing_pattern': 'Billing Pattern',
+            'expected_values': 'Expected Values',
+            'common_issues': 'Common Issues',
+            'special_rules': 'Special Rules',
+            'gl_mapping': 'GL Mapping',
+            'gotchas': 'Gotchas',
+            'contacts': 'Contacts'
+          }[cat] || cat);
+
+          kbBody.innerHTML = data.notes.map(n => `
+            <div class="kb-note">
+              <div class="kb-note-header">
+                <span class="kb-note-entity">${escHtml(n.entity_name || n.entity_id)}<span class="kb-category">${escHtml(catLabel(n.category))}</span></span>
+                <span class="kb-note-meta">${n.confidence === 'high' ? '++' : n.confidence === 'medium' ? '+' : '?'} ${escHtml(n.author)}</span>
+              </div>
+              <div class="kb-note-content">${escHtml(n.content)}</div>
+            </div>
+          `).join('');
+
+        } catch (err) {
+          console.error('[Knowledge] Error loading:', err);
+          kbBody.innerHTML = '<div class="kb-empty">Error loading knowledge notes.</div>';
+          kbCount.style.display = 'none';
+        }
+      }
+
+      // Expose globally so we can call from other places
+      window.loadKnowledge = loadKnowledge;
+
+      // Load knowledge when vendor/property selects change
+      const vendNameSel = document.getElementById('vendName');
+      const propNameSel = document.getElementById('propName');
+      if (vendNameSel) vendNameSel.addEventListener('change', loadKnowledge);
+      if (propNameSel) propNameSel.addEventListener('change', loadKnowledge);
+
+      // Load on expand of knowledge panel
+      const kbPanel = document.getElementById('knowledgePanel');
+      if (kbPanel) {
+        kbPanel.addEventListener('toggle', function() {
+          if (this.open) loadKnowledge();
+        });
+      }
+
+      // Initial load after a delay (wait for vendor/property to be set)
+      setTimeout(loadKnowledge, 1500);
+
+      // === AI Review Functions ===
+      async function loadAiSuggestion() {
+        const aiBody = document.getElementById('aiBody');
+        const aiLoading = document.getElementById('aiLoading');
+        const aiContent = document.getElementById('aiContent');
+        const aiConfidence = document.getElementById('aiConfidence');
+        const aiVerdict = document.getElementById('aiVerdict');
+        const aiReasoning = document.getElementById('aiReasoning');
+
+        if (!aiBody) return;
+
+        // Get pdf_id from first line item
+        const firstLine = document.querySelector('.line[data-pdf-id]');
+        const pdfId = firstLine?.getAttribute('data-pdf-id');
+        if (!pdfId) {
+          aiLoading.textContent = 'No bill data found.';
+          return;
+        }
+
+        // Get date from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const date = urlParams.get('date') || '';
+
+        try {
+          // First check if we have a cached suggestion
+          const checkResp = await fetch(`/api/ai-review/suggestion/${pdfId}`, { credentials: 'same-origin' });
+          const cachedData = await checkResp.json();
+
+          let data;
+          if (cachedData.found) {
+            data = cachedData;
+          } else {
+            // Trigger new analysis
+            const analyzeResp = await fetch(`/api/ai-review/analyze?pdf_id=${pdfId}&date=${date}`, {
+              method: 'POST',
+              credentials: 'same-origin'
+            });
+            data = await analyzeResp.json();
+          }
+
+          if (data.error) {
+            aiLoading.textContent = 'AI review unavailable.';
+            return;
+          }
+
+          // Hide loading, show content
+          aiLoading.style.display = 'none';
+          aiContent.style.display = 'block';
+
+          // Update confidence and show Gemini badge if used
+          const conf = data.auto_pass_confidence || 0;
+          const usedGemini = (data.analyzed_by || '').includes('gemini');
+          aiConfidence.innerHTML = `${conf}% confidence` + (usedGemini ? ' <span style="background:#10b981;color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:4px">+Gemini</span>' : '');
+
+          // Update verdict
+          if (data.would_auto_pass) {
+            aiVerdict.textContent = 'WOULD AUTO-PASS';
+            aiVerdict.className = 'ai-verdict pass';
+          } else {
+            aiVerdict.textContent = 'NEEDS REVIEW';
+            aiVerdict.className = 'ai-verdict review';
+          }
+          aiVerdict.style.display = 'inline';
+
+          // Render garbage lines
+          const garbageSection = document.getElementById('aiGarbageSection');
+          const garbageFlags = document.getElementById('aiGarbageFlags');
+          const garbage = data.garbage_lines || [];
+          if (garbage.length > 0) {
+            garbageSection.style.display = 'block';
+            garbageFlags.innerHTML = garbage.map(g => `
+              <div class="ai-flag garbage">
+                <span class="ai-flag-icon">🗑️</span>
+                <div>
+                  <div><strong>${escHtml(g.description || 'Unknown')}</strong> — $${(g.charge || 0).toFixed(2)}</div>
+                  <div style="font-size:11px;color:#9ca3af">Reason: ${g.reason} (${(g.confidence * 100).toFixed(0)}% confident)</div>
+                  ${g.line_id ? `<button class="ai-action" onclick="highlightLine('${g.line_id}')">Show Line</button>` : ''}
+                </div>
+              </div>
+            `).join('');
+          }
+
+          // Render historical flags
+          const historySection = document.getElementById('aiHistorySection');
+          const historyFlags = document.getElementById('aiHistoryFlags');
+          const history = data.historical_flags || [];
+          if (history.length > 0) {
+            historySection.style.display = 'block';
+            historyFlags.innerHTML = history.map(h => `
+              <div class="ai-flag history">
+                <span class="ai-flag-icon">📈</span>
+                <div>${escHtml(h)}</div>
+              </div>
+            `).join('');
+          }
+
+          // Render knowledge flags
+          const knowledgeSection = document.getElementById('aiKnowledgeSection');
+          const knowledgeFlags = document.getElementById('aiKnowledgeFlags');
+          const knowledge = data.knowledge_flags || [];
+          if (knowledge.length > 0) {
+            knowledgeSection.style.display = 'block';
+            knowledgeFlags.innerHTML = knowledge.map(k => `
+              <div class="ai-flag knowledge">
+                <span class="ai-flag-icon">📝</span>
+                <div>${escHtml(k)}</div>
+              </div>
+            `).join('');
+          }
+
+          // Show clean message if no issues
+          const cleanMsg = document.getElementById('aiCleanMessage');
+          if (garbage.length === 0 && history.length === 0 && knowledge.length === 0) {
+            cleanMsg.style.display = 'block';
+          }
+
+          // Show reasoning
+          if (data.ai_reasoning) {
+            aiReasoning.textContent = data.ai_reasoning;
+          }
+
+        } catch (err) {
+          console.error('[AI Review] Error:', err);
+          aiLoading.textContent = 'AI review failed to load.';
+        }
+      }
+
+      // Helper to escape HTML
+      function escHtml(s) {
+        return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      // Helper to highlight a line by line_id
+      window.highlightLine = function(lineId) {
+        const line = document.querySelector(`.line[data-line-id="${lineId}"]`);
+        if (line) {
+          line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          line.style.outline = '3px solid #7c3aed';
+          line.style.outlineOffset = '2px';
+          setTimeout(() => {
+            line.style.outline = '';
+            line.style.outlineOffset = '';
+          }, 3000);
+        }
+      };
+
+      // Load AI suggestion on panel toggle
+      const aiPanel = document.getElementById('aiPanel');
+      if (aiPanel) {
+        aiPanel.addEventListener('toggle', function() {
+          if (this.open) loadAiSuggestion();
+        });
+      }
+
+      // Also load AI suggestion after a delay (after page fully loads)
+      setTimeout(loadAiSuggestion, 2000);
+
+      // === Add Knowledge Modal Functions ===
+      window.openAddKnowledgeModal = function() {
+        const vendNameSel = document.getElementById('vendName');
+        const propNameSel = document.getElementById('propName');
+        const vendorId = vendNameSel?.value || '';
+        const vendorName = (window._vendIdToName || {})[vendorId] || vendorId;
+        const propertyName = propNameSel?.value || '';
+
+        if (!vendorId) {
+          alert('Please select a vendor first.');
+          return;
+        }
+
+        // Update display
+        const display = document.getElementById('kbEntityDisplay');
+        display.innerHTML = `<strong>Vendor:</strong> ${vendorName}` +
+          (propertyName ? `<br><strong>Property:</strong> ${propertyName}` : '');
+
+        // Reset form
+        document.getElementById('kbEntityScope').value = 'vendor';
+        document.getElementById('kbCategory').value = 'common_issues';
+        document.getElementById('kbContent').value = '';
+
+        // Show modal
+        document.getElementById('knowledgeModal').style.display = 'flex';
+      };
+
+      window.closeKnowledgeModal = function() {
+        document.getElementById('knowledgeModal').style.display = 'none';
+      };
+
+      window.saveKnowledgeNote = async function() {
+        const vendNameSel = document.getElementById('vendName');
+        const propNameSel = document.getElementById('propName');
+        const propIdField = document.getElementById('propId');
+
+        const vendorId = vendNameSel?.value || '';
+        const vendorName = (window._vendIdToName || {})[vendorId] || vendorId;
+        const propertyId = propIdField?.value || '';
+        const propertyName = propNameSel?.value || '';
+
+        const scope = document.getElementById('kbEntityScope').value;
+        const category = document.getElementById('kbCategory').value;
+        const content = document.getElementById('kbContent').value.trim();
+
+        if (!content) {
+          alert('Please enter a note.');
+          return;
+        }
+
+        // Determine entity type and ID based on scope
+        let entityType, entityId, entityName;
+        if (scope === 'vendor') {
+          entityType = 'vendor';
+          entityId = vendorId;
+          entityName = vendorName;
+        } else {
+          // vendor_property - use account type with vendor|property key
+          entityType = 'account';
+          entityId = `${propertyId}|${vendorId}`;
+          entityName = `${vendorName} @ ${propertyName}`;
+        }
+
+        try {
+          const resp = await fetch('/api/knowledge', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entity_type: entityType,
+              entity_id: entityId,
+              entity_name: entityName,
+              category: category,
+              content: content,
+              confidence: 'medium'
+            })
+          });
+
+          const data = await resp.json();
+          if (data.error) {
+            alert('Error: ' + data.error);
+            return;
+          }
+
+          closeKnowledgeModal();
+          loadKnowledge(); // Refresh the knowledge panel
+
+          // Show success toast
+          const toast = document.getElementById('improveToast');
+          if (toast) {
+            toast.textContent = 'Knowledge note saved!';
+            toast.className = 'improve-toast ok show';
+            setTimeout(() => toast.classList.remove('show'), 2000);
+          }
+        } catch (err) {
+          alert('Error saving note: ' + err.message);
+        }
+      };
+
+      // Close modal on overlay click
+      document.getElementById('knowledgeModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closeKnowledgeModal();
+      });
+    })();
+  </script>
+
+<!-- Datalists for dropdowns -->
+<datalist id="propList"></datalist>
+<datalist id="vendList"></datalist>
+<datalist id="glList"></datalist>
+<datalist id="utilList"></datalist>
+</body>
+</html>

@@ -1,0 +1,46 @@
+﻿{
+    "FunctionName":  "jrk-email-ingest",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:jrk-email-ingest",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/service-role/jrk-email-ingest-role",
+    "Handler":  "lambda_email_ingest.handler",
+    "CodeSize":  2736,
+    "Description":  "",
+    "Timeout":  60,
+    "MemorySize":  256,
+    "LastModified":  "2025-10-07T23:41:03.000+0000",
+    "CodeSha256":  "tbvyg/K3GJCPSLcNERH53GY64sOh2tlL3RQyBi/hbO8=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "TARGET_BUCKET":  "jrk-email-partitioned-us-east-1",
+                                          "ATTACHMENTS_PREFIX_ROOT":  "attachments/",
+                                          "STORE_ATTACHMENTS":  "1",
+                                          "PARTITIONED_PREFIX_ROOT":  "emails/"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "5751bb11-a6b6-46cb-9abb-62ff0a4023bb",
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:4af3157c9dfde29be4e8f128147181e8978958ec7ddea506e754af7c3741a0a2"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/jrk-email-ingest"
+                      }
+}

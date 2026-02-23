@@ -1,0 +1,1 @@
+# boto3 is bundled in Lambda runtime — no external deps needed

@@ -1,0 +1,17 @@
+{
+  "Records": [
+    {
+      "ses": {
+        "mail": {
+          "messageId": "pra2tmdlttrp1a8eat1nin828iig0d26saagee81"
+        },
+        "receipt": {
+          "action": {
+            "bucketName": "jrk-email-raw-us-east-1",
+            "objectKeyPrefix": "bills/"
+          }
+        }
+      }
+    }
+  ]
+}

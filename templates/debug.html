@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Issue Tracker - Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.88); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 14px;border-radius:8px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px;font-weight:500}
+    .btn.secondary{background:#64748b}
+    .btn.success{background:#10b981}
+    .btn.danger{background:#ef4444}
+    .btn.small{padding:5px 10px;font-size:11px}
+    .wrap{max-width:1600px;margin:20px auto;padding:0 20px}
+
+    /* Tabs */
+    .tabs{display:flex;gap:4px;margin-bottom:16px}
+    .tab{padding:10px 20px;background:rgba(255,255,255,.3);border:none;color:#fff;cursor:pointer;border-radius:8px 8px 0 0;font-weight:600;font-size:14px}
+    .tab.active{background:var(--glass);color:#0f172a}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+
+    /* Stats Cards */
+    .stats-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+    .stat-card{background:var(--glass);backdrop-filter:blur(10px);border-radius:12px;padding:16px 20px;min-width:120px;flex:1}
+    .stat-card .num{font-size:28px;font-weight:700;color:#0ea5e9}
+    .stat-card .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+    .stat-card.open .num{color:#f59e0b}
+    .stat-card.progress .num{color:#3b82f6}
+    .stat-card.completed .num{color:#10b981}
+
+    /* Kanban Board */
+    .kanban{display:flex;gap:16px;overflow-x:auto;padding-bottom:10px}
+    .kanban-col{min-width:320px;max-width:350px;flex:1;background:var(--glass);backdrop-filter:blur(10px);border-radius:12px;display:flex;flex-direction:column;max-height:calc(100vh - 260px)}
+    .kanban-header{padding:14px 16px;border-bottom:1px solid #e5e7eb;font-weight:700;display:flex;justify-content:space-between;align-items:center}
+    .kanban-header .count{background:#e5e7eb;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+    .kanban-body{flex:1;overflow-y:auto;padding:12px}
+    .kanban-card{background:#fff;border-radius:10px;padding:12px 14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer;border-left:4px solid #cbd5e1}
+    .kanban-card.bug{border-left-color:#ef4444}
+    .kanban-card.feature{border-left-color:#10b981}
+    .kanban-card.enhancement{border-left-color:#8b5cf6}
+    .kanban-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.12)}
+    .kanban-card .title{font-weight:600;font-size:13px;margin-bottom:6px}
+    .kanban-card .meta{font-size:11px;color:#64748b;display:flex;gap:8px;flex-wrap:wrap}
+    .kanban-card .badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600}
+    .badge.critical{background:#fee2e2;color:#991b1b}
+    .badge.high{background:#fef3c7;color:#92400e}
+    .badge.medium{background:#e0e7ff;color:#3730a3}
+    .badge.low{background:#f3f4f6;color:#4b5563}
+    .badge.bug{background:#fee2e2;color:#991b1b}
+    .badge.feature{background:#d1fae5;color:#065f46}
+    .badge.enhancement{background:#ede9fe;color:#5b21b6}
+
+    /* Table View */
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08);padding:20px;margin-bottom:20px}
+    .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+    .filters select,.filters input{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #f1f5f9}
+    th{background:#f8fafc;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:#64748b}
+    tr:hover{background:#f8fafc}
+    .clickable{cursor:pointer}
+    select.inline{padding:4px 8px;font-size:12px;border:1px solid #e5e7eb;border-radius:6px}
+
+    /* Modal */
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:600px;width:calc(100% - 40px);max-height:calc(100vh - 80px);overflow-y:auto}
+    .modal-header{padding:20px 24px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
+    .modal-header h2{margin:0;font-size:18px}
+    .modal-body{padding:24px}
+    .modal-footer{padding:16px 24px;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end}
+    .form-group{margin-bottom:16px}
+    .form-group label{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
+    .form-group input,.form-group textarea,.form-group select{width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit}
+    .form-group textarea{min-height:80px;resize:vertical}
+    .form-row{display:flex;gap:12px}
+    .form-row .form-group{flex:1}
+
+    /* Weekly Report */
+    .report-preview{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:16px;font-family:monospace;font-size:13px;white-space:pre-wrap;max-height:400px;overflow-y:auto}
+    .week-selector{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+
+    /* Toast */
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* Completed section styling */
+    .completed-section{opacity:.7}
+    .completed-section .kanban-card{opacity:.8}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a> <span style="opacity:.7">/ Issue Tracker</span></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn success" onclick="openNewModal()">+ New Issue</button>
+      <a class="btn secondary" href="/">Home</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <!-- Stats Row -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card open"><div class="num" id="statOpen">-</div><div class="label">Open</div></div>
+      <div class="stat-card progress"><div class="num" id="statProgress">-</div><div class="label">In Progress</div></div>
+      <div class="stat-card completed"><div class="num" id="statCompleted">-</div><div class="label">Completed</div></div>
+      <div class="stat-card"><div class="num" id="statWeek">-</div><div class="label">This Week</div></div>
+      <div class="stat-card"><div class="num" id="statMonth">-</div><div class="label">This Month</div></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="kanban">Board</button>
+      <button class="tab" data-tab="table">All Issues</button>
+      <button class="tab" data-tab="report">Weekly Report</button>
+      <button class="tab" data-tab="releases">Releases</button>
+    </div>
+
+    <!-- Kanban View -->
+    <div class="tab-content active" id="kanban">
+      <div class="kanban">
+        <div class="kanban-col">
+          <div class="kanban-header">Open <span class="count" id="openCount">0</span></div>
+          <div class="kanban-body" id="colOpen"></div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-header">In Progress <span class="count" id="progressCount">0</span></div>
+          <div class="kanban-body" id="colProgress"></div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-header">Deferred <span class="count" id="deferredCount">0</span></div>
+          <div class="kanban-body" id="colDeferred"></div>
+        </div>
+        <div class="kanban-col completed-section">
+          <div class="kanban-header">Completed <span class="count" id="completedCount">0</span></div>
+          <div class="kanban-body" id="colCompleted"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table View -->
+    <div class="tab-content" id="table">
+      <div class="card">
+        <div class="filters">
+          <select id="filterStatus"><option value="">All Statuses</option><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Deferred">Deferred</option><option value="Rejected">Rejected</option></select>
+          <select id="filterType"><option value="">All Types</option><option value="bug">Bug</option><option value="feature">Feature</option><option value="enhancement">Enhancement</option></select>
+          <select id="filterPriority"><option value="">All Priorities</option><option value="Critical">Critical</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
+          <input type="text" id="filterSearch" placeholder="Search..." style="width:200px" />
+          <button class="btn small secondary" onclick="loadReports()">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30%">Title</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Requestor</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Weekly Report -->
+    <div class="tab-content" id="report">
+      <div class="card">
+        <h3 style="margin:0 0 16px 0">Weekly Report Generator</h3>
+        <div class="week-selector">
+          <label>Select Week:</label>
+          <input type="week" id="weekPicker" />
+          <button class="btn" onclick="loadWeeklyReport()">Generate Report</button>
+          <button class="btn secondary" onclick="copyReport()">Copy to Clipboard</button>
+        </div>
+        <div class="report-preview" id="reportPreview">Select a week and click Generate Report to see completed items.</div>
+      </div>
+    </div>
+
+    <!-- Releases -->
+    <div class="tab-content" id="releases">
+      <div class="card">
+        <h3 style="margin:0 0 16px 0">Release Notes</h3>
+        <div class="filters">
+          <select id="releaseTagSelect" onchange="loadReleaseNotes()"><option value="">Select a release...</option></select>
+          <input type="text" id="newReleaseTag" placeholder="New release tag (e.g., v2024.12.09)" style="width:200px" />
+          <button class="btn" onclick="createRelease()">Tag Selected Items</button>
+          <button class="btn secondary" onclick="copyReleaseNotes()">Copy Notes</button>
+        </div>
+        <div class="report-preview" id="releasePreview">Select a release tag or create a new one to generate release notes.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail/Edit Modal -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Issue Details</h2>
+        <button class="btn small secondary" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editId" />
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="editTitle" />
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="editDescription"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Type</label>
+            <select id="editType"><option value="bug">Bug</option><option value="feature">Feature</option><option value="enhancement">Enhancement</option></select>
+          </div>
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="editPriority"><option value="Critical">Critical</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select id="editStatus"><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Deferred">Deferred</option><option value="Rejected">Rejected</option></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Resolution Notes</label>
+          <textarea id="editResolution" placeholder="Notes about how this was resolved..."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Release Tag</label>
+            <input type="text" id="editReleaseTag" placeholder="e.g., v2024.12.09" />
+          </div>
+          <div class="form-group">
+            <label>Requestor</label>
+            <input type="text" id="editRequestor" disabled />
+          </div>
+        </div>
+        <div class="form-group" style="font-size:12px;color:#64748b">
+          <div id="editMeta"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn danger" onclick="deleteReport()">Delete</button>
+        <button class="btn secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn success" onclick="saveReport()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Issue Modal -->
+  <div class="modal-overlay" id="newModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>New Issue</h2>
+        <button class="btn small secondary" onclick="closeNewModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="newTitle" placeholder="Brief summary of the issue" />
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="newDescription" placeholder="Detailed description..."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Type</label>
+            <select id="newType"><option value="bug">Bug</option><option value="feature">Feature</option><option value="enhancement">Enhancement</option></select>
+          </div>
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="newPriority"><option value="Medium">Medium</option><option value="Critical">Critical</option><option value="High">High</option><option value="Low">Low</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" onclick="closeNewModal()">Cancel</button>
+        <button class="btn success" onclick="submitNewIssue()">Create Issue</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allReports = [];
+    let currentWeekReport = '';
+    let currentReleaseNotes = '';
+
+    // Toast notification
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // Load stats
+    async function loadStats() {
+      try {
+        const r = await fetch('/api/debug/stats');
+        const data = await r.json();
+        document.getElementById('statOpen').textContent = data.open || 0;
+        document.getElementById('statProgress').textContent = data.in_progress || 0;
+        document.getElementById('statCompleted').textContent = data.completed || 0;
+        document.getElementById('statWeek').textContent = data.completed_this_week || 0;
+        document.getElementById('statMonth').textContent = data.completed_this_month || 0;
+      } catch (e) {
+        console.error('Error loading stats:', e);
+      }
+    }
+
+    // Load reports
+    async function loadReports() {
+      try {
+        const r = await fetch('/api/debug/reports');
+        const data = await r.json();
+        allReports = data.reports || [];
+        renderKanban();
+        renderTable();
+        loadStats();
+        loadReleaseTags();
+      } catch (e) {
+        showToast('Error loading reports', 'err');
+      }
+    }
+
+    // Render Kanban board
+    function renderKanban() {
+      const cols = {
+        'Open': document.getElementById('colOpen'),
+        'In Progress': document.getElementById('colProgress'),
+        'Deferred': document.getElementById('colDeferred'),
+        'Completed': document.getElementById('colCompleted')
+      };
+      const counts = { 'Open': 0, 'In Progress': 0, 'Deferred': 0, 'Completed': 0 };
+
+      Object.values(cols).forEach(col => col.innerHTML = '');
+
+      // Sort: Critical/High first, then by date
+      const sorted = [...allReports].sort((a, b) => {
+        const priorityOrder = { 'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
+        return (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
+      });
+
+      for (const rep of sorted) {
+        const status = rep.status || 'Open';
+        const col = cols[status];
+        if (!col) continue;
+        counts[status] = (counts[status] || 0) + 1;
+
+        const card = document.createElement('div');
+        card.className = `kanban-card ${rep.type || 'bug'}`;
+        card.onclick = () => openDetailModal(rep);
+        card.innerHTML = `
+          <div class="title">${escapeHtml(rep.title)}</div>
+          <div class="meta">
+            <span class="badge ${rep.type || 'bug'}">${rep.type || 'bug'}</span>
+            <span class="badge ${(rep.priority || 'Medium').toLowerCase()}">${rep.priority || 'Medium'}</span>
+            <span>${rep.requestor || 'Unknown'}</span>
+          </div>
+        `;
+        col.appendChild(card);
+      }
+
+      document.getElementById('openCount').textContent = counts['Open'] || 0;
+      document.getElementById('progressCount').textContent = counts['In Progress'] || 0;
+      document.getElementById('deferredCount').textContent = counts['Deferred'] || 0;
+      document.getElementById('completedCount').textContent = counts['Completed'] || 0;
+    }
+
+    // Render table with filters
+    function renderTable() {
+      const tbody = document.getElementById('tableBody');
+      const statusFilter = document.getElementById('filterStatus').value;
+      const typeFilter = document.getElementById('filterType').value;
+      const priorityFilter = document.getElementById('filterPriority').value;
+      const searchFilter = document.getElementById('filterSearch').value.toLowerCase();
+
+      let filtered = allReports.filter(r => {
+        if (statusFilter && r.status !== statusFilter) return false;
+        if (typeFilter && r.type !== typeFilter) return false;
+        if (priorityFilter && r.priority !== priorityFilter) return false;
+        if (searchFilter && !r.title.toLowerCase().includes(searchFilter) && !r.description.toLowerCase().includes(searchFilter)) return false;
+        return true;
+      });
+
+      tbody.innerHTML = filtered.map(r => `
+        <tr class="clickable" onclick="openDetailModal(allReports.find(x => x.report_id === '${r.report_id}'))">
+          <td><strong>${escapeHtml(r.title)}</strong><br><span style="font-size:11px;color:#64748b">${escapeHtml(r.description).substring(0, 80)}...</span></td>
+          <td><span class="badge ${r.type || 'bug'}">${r.type || 'bug'}</span></td>
+          <td>${r.status}</td>
+          <td><span class="badge ${(r.priority || 'Medium').toLowerCase()}">${r.priority || 'Medium'}</span></td>
+          <td>${r.requestor || '-'}</td>
+          <td style="font-size:12px">${formatDate(r.created_utc)}</td>
+          <td>
+            <select class="inline" onchange="quickUpdate('${r.report_id}', 'status', this.value); event.stopPropagation();">
+              <option value="Open" ${r.status === 'Open' ? 'selected' : ''}>Open</option>
+              <option value="In Progress" ${r.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+              <option value="Completed" ${r.status === 'Completed' ? 'selected' : ''}>Completed</option>
+              <option value="Deferred" ${r.status === 'Deferred' ? 'selected' : ''}>Deferred</option>
+            </select>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // Filter event listeners
+    ['filterStatus', 'filterType', 'filterPriority', 'filterSearch'].forEach(id => {
+      document.getElementById(id).addEventListener('change', renderTable);
+      document.getElementById(id).addEventListener('input', renderTable);
+    });
+
+    // Quick update from table
+    async function quickUpdate(id, field, value) {
+      try {
+        await fetch(`/api/debug/report/${id}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: value })
+        });
+        loadReports();
+        showToast('Updated', 'ok');
+      } catch (e) {
+        showToast('Update failed', 'err');
+      }
+    }
+
+    // Detail Modal
+    function openDetailModal(rep) {
+      document.getElementById('editId').value = rep.report_id;
+      document.getElementById('editTitle').value = rep.title;
+      document.getElementById('editDescription').value = rep.description;
+      document.getElementById('editType').value = rep.type || 'bug';
+      document.getElementById('editPriority').value = rep.priority || 'Medium';
+      document.getElementById('editStatus').value = rep.status || 'Open';
+      document.getElementById('editResolution').value = rep.resolution_notes || '';
+      document.getElementById('editReleaseTag').value = rep.release_tag || '';
+      document.getElementById('editRequestor').value = rep.requestor || '';
+      document.getElementById('editMeta').innerHTML = `
+        Created: ${formatDate(rep.created_utc)} |
+        Updated: ${formatDate(rep.updated_utc)}
+        ${rep.completed_utc ? ` | Completed: ${formatDate(rep.completed_utc)} by ${rep.completed_by}` : ''}
+      `;
+      document.getElementById('modalTitle').textContent = rep.title;
+      document.getElementById('detailModal').classList.add('show');
+    }
+
+    function closeModal() {
+      document.getElementById('detailModal').classList.remove('show');
+    }
+
+    async function saveReport() {
+      const id = document.getElementById('editId').value;
+      const payload = {
+        status: document.getElementById('editStatus').value,
+        type: document.getElementById('editType').value,
+        priority: document.getElementById('editPriority').value,
+        resolution_notes: document.getElementById('editResolution').value,
+        release_tag: document.getElementById('editReleaseTag').value
+      };
+      try {
+        const r = await fetch(`/api/debug/report/${id}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) throw new Error();
+        showToast('Saved!', 'ok');
+        closeModal();
+        loadReports();
+      } catch (e) {
+        showToast('Save failed', 'err');
+      }
+    }
+
+    async function deleteReport() {
+      if (!confirm('Delete this issue?')) return;
+      const id = document.getElementById('editId').value;
+      try {
+        await fetch(`/api/debug/report/${id}`, { method: 'DELETE' });
+        showToast('Deleted', 'ok');
+        closeModal();
+        loadReports();
+      } catch (e) {
+        showToast('Delete failed', 'err');
+      }
+    }
+
+    // New Issue Modal
+    function openNewModal() {
+      document.getElementById('newTitle').value = '';
+      document.getElementById('newDescription').value = '';
+      document.getElementById('newType').value = 'bug';
+      document.getElementById('newPriority').value = 'Medium';
+      document.getElementById('newModal').classList.add('show');
+    }
+
+    function closeNewModal() {
+      document.getElementById('newModal').classList.remove('show');
+    }
+
+    async function submitNewIssue() {
+      const title = document.getElementById('newTitle').value.trim();
+      const description = document.getElementById('newDescription').value.trim();
+      const type = document.getElementById('newType').value;
+      const priority = document.getElementById('newPriority').value;
+
+      if (!title || !description) {
+        showToast('Title and description required', 'err');
+        return;
+      }
+
+      try {
+        const r = await fetch('/api/debug/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, description, type, priority, page_url: window.location.href })
+        });
+        if (!r.ok) throw new Error();
+        showToast('Issue created!', 'ok');
+        closeNewModal();
+        loadReports();
+      } catch (e) {
+        showToast('Failed to create issue', 'err');
+      }
+    }
+
+    // Weekly Report
+    async function loadWeeklyReport() {
+      const weekInput = document.getElementById('weekPicker').value;
+      if (!weekInput) {
+        showToast('Select a week first', 'err');
+        return;
+      }
+      // Convert YYYY-Wnn format
+      const [year, week] = weekInput.split('-W');
+      try {
+        const r = await fetch(`/api/debug/weekly-report?week=${year}-W${week}`);
+        const data = await r.json();
+        currentWeekReport = data.report_markdown || 'No items completed this week.';
+        document.getElementById('reportPreview').textContent = currentWeekReport;
+      } catch (e) {
+        showToast('Failed to load report', 'err');
+      }
+    }
+
+    function copyReport() {
+      if (!currentWeekReport) {
+        showToast('Generate a report first', 'err');
+        return;
+      }
+      navigator.clipboard.writeText(currentWeekReport);
+      showToast('Copied to clipboard!', 'ok');
+    }
+
+    // Release Notes
+    async function loadReleaseTags() {
+      try {
+        const r = await fetch('/api/debug/release-notes');
+        const data = await r.json();
+        const sel = document.getElementById('releaseTagSelect');
+        sel.innerHTML = '<option value="">Select a release...</option>' +
+          (data.available_tags || []).map(t => `<option value="${t}">${t}</option>`).join('');
+      } catch (e) {}
+    }
+
+    async function loadReleaseNotes() {
+      const tag = document.getElementById('releaseTagSelect').value;
+      if (!tag) {
+        document.getElementById('releasePreview').textContent = 'Select a release tag to view notes.';
+        return;
+      }
+      try {
+        const r = await fetch(`/api/debug/release-notes?tag=${encodeURIComponent(tag)}`);
+        const data = await r.json();
+        currentReleaseNotes = data.notes_markdown || 'No items in this release.';
+        document.getElementById('releasePreview').textContent = currentReleaseNotes;
+      } catch (e) {
+        showToast('Failed to load notes', 'err');
+      }
+    }
+
+    function copyReleaseNotes() {
+      if (!currentReleaseNotes) {
+        showToast('Load release notes first', 'err');
+        return;
+      }
+      navigator.clipboard.writeText(currentReleaseNotes);
+      showToast('Copied to clipboard!', 'ok');
+    }
+
+    async function createRelease() {
+      const tag = document.getElementById('newReleaseTag').value.trim();
+      if (!tag) {
+        showToast('Enter a release tag', 'err');
+        return;
+      }
+      // Tag all completed items without a release tag
+      const toTag = allReports.filter(r => r.status === 'Completed' && !r.release_tag);
+      if (toTag.length === 0) {
+        showToast('No untagged completed items', 'err');
+        return;
+      }
+      if (!confirm(`Tag ${toTag.length} completed items with "${tag}"?`)) return;
+
+      for (const rep of toTag) {
+        await fetch(`/api/debug/report/${rep.report_id}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ release_tag: tag })
+        });
+      }
+      showToast(`Tagged ${toTag.length} items!`, 'ok');
+      document.getElementById('newReleaseTag').value = '';
+      loadReports();
+    }
+
+    // Helpers
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    function formatDate(isoStr) {
+      if (!isoStr) return '-';
+      try {
+        const d = new Date(isoStr);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      } catch {
+        return isoStr.substring(0, 10);
+      }
+    }
+
+    // Set default week to current week
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const weekNum = Math.ceil(((now - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
+    document.getElementById('weekPicker').value = `${now.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+
+    // Initial load
+    loadReports();
+  </script>
+</body>
+</html>

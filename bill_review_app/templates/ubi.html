@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CLASSIFY FOR UBI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff}
+    .logout form{display:inline}
+    .btn{padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer}
+    .btn.secondary{background:#64748b;color:#fff}
+    .wrap{max-width:1100px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 12px 0}
+    .controls{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+    select{padding:8px 10px;border-radius:10px;border:1px solid #e5e7eb;background:#fff}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}
+    tr:hover{background:rgba(2,132,199,0.08)}
+    .muted{opacity:.8;font-size:13px}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">JRK Bill Parser Review</a></div>
+    <div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <h1>CLASSIFY FOR UBI</h1>
+      <div class="controls">
+        <label for="postDate">UBI Post Date:</label>
+        <select id="postDate">
+          {% for d in options %}
+          <option value="{{ d }}">{{ d }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn" onclick="assignUbi()">Assign to UBI BILL INPUT</button>
+      </div>
+      <p>This page will list all POSTED records and allow mapping each line item to a UBI BILL INPUT for the selected post date.</p>
+      <table>
+        <thead>
+          <tr><th>Account</th><th>Date</th><th>Key</th><th>Action</th></tr>
+        </thead>
+        <tbody id="rows">
+          <!-- Future: populated from API of posted records -->
+        </tbody>
+      </table>
+      
+    </div>
+  </div>
+  <script>
+    function assignUbi(){
+      const d = document.getElementById('postDate').value;
+      alert('UBI classify will use post date: ' + d + ' (wiring to API pending)');
+    }
+
+    // Read selections from sessionStorage (set on POST page)
+    (function initFromPost(){
+      try{
+        const raw = sessionStorage.getItem('ubi_picks');
+        if (!raw) return;
+        const picks = JSON.parse(raw);
+        if (!Array.isArray(picks) || !picks.length) return;
+        const div = document.getElementById('picked');
+        div.style.display = '';
+        div.innerHTML = 'Selected from Pre‑Entrata (' + picks.length + '):<br>' + picks.map(k => `<code>${k}</code>`).join('<br>');
+      }catch(_){/* ignore */}
+    })();
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

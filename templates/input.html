@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Input · Upload PDFs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:900px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 12px 0}
+    .drop{border:2px dashed #94a3b8;border-radius:16px;padding:30px;text-align:center;background:#fff}
+    .drop.drag{background:#ecfeff;border-color:#06b6d4}
+    .muted{opacity:.8;font-size:13px}
+    .list{margin-top:14px}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;margin-bottom:8px}
+    code{background:#f1f5f9;padding:2px 6px;border-radius:6px}
+    .progress-bar{height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin:12px 0}
+    .progress-fill{height:100%;background:linear-gradient(90deg,#0ea5e9,#4338ca);transition:width .2s}
+    .upload-summary{display:flex;justify-content:center;gap:40px;align-items:center;padding:14px 20px;background:#f8fafc;border-radius:10px;margin:12px 0}
+    .upload-summary .stat{text-align:center;min-width:60px}
+    .upload-summary .stat .num{font-size:28px;font-weight:700;color:#0ea5e9}
+    .upload-summary .stat .label{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+    .error-list{max-height:150px;overflow-y:auto;font-size:12px;color:#b91c1c;margin-top:8px}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <h1>Upload Invoice PDFs</h1>
+      <p class="muted">Drop Invoice PDFs to send them to JRK's Bill Parser for ingestion. Remember — one invoice per PDF!</p>
+      <div id="drop" class="drop">
+        <p><strong>Drag & drop</strong> PDFs here, or</p>
+        <p><input id="file" type="file" multiple accept="application/pdf" /></p>
+      </div>
+
+      <!-- Upload Summary - shows during/after upload -->
+      <div id="uploadSummary" class="upload-summary" style="display:none">
+        <div class="stat"><div class="num" id="statQueued">0</div><div class="label">Queued</div></div>
+        <div class="stat"><div class="num" id="statUploading" style="color:#f59e0b">0</div><div class="label">Uploading</div></div>
+        <div class="stat"><div class="num" id="statSuccess" style="color:#10b981">0</div><div class="label">Success</div></div>
+        <div class="stat"><div class="num" id="statFailed" style="color:#ef4444">0</div><div class="label">Failed</div></div>
+      </div>
+
+      <!-- Progress bar -->
+      <div id="progressWrap" class="progress-bar" style="display:none">
+        <div id="progressFill" class="progress-fill" style="width:0%"></div>
+      </div>
+
+      <!-- Error list - only shows failed files -->
+      <div id="errorList" class="error-list" style="display:none"></div>
+
+      <div class="actions" style="text-align:center;margin-top:12px;display:flex;gap:12px;justify-content:center">
+        <button class="btn" id="postBtn">Post to System</button>
+        <button class="btn secondary" id="scraperBtn">Import from Scraper</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scraper Browser Modal -->
+  <div id="scraperModal" class="scraper-modal-overlay">
+    <div class="scraper-modal-box">
+      <div class="scraper-modal-header">
+        <h2>Import from Utility Scraper</h2>
+        <button class="scraper-close-btn" onclick="closeScraperModal()">&times;</button>
+      </div>
+
+      <div class="scraper-breadcrumb" id="scraperBreadcrumb">
+        <span class="crumb active" onclick="loadProviders()">Providers</span>
+      </div>
+
+      <div class="scraper-content" id="scraperContent">
+        <div class="scraper-loading">Loading providers...</div>
+      </div>
+
+      <div class="scraper-footer" id="scraperFooter" style="display:none">
+        <div class="scraper-selected-count">
+          <span id="selectedCount">0</span> files selected
+        </div>
+        <div class="scraper-actions">
+          <button class="btn secondary" onclick="closeScraperModal()">Cancel</button>
+          <button class="btn" id="importSelectedBtn" onclick="importSelected()" disabled>Import Selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .scraper-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:10000;align-items:center;justify-content:center}
+    .scraper-modal-overlay.show{display:flex}
+    .scraper-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:90%;max-width:1000px;max-height:85vh;display:flex;flex-direction:column}
+    .scraper-modal-header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #e5e7eb;background:#1e293b}
+    .scraper-modal-header h2{margin:0;font-size:14px;color:#fff;text-transform:uppercase;letter-spacing:1px}
+    .scraper-close-btn{background:none;border:none;font-size:24px;cursor:pointer;color:#94a3b8;padding:0 8px}
+    .scraper-close-btn:hover{color:#fff}
+    .scraper-breadcrumb{padding:8px 16px;background:#f1f5f9;border-bottom:1px solid #e5e7eb;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-family:monospace;font-size:12px;text-transform:uppercase}
+    .scraper-breadcrumb .crumb{color:#0ea5e9;cursor:pointer}
+    .scraper-breadcrumb .crumb:hover{text-decoration:underline}
+    .scraper-breadcrumb .crumb.active{color:#0f172a;font-weight:600}
+    .scraper-breadcrumb .sep{color:#94a3b8}
+    .scraper-content{flex:1;overflow-y:auto;padding:0;min-height:400px;background:#fff}
+    .scraper-loading{text-align:center;padding:40px;color:#64748b;text-transform:uppercase;font-size:12px;letter-spacing:1px}
+    .scraper-toolbar{padding:8px 16px;background:#f8fafc;border-bottom:1px solid #e5e7eb;display:flex;gap:12px;align-items:center}
+    .scraper-toolbar input[type="text"]{flex:1;padding:6px 10px;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;font-family:monospace;text-transform:uppercase}
+    .scraper-toolbar input[type="text"]::placeholder{text-transform:uppercase}
+    .scraper-toolbar label{font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;text-transform:uppercase}
+    .scraper-toolbar input[type="checkbox"]{width:14px;height:14px}
+    .scraper-toolbar .btn{padding:6px 12px;font-size:11px;text-transform:uppercase}
+    .scraper-toolbar select{padding:6px 10px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;font-family:monospace;text-transform:uppercase;background:#fff}
+    .scraper-list{font-family:monospace;font-size:12px}
+    .scraper-row{display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .1s}
+    .scraper-row:hover{background:#f0f9ff}
+    .scraper-row.selected{background:#dbeafe}
+    .scraper-row.unmapped{background:#fef3c7}
+    .scraper-row.unmapped:hover{background:#fde68a}
+    .scraper-row .icon{width:20px;text-align:center;margin-right:8px;flex-shrink:0}
+    .scraper-row .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase}
+    .scraper-row .account{min-width:140px;color:#64748b;text-transform:uppercase;margin-left:12px}
+    .scraper-row .meta{color:#64748b;font-size:11px;text-align:right;min-width:80px;margin-left:12px;text-transform:uppercase}
+    .scraper-row .meta-size{min-width:70px}
+    .scraper-row .meta-date{min-width:130px}
+    .scraper-row .meta-svc{min-width:90px}
+    .scraper-row .meta-svc.pending{color:#9ca3af;font-style:italic}
+    .scraper-row .meta-svc.extracting{color:#3b82f6}
+    .scraper-row .flag{font-size:10px;padding:2px 6px;border-radius:4px;background:#fbbf24;color:#78350f;margin-left:8px;text-transform:uppercase}
+    .scraper-header-row{display:flex;align-items:center;padding:8px 16px;background:#f8fafc;border-bottom:2px solid #e5e7eb;font-weight:600;font-size:11px;text-transform:uppercase;color:#64748b}
+    .scraper-header-row span{cursor:pointer}
+    .scraper-header-row span:hover{color:#0ea5e9}
+    .scraper-header-row .icon{width:20px;margin-right:8px}
+    .scraper-header-row .name{flex:1}
+    .scraper-header-row .account{min-width:140px;margin-left:12px}
+    .scraper-header-row .meta{min-width:80px;margin-left:12px;text-align:right}
+    .scraper-header-row .meta-size{min-width:70px}
+    .scraper-header-row .meta-date{min-width:130px}
+    .scraper-header-row .meta-svc{min-width:90px}
+    .scraper-footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;background:#f8fafc}
+    .scraper-selected-count{font-size:12px;color:#64748b;text-transform:uppercase}
+    .scraper-actions{display:flex;gap:8px}
+    .scraper-actions .btn{text-transform:uppercase;font-size:11px}
+  </style>
+  <script>
+    const drop = document.getElementById('drop');
+    const inp = document.getElementById('file');
+    const uploadSummary = document.getElementById('uploadSummary');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressFill = document.getElementById('progressFill');
+    const errorList = document.getElementById('errorList');
+    const statQueued = document.getElementById('statQueued');
+    const statUploading = document.getElementById('statUploading');
+    const statSuccess = document.getElementById('statSuccess');
+    const statFailed = document.getElementById('statFailed');
+
+    const queue = [];
+    let stats = { queued: 0, uploading: 0, success: 0, failed: 0 };
+    let errors = [];
+
+    function updateStats() {
+      statQueued.textContent = stats.queued;
+      statUploading.textContent = stats.uploading;
+      statSuccess.textContent = stats.success;
+      statFailed.textContent = stats.failed;
+      const total = stats.queued + stats.uploading + stats.success + stats.failed;
+      const done = stats.success + stats.failed;
+      progressFill.style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : '0%';
+    }
+
+    function showError(filename, reason) {
+      errors.push(`${filename}: ${reason}`);
+      errorList.innerHTML = errors.map(e => `<div>✖ ${e}</div>`).join('');
+      errorList.style.display = 'block';
+    }
+
+    function enqueue(files) {
+      uploadSummary.style.display = 'flex';
+      for (const f of files) {
+        queue.push(f);
+        stats.queued++;
+      }
+      updateStats();
+    }
+
+    async function upload(file) {
+      stats.queued--;
+      stats.uploading++;
+      updateStats();
+
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const r = await fetch('/api/upload_input', { method: 'POST', body: fd, credentials: 'same-origin' });
+        let j = null;
+        try { j = await r.json(); } catch (_) { /* non-JSON response */ }
+        if (r.ok && j && j.ok) {
+          stats.uploading--;
+          stats.success++;
+        } else {
+          stats.uploading--;
+          stats.failed++;
+          showError(file.name, j && (j.error || JSON.stringify(j)) || (r.status + ' ' + r.statusText));
+        }
+      } catch (e) {
+        stats.uploading--;
+        stats.failed++;
+        showError(file.name, `Network error: ${e}`);
+      }
+      updateStats();
+    }
+
+    inp.addEventListener('change', () => { if (inp.files && inp.files.length) enqueue(inp.files); });
+
+    ;['dragenter', 'dragover'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); drop.classList.add('drag'); }));
+    ;['dragleave', 'drop'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('drag'); }));
+    drop.addEventListener('drop', e => {
+      const files = e.dataTransfer.files;
+      if (files && files.length) enqueue(files);
+    });
+
+    document.getElementById('postBtn').addEventListener('click', async (e) => {
+      if (!queue.length) { alert('No files queued. Drag & drop or select files first.'); return; }
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const oldText = btn.textContent;
+
+      // Reset stats for this batch
+      errors = [];
+      errorList.innerHTML = '';
+      errorList.style.display = 'none';
+      stats = { queued: queue.length, uploading: 0, success: 0, failed: 0 };
+      updateStats();
+      uploadSummary.style.display = 'flex';
+      progressWrap.style.display = 'block';
+
+      const copy = queue.splice(0, queue.length);
+      const BATCH_SIZE = 10;
+
+      // Process in batches
+      for (let i = 0; i < copy.length; i += BATCH_SIZE) {
+        const batch = copy.slice(i, i + BATCH_SIZE);
+        btn.textContent = `Uploading ${stats.success + stats.failed}/${copy.length}...`;
+        await Promise.all(batch.map(f => upload(f)));
+        btn.textContent = `Uploading ${stats.success + stats.failed}/${copy.length}...`;
+      }
+
+      btn.disabled = false;
+      btn.textContent = oldText;
+      // Clear the file input so the browser's "X files selected" label resets
+      try { inp.value = ''; } catch (_) { }
+    });
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+
+    // -------- Scraper Browser --------
+    let scraperState = {
+      currentProvider: null,
+      currentAccount: null,
+      selectedPdfs: new Set()
+    };
+
+    function openScraperModal() {
+      document.getElementById('scraperModal').classList.add('show');
+      scraperState = { currentProvider: null, currentAccount: null, selectedPdfs: new Set() };
+      loadProviders();
+    }
+
+    function closeScraperModal() {
+      document.getElementById('scraperModal').classList.remove('show');
+    }
+
+    document.getElementById('scraperBtn').addEventListener('click', openScraperModal);
+
+    // Close on backdrop click
+    document.getElementById('scraperModal').addEventListener('click', (e) => {
+      if (e.target.id === 'scraperModal') closeScraperModal();
+    });
+
+    let allPdfsData = []; // Store for sorting
+    let currentSort = { field: 'date', dir: 'desc' };
+
+    async function loadProviders() {
+      scraperState.currentProvider = null;
+      scraperState.currentAccount = null;
+      scraperState.selectedPdfs.clear();
+      updateSelectedCount();
+      document.getElementById('scraperFooter').style.display = 'none';
+      document.getElementById('scraperBreadcrumb').innerHTML = '<span class="crumb active">/</span>';
+      document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">LOADING PROVIDERS...</div>';
+
+      try {
+        const r = await fetch('/api/scraper/providers');
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Failed to load');
+
+        let providers = data.providers || [];
+        if (providers.length === 0) {
+          document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">NO PROVIDERS FOUND</div>';
+          return;
+        }
+
+        // Sort: mapped providers first (alphabetically), unmapped at bottom
+        const mapped = providers.filter(p => p.is_uuid).sort((a,b) => a.name.localeCompare(b.name));
+        const unmapped = providers.filter(p => !p.is_uuid && p.folder.includes('-')).sort((a,b) => a.folder.localeCompare(b.folder));
+        const direct = providers.filter(p => !p.is_uuid && !p.folder.includes('-')).sort((a,b) => a.name.localeCompare(b.name));
+        providers = [...mapped, ...direct, ...unmapped];
+
+        let html = '<div class="scraper-toolbar"><input type="text" id="providerSearch" placeholder="FILTER..." oninput="filterList()"></div>';
+        html += '<div class="scraper-list" id="itemList">';
+        for (const p of providers) {
+          const isUnmapped = !p.is_uuid && p.folder.includes('-');
+          html += `<div class="scraper-row ${isUnmapped ? 'unmapped' : ''}" data-name="${escapeAttr(p.name.toLowerCase())}" onclick="loadAccounts('${escapeAttr(p.folder)}', '${escapeAttr(p.name)}')">
+            <span class="icon">📁</span>
+            <span class="name">${escapeHtml(p.name)}</span>
+            ${isUnmapped ? '<span class="flag">MISSING UUID MAPPING</span>' : ''}
+          </div>`;
+        }
+        html += '</div>';
+        document.getElementById('scraperContent').innerHTML = html;
+      } catch (e) {
+        document.getElementById('scraperContent').innerHTML = `<div class="scraper-loading" style="color:#dc2626">ERROR: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function filterList() {
+      const input = document.querySelector('.scraper-toolbar input[type="text"]');
+      if (!input) return;
+      const q = input.value.toLowerCase();
+      document.querySelectorAll('#itemList .scraper-row').forEach(el => {
+        const name = el.dataset.name || '';
+        const account = el.dataset.account || '';
+        const svcStart = el.dataset.svcStart || '';
+        const svcEnd = el.dataset.svcEnd || '';
+        el.style.display = (name.includes(q) || account.includes(q) || svcStart.includes(q) || svcEnd.includes(q)) ? '' : 'none';
+      });
+    }
+
+    async function loadAccounts(folder, name) {
+      scraperState.currentProvider = { folder, name };
+      scraperState.currentAccount = null;
+      scraperState.selectedPdfs.clear();
+      updateSelectedCount();
+      document.getElementById('scraperFooter').style.display = 'none';
+      document.getElementById('scraperBreadcrumb').innerHTML = `
+        <span class="crumb" onclick="loadProviders()">/</span>
+        <span class="sep">/</span>
+        <span class="crumb active">${escapeHtml(name)}</span>
+      `;
+      document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">LOADING ACCOUNTS...</div>';
+
+      try {
+        const r = await fetch(`/api/scraper/accounts/${encodeURIComponent(folder)}`);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Failed to load');
+
+        const accounts = data.accounts || [];
+        if (accounts.length === 0) {
+          document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">NO ACCOUNTS FOUND FOR THIS PROVIDER</div>';
+          return;
+        }
+
+        let html = '<div class="scraper-toolbar">';
+        html += `<button class="btn" onclick="loadAllPdfs('${escapeAttr(folder)}', '${escapeAttr(name)}')">VIEW ALL BILLS</button>`;
+        html += '<input type="text" id="accountSearch" placeholder="FILTER..." oninput="filterList()">';
+        html += '</div>';
+        html += '<div class="scraper-list" id="itemList">';
+        for (const a of accounts) {
+          html += `<div class="scraper-row" data-name="${escapeAttr(a.account_id.toLowerCase())}" onclick="loadPdfs('${escapeAttr(folder)}', '${escapeAttr(name)}', '${escapeAttr(a.path)}', '${escapeAttr(a.account_id)}')">
+            <span class="icon">📁</span>
+            <span class="name">${escapeHtml(a.account_id)}</span>
+          </div>`;
+        }
+        html += '</div>';
+        document.getElementById('scraperContent').innerHTML = html;
+      } catch (e) {
+        document.getElementById('scraperContent').innerHTML = `<div class="scraper-loading" style="color:#dc2626">ERROR: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    async function loadAllPdfs(providerFolder, providerName) {
+      scraperState.currentProvider = { folder: providerFolder, name: providerName };
+      scraperState.currentAccount = null;
+      scraperState.selectedPdfs.clear();
+      updateSelectedCount();
+      document.getElementById('scraperFooter').style.display = 'flex';
+      document.getElementById('scraperBreadcrumb').innerHTML = `
+        <span class="crumb" onclick="loadProviders()">/</span>
+        <span class="sep">/</span>
+        <span class="crumb" onclick="loadAccounts('${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">${escapeHtml(providerName)}</span>
+        <span class="sep">/</span>
+        <span class="crumb active">ALL BILLS</span>
+      `;
+      document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">LOADING ALL BILLS...</div>';
+
+      try {
+        const r = await fetch(`/api/scraper/all-pdfs/${encodeURIComponent(providerFolder)}`);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Failed to load');
+
+        allPdfsData = data.pdfs || [];
+        if (allPdfsData.length === 0) {
+          document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">NO PDFS FOUND</div>';
+          return;
+        }
+
+        currentSort = { field: 'date', dir: 'desc' };
+        renderAllPdfs(providerFolder, providerName);
+      } catch (e) {
+        document.getElementById('scraperContent').innerHTML = `<div class="scraper-loading" style="color:#dc2626">ERROR: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderAllPdfs(providerFolder, providerName) {
+      // Sort data
+      const sorted = [...allPdfsData].sort((a, b) => {
+        let va, vb;
+        if (currentSort.field === 'date') {
+          va = a.last_modified || '';
+          vb = b.last_modified || '';
+        } else if (currentSort.field === 'account') {
+          va = a.account_id || '';
+          vb = b.account_id || '';
+        } else if (currentSort.field === 'size') {
+          va = a.size || 0;
+          vb = b.size || 0;
+        } else if (currentSort.field === 'svc_start') {
+          va = a.service_start || '';
+          vb = b.service_start || '';
+        } else if (currentSort.field === 'svc_end') {
+          va = a.service_end || '';
+          vb = b.service_end || '';
+        } else {
+          va = a.filename || '';
+          vb = b.filename || '';
+        }
+        let cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return currentSort.dir === 'desc' ? -cmp : cmp;
+      });
+
+      const arrow = (field) => currentSort.field === field ? (currentSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+
+      let html = '<div class="scraper-toolbar">';
+      html += `<label><input type="checkbox" id="selectAllPdfs" onchange="toggleSelectAll()"> SELECT ALL (${sorted.length})</label>`;
+      html += '<input type="text" id="pdfSearch" placeholder="FILTER..." oninput="filterList()">';
+      const pendingCount = sorted.filter(p => !p.service_start && !p.service_end && !p.extracting).length;
+      const extractLabel = pendingCount > 0 ? `EXTRACT DATES (${pendingCount} pending)` : 'EXTRACT DATES';
+      html += `<button class="btn btn-secondary" onclick="extractDatesForVisible('${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')" id="extractDatesBtn">${extractLabel}</button>`;
+      html += '</div>';
+      html += '<div class="scraper-header-row">';
+      html += '<span class="icon"></span>';
+      html += `<span class="name" onclick="sortAllPdfs('name', '${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">FILENAME${arrow('name')}</span>`;
+      html += `<span class="account" onclick="sortAllPdfs('account', '${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">ACCOUNT${arrow('account')}</span>`;
+      html += `<span class="meta meta-svc" onclick="sortAllPdfs('svc_start', '${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">SVC START${arrow('svc_start')}</span>`;
+      html += `<span class="meta meta-svc" onclick="sortAllPdfs('svc_end', '${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">SVC END${arrow('svc_end')}</span>`;
+      html += `<span class="meta meta-size" onclick="sortAllPdfs('size', '${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">SIZE${arrow('size')}</span>`;
+      html += `<span class="meta meta-date" onclick="sortAllPdfs('date', '${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">UPLOADED${arrow('date')}</span>`;
+      html += '</div>';
+      html += '<div class="scraper-list" id="itemList">';
+      for (const p of sorted) {
+        const isSelected = scraperState.selectedPdfs.has(p.key);
+        const svcStart = p.service_start || '';
+        const svcEnd = p.service_end || '';
+        const svcClass = p.extracting ? 'extracting' : (!svcStart && !svcEnd ? 'pending' : '');
+        const svcStartDisplay = p.extracting ? '...' : (svcStart || '-');
+        const svcEndDisplay = p.extracting ? '...' : (svcEnd || '-');
+        html += `<div class="scraper-row ${isSelected ? 'selected' : ''}" data-key="${escapeAttr(p.key)}" data-name="${escapeAttr(p.filename.toLowerCase())}" data-account="${escapeAttr(p.account_id.toLowerCase())}" data-svc-start="${escapeAttr(svcStart.toLowerCase())}" data-svc-end="${escapeAttr(svcEnd.toLowerCase())}" onclick="togglePdfSelection(this, '${escapeAttr(p.key)}')">
+          <span class="icon">📄</span>
+          <span class="name">${escapeHtml(p.filename)}</span>
+          <span class="account">${escapeHtml(p.account_id)}</span>
+          <span class="meta meta-svc ${svcClass}">${svcStartDisplay}</span>
+          <span class="meta meta-svc ${svcClass}">${svcEndDisplay}</span>
+          <span class="meta meta-size">${p.size_kb} KB</span>
+          <span class="meta meta-date">${escapeHtml(p.last_modified_human)}</span>
+        </div>`;
+      }
+      html += '</div>';
+      document.getElementById('scraperContent').innerHTML = html;
+    }
+
+    function sortAllPdfs(field, providerFolder, providerName) {
+      if (currentSort.field === field) {
+        currentSort.dir = currentSort.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        currentSort.field = field;
+        currentSort.dir = field === 'date' || field === 'svc_start' || field === 'svc_end' ? 'desc' : 'asc';
+      }
+      renderAllPdfs(providerFolder, providerName);
+    }
+
+    async function loadCachedDates(providerFolder, providerName) {
+      // Load cached dates from DynamoDB for all PDFs
+      if (!allPdfsData || allPdfsData.length === 0) return;
+
+      const keys = allPdfsData.map(p => p.key);
+      if (!keys.length) return;
+
+      try {
+        const r = await fetch('/api/scraper/get-cached-dates', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({keys})
+        });
+        const data = await r.json();
+        if (data.ok && data.results) {
+          // Update allPdfsData with cached dates
+          for (const p of allPdfsData) {
+            const cached = data.results[p.key];
+            if (cached && cached.ok) {
+              p.service_start = cached.service_start || '';
+              p.service_end = cached.service_end || '';
+            }
+          }
+          renderAllPdfs(providerFolder, providerName);
+        }
+      } catch (e) {
+        console.error('Failed to load cached dates:', e);
+      }
+    }
+
+    async function saveDatesToCache(datesToSave) {
+      // Explicitly persist extracted dates to DynamoDB
+      if (!datesToSave || Object.keys(datesToSave).length === 0) return;
+      try {
+        await fetch('/api/scraper/save-dates', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({dates: datesToSave})
+        });
+      } catch (e) {
+        console.error('Failed to save dates to cache:', e);
+      }
+    }
+
+    async function extractDatesForVisible(providerFolder, providerName) {
+      // Get all PDFs without dates
+      const pdfsNeedingDates = allPdfsData.filter(p => !p.service_start && !p.service_end);
+
+      if (pdfsNeedingDates.length === 0) {
+        showExtractionStatus('ALL VISIBLE PDFS ALREADY HAVE DATES EXTRACTED', 'success');
+        return;
+      }
+
+      const btn = document.getElementById('extractDatesBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'EXTRACTING...';
+      }
+
+      showExtractionStatus(`STARTING EXTRACTION FOR ${pdfsNeedingDates.length} PDFS...`, 'info');
+
+      let completed = 0;
+      let failed = 0;
+      let extracted = 0;
+      const datesToSave = {};  // Collect dates for explicit save
+
+      // Process one at a time so user can see progress
+      for (const pdf of pdfsNeedingDates) {
+        pdf.extracting = true;
+        renderAllPdfs(providerFolder, providerName);
+
+        const shortName = pdf.filename.length > 30 ? pdf.filename.slice(0, 30) + '...' : pdf.filename;
+        showExtractionStatus(`EXTRACTING ${completed + 1}/${pdfsNeedingDates.length}: ${shortName}`, 'info');
+
+        try {
+          const r = await fetch('/api/scraper/extract-dates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keys: [pdf.key] })
+          });
+          const data = await r.json();
+
+          pdf.extracting = false;
+
+          if (data.ok && data.results && data.results[pdf.key]) {
+            const result = data.results[pdf.key];
+            if (result.ok) {
+              pdf.service_start = result.service_start || '';
+              pdf.service_end = result.service_end || '';
+              if (pdf.service_start || pdf.service_end) {
+                extracted++;
+                datesToSave[pdf.key] = {service_start: pdf.service_start, service_end: pdf.service_end};
+              }
+            } else {
+              console.error('Extract failed for', pdf.key, result.error);
+              failed++;
+            }
+          } else {
+            console.error('Unexpected response:', data);
+            failed++;
+          }
+        } catch (e) {
+          pdf.extracting = false;
+          console.error('Fetch error:', e);
+          failed++;
+        }
+
+        completed++;
+        renderAllPdfs(providerFolder, providerName);
+
+        // Save batch every 10 extractions
+        if (Object.keys(datesToSave).length >= 10) {
+          await saveDatesToCache(datesToSave);
+          Object.keys(datesToSave).forEach(k => delete datesToSave[k]);
+        }
+      }
+
+      // Save any remaining dates
+      await saveDatesToCache(datesToSave);
+
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'EXTRACT DATES';
+      }
+
+      // Show final status
+      const remaining = allPdfsData.filter(p => !p.service_start && !p.service_end).length;
+      let statusMsg = `DONE: ${extracted} DATES EXTRACTED`;
+      if (failed > 0) statusMsg += `, ${failed} FAILED`;
+      if (remaining > 0) statusMsg += ` | ${remaining} REMAINING`;
+      showExtractionStatus(statusMsg, failed > 0 ? 'warning' : 'success');
+    }
+
+    function showExtractionStatus(message, type) {
+      let statusEl = document.getElementById('extractionStatus');
+      if (!statusEl) {
+        // Create status element if it doesn't exist
+        const toolbar = document.querySelector('.scraper-toolbar');
+        if (toolbar) {
+          statusEl = document.createElement('div');
+          statusEl.id = 'extractionStatus';
+          statusEl.style.cssText = 'padding:8px 12px;font-size:11px;text-transform:uppercase;border-radius:4px;margin-top:8px;';
+          toolbar.appendChild(statusEl);
+        }
+      }
+      if (statusEl) {
+        statusEl.textContent = message;
+        if (type === 'success') {
+          statusEl.style.background = '#dcfce7';
+          statusEl.style.color = '#166534';
+        } else if (type === 'warning') {
+          statusEl.style.background = '#fef3c7';
+          statusEl.style.color = '#92400e';
+        } else if (type === 'error') {
+          statusEl.style.background = '#fee2e2';
+          statusEl.style.color = '#991b1b';
+        } else {
+          statusEl.style.background = '#dbeafe';
+          statusEl.style.color = '#1e40af';
+        }
+        // Auto-hide success messages after 5 seconds
+        if (type === 'success') {
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; statusEl.style.background = 'transparent'; }, 5000);
+        }
+      }
+    }
+
+    let accountPdfsData = []; // Store for account view PDFs
+    let accountViewContext = null; // Store provider/account context
+
+    async function loadPdfs(providerFolder, providerName, accountPath, accountId) {
+      scraperState.currentAccount = { path: accountPath, id: accountId };
+      scraperState.selectedPdfs.clear();
+      updateSelectedCount();
+      accountViewContext = { providerFolder, providerName, accountPath, accountId };
+      document.getElementById('scraperFooter').style.display = 'flex';
+      document.getElementById('scraperBreadcrumb').innerHTML = `
+        <span class="crumb" onclick="loadProviders()">/</span>
+        <span class="sep">/</span>
+        <span class="crumb" onclick="loadAccounts('${escapeAttr(providerFolder)}', '${escapeAttr(providerName)}')">${escapeHtml(providerName)}</span>
+        <span class="sep">/</span>
+        <span class="crumb active">${escapeHtml(accountId)}</span>
+      `;
+      document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">LOADING PDFS...</div>';
+
+      try {
+        const r = await fetch(`/api/scraper/pdfs/${encodeURIComponent(providerFolder)}/${encodeURIComponent(accountPath.replace(providerFolder + '/', ''))}`);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Failed to load');
+
+        accountPdfsData = data.pdfs || [];
+        if (accountPdfsData.length === 0) {
+          document.getElementById('scraperContent').innerHTML = '<div class="scraper-loading">NO PDFS FOUND FOR THIS ACCOUNT</div>';
+          return;
+        }
+
+        renderAccountPdfs();
+      } catch (e) {
+        document.getElementById('scraperContent').innerHTML = `<div class="scraper-loading" style="color:#dc2626">ERROR: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderAccountPdfs() {
+      const pdfs = accountPdfsData;
+      let html = '<div class="scraper-toolbar">';
+      html += `<label><input type="checkbox" id="selectAllPdfs" onchange="toggleSelectAll()"> SELECT ALL (${pdfs.length})</label>`;
+      html += '<input type="text" id="pdfSearch" placeholder="FILTER..." oninput="filterList()">';
+      const pendingCount = pdfs.filter(p => !p.service_start && !p.service_end && !p.extracting).length;
+      const extractLabel = pendingCount > 0 ? `EXTRACT DATES (${pendingCount} pending)` : 'EXTRACT DATES';
+      html += `<button class="btn btn-secondary" onclick="extractDatesForAccount()" id="extractDatesBtn">${extractLabel}</button>`;
+      html += '</div>';
+      html += '<div class="scraper-header-row">';
+      html += '<span class="icon"></span>';
+      html += '<span class="name">FILENAME</span>';
+      html += '<span class="meta meta-svc">SVC START</span>';
+      html += '<span class="meta meta-svc">SVC END</span>';
+      html += '<span class="meta meta-size">SIZE</span>';
+      html += '<span class="meta meta-date">DATE</span>';
+      html += '</div>';
+      html += '<div class="scraper-list" id="itemList">';
+      for (const p of pdfs) {
+        const isSelected = scraperState.selectedPdfs.has(p.key);
+        const svcStart = p.service_start || '';
+        const svcEnd = p.service_end || '';
+        const svcClass = p.extracting ? 'extracting' : (!svcStart && !svcEnd ? 'pending' : '');
+        const svcStartDisplay = p.extracting ? '...' : (svcStart || '-');
+        const svcEndDisplay = p.extracting ? '...' : (svcEnd || '-');
+        html += `<div class="scraper-row ${isSelected ? 'selected' : ''}" data-key="${escapeAttr(p.key)}" data-name="${escapeAttr(p.filename.toLowerCase())}" data-svc-start="${escapeAttr(svcStart.toLowerCase())}" data-svc-end="${escapeAttr(svcEnd.toLowerCase())}" onclick="togglePdfSelection(this, '${escapeAttr(p.key)}')">
+          <span class="icon">📄</span>
+          <span class="name">${escapeHtml(p.filename)}</span>
+          <span class="meta meta-svc ${svcClass}">${svcStartDisplay}</span>
+          <span class="meta meta-svc ${svcClass}">${svcEndDisplay}</span>
+          <span class="meta meta-size">${p.size_kb} KB</span>
+          <span class="meta meta-date">${escapeHtml(p.last_modified_human)}</span>
+        </div>`;
+      }
+      html += '</div>';
+      document.getElementById('scraperContent').innerHTML = html;
+    }
+
+    async function loadCachedDatesForAccount() {
+      if (!accountPdfsData || accountPdfsData.length === 0) return;
+
+      const keys = accountPdfsData.map(p => p.key);
+      if (!keys.length) return;
+
+      try {
+        const r = await fetch('/api/scraper/get-cached-dates', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({keys})
+        });
+        const data = await r.json();
+        if (data.ok && data.results) {
+          for (const p of accountPdfsData) {
+            const cached = data.results[p.key];
+            if (cached && cached.ok) {
+              p.service_start = cached.service_start || '';
+              p.service_end = cached.service_end || '';
+            }
+          }
+          renderAccountPdfs();
+        }
+      } catch (e) {
+        console.error('Failed to load cached dates:', e);
+      }
+    }
+
+    async function extractDatesForAccount() {
+      const pdfsNeedingDates = accountPdfsData.filter(p => !p.service_start && !p.service_end);
+
+      if (pdfsNeedingDates.length === 0) {
+        showExtractionStatus('ALL PDFS ALREADY HAVE DATES EXTRACTED', 'success');
+        return;
+      }
+
+      const btn = document.getElementById('extractDatesBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'EXTRACTING...';
+      }
+
+      showExtractionStatus(`STARTING EXTRACTION FOR ${pdfsNeedingDates.length} PDFS...`, 'info');
+
+      let completed = 0;
+      let failed = 0;
+      let extracted = 0;
+      const datesToSave = {};
+
+      for (const pdf of pdfsNeedingDates) {
+        pdf.extracting = true;
+        renderAccountPdfs();
+
+        const shortName = pdf.filename.length > 30 ? pdf.filename.slice(0, 30) + '...' : pdf.filename;
+        showExtractionStatus(`EXTRACTING ${completed + 1}/${pdfsNeedingDates.length}: ${shortName}`, 'info');
+
+        try {
+          const r = await fetch('/api/scraper/extract-dates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keys: [pdf.key] })
+          });
+          const data = await r.json();
+
+          pdf.extracting = false;
+
+          if (data.ok && data.results && data.results[pdf.key]) {
+            const result = data.results[pdf.key];
+            if (result.ok) {
+              pdf.service_start = result.service_start || '';
+              pdf.service_end = result.service_end || '';
+              if (pdf.service_start || pdf.service_end) {
+                extracted++;
+                datesToSave[pdf.key] = {service_start: pdf.service_start, service_end: pdf.service_end};
+              }
+            } else {
+              failed++;
+            }
+          } else {
+            failed++;
+          }
+        } catch (e) {
+          pdf.extracting = false;
+          failed++;
+        }
+
+        completed++;
+        renderAccountPdfs();
+
+        // Save batch every 10 extractions
+        if (Object.keys(datesToSave).length >= 10) {
+          await saveDatesToCache(datesToSave);
+          Object.keys(datesToSave).forEach(k => delete datesToSave[k]);
+        }
+      }
+
+      // Save any remaining dates
+      await saveDatesToCache(datesToSave);
+
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'EXTRACT DATES';
+      }
+
+      const remaining = accountPdfsData.filter(p => !p.service_start && !p.service_end).length;
+      let statusMsg = `DONE: ${extracted} DATES EXTRACTED`;
+      if (failed > 0) statusMsg += `, ${failed} FAILED`;
+      if (remaining > 0) statusMsg += ` | ${remaining} REMAINING`;
+      showExtractionStatus(statusMsg, failed > 0 ? 'warning' : 'success');
+    }
+
+    function togglePdfSelection(el, key) {
+      if (scraperState.selectedPdfs.has(key)) {
+        scraperState.selectedPdfs.delete(key);
+        el.classList.remove('selected');
+      } else {
+        scraperState.selectedPdfs.add(key);
+        el.classList.add('selected');
+      }
+      updateSelectedCount();
+      // Update select all checkbox state
+      const allRows = document.querySelectorAll('#itemList .scraper-row');
+      const selectAllCb = document.getElementById('selectAllPdfs');
+      if (selectAllCb) {
+        selectAllCb.checked = scraperState.selectedPdfs.size === allRows.length;
+      }
+    }
+
+    function toggleSelectAll() {
+      const checked = document.getElementById('selectAllPdfs').checked;
+      document.querySelectorAll('#itemList .scraper-row').forEach(el => {
+        const key = el.dataset.key;
+        if (key) {
+          if (checked) {
+            scraperState.selectedPdfs.add(key);
+            el.classList.add('selected');
+          } else {
+            scraperState.selectedPdfs.delete(key);
+            el.classList.remove('selected');
+          }
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+      const count = scraperState.selectedPdfs.size;
+      document.getElementById('selectedCount').textContent = count;
+      document.getElementById('importSelectedBtn').disabled = count === 0;
+    }
+
+    async function importSelected() {
+      const keys = Array.from(scraperState.selectedPdfs);
+      if (keys.length === 0) {
+        alert('No files selected');
+        return;
+      }
+
+      const btn = document.getElementById('importSelectedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Importing...';
+
+      try {
+        const r = await fetch('/api/scraper/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keys })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Import failed');
+
+        // Close modal
+        closeScraperModal();
+
+        // Show imported files in the upload summary
+        uploadSummary.style.display = 'flex';
+        stats = { queued: 0, uploading: 0, success: data.imported || 0, failed: data.failed || 0 };
+        updateStats();
+
+        // Show the imported file details in the error list area (repurposed as info list)
+        if (data.details && data.details.length > 0) {
+          const importedHtml = data.details.map(d => {
+            const filename = d.source.split('/').pop();
+            return `<div style="color:#166534">Imported: ${escapeHtml(filename)}</div>`;
+          }).join('');
+          const failedHtml = (data.errors || []).map(e => {
+            const filename = e.key.split('/').pop();
+            return `<div style="color:#dc2626">Failed: ${escapeHtml(filename)} - ${escapeHtml(e.error)}</div>`;
+          }).join('');
+          errorList.innerHTML = importedHtml + failedHtml;
+          errorList.style.display = 'block';
+          errorList.style.maxHeight = '250px';
+        }
+
+        // Show success message
+        if (data.imported > 0) {
+          progressWrap.style.display = 'block';
+          progressFill.style.width = '100%';
+          progressFill.style.background = 'linear-gradient(90deg,#10b981,#059669)';
+        }
+
+      } catch (e) {
+        alert('Import error: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Import Selected';
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    function escapeAttr(text) {
+      return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>

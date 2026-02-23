@@ -1,0 +1,18 @@
+[
+  {
+    "IndexName": "ubi-period-index",
+    "KeySchema": [
+      {
+        "AttributeName": "ubi_period",
+        "KeyType": "HASH"
+      }
+    ],
+    "Projection": {
+      "ProjectionType": "ALL"
+    },
+    "ProvisionedThroughput": {
+      "ReadCapacityUnits": 5,
+      "WriteCapacityUnits": 5
+    }
+  }
+]

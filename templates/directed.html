@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DAILY WORK PLAN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px;font-family:inherit}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.success{background:#059669}
+    .btn.small{padding:4px 8px;font-size:11px}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 20px}
+    h1{margin:0 0 16px 0;color:#fff}
+
+    /* Stats Ribbon */
+    .stats-ribbon{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+    .stat-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:12px 20px;min-width:130px;text-align:center}
+    .stat-card .value{font-size:28px;font-weight:700;display:block}
+    .stat-card .label{font-size:12px;opacity:.8}
+    .stat-card.completed .value{color:#166534}
+    .stat-card.remaining .value{color:#c2410c}
+
+    /* Progress Bar */
+    .progress-wrap{margin-bottom:24px}
+    .progress-bar{height:8px;background:rgba(255,255,255,.3);border-radius:4px;overflow:hidden}
+    .progress-bar .fill{height:100%;background:#fff;border-radius:4px;transition:width .3s}
+    .progress-label{font-size:11px;color:#fff;opacity:.8;margin-top:4px;text-align:right}
+
+    /* Section Headers */
+    .section-header{display:flex;align-items:center;gap:12px;padding:16px 20px;background:rgba(255,255,255,.15);border-radius:12px 12px 0 0;color:#fff;font-weight:700;font-size:15px;margin-top:20px;cursor:pointer;user-select:none}
+    .section-header .count{font-weight:400;font-size:12px;opacity:.7}
+    .section-header .arrow{transition:transform .2s}
+    .section-header.collapsed .arrow{transform:rotate(-90deg)}
+
+    /* Provider/Property Group Headers */
+    .group-header{display:flex;align-items:center;gap:10px;padding:10px 20px;background:#f1f5f9;border-bottom:1px solid #e5e7eb;font-weight:600;font-size:13px;cursor:pointer;user-select:none}
+    .group-header .arrow{font-size:10px;transition:transform .2s}
+    .group-header.collapsed .arrow{transform:rotate(-90deg)}
+    .group-header .group-stats{margin-left:auto;font-weight:400;font-size:11px;color:#64748b}
+
+    /* Task Card */
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:0 0 16px 16px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden;margin-bottom:0}
+    .task-list{background:#fff}
+    .task-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #f1f5f9;font-size:12px;transition:background .1s}
+    .task-row:hover{background:#f0f9ff}
+    .task-row.active{background:#dbeafe;border-left:3px solid #2563eb}
+    .task-row.completed{background:#f0fdf4;opacity:.6}
+    .task-row.incomplete{background:#fef2f2;opacity:.6}
+    .task-row.vacant{color:#64748b}
+
+    /* Status Badges */
+    .status-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
+    .status-VERY_LATE{background:#fecaca;color:#b91c1c}
+    .status-LATE{background:#fed7aa;color:#c2410c}
+    .status-SLIGHTLY_LATE{background:#fef08a;color:#a16207}
+    .status-DUE_SOON{background:#bfdbfe;color:#1d4ed8}
+    .status-ON_TRACK{background:#bbf7d0;color:#166534}
+
+    .type-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600}
+    .type-badge.collection{background:#dbeafe;color:#1d4ed8}
+    .type-badge.processing{background:#d1fae5;color:#059669}
+
+    .house-label{font-weight:700;color:#0f172a}
+    .vacant-label{font-weight:400;color:#94a3b8;font-size:10px}
+
+    .source-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:8px;font-size:10px;background:#f1f5f9;color:#475569}
+    .source-tag.scraper{background:#d1fae5;color:#059669}
+    .source-tag.portal{background:#dbeafe;color:#1d4ed8}
+    .source-tag.mail{background:#fef3c7;color:#92400e}
+
+    .amount{font-family:monospace;font-size:11px;color:#64748b}
+
+    .task-actions{margin-left:auto;display:flex;gap:4px;flex-shrink:0}
+
+    /* Timer */
+    .timer{font-family:monospace;font-size:11px;color:#64748b;min-width:50px}
+
+    /* Property/Account cols */
+    .col-property{min-width:140px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .col-account{min-width:90px;font-family:monospace;font-size:11px}
+    .col-vendor{min-width:100px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+    /* End of Day Section */
+    .eod-section{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;padding:24px;margin-top:24px}
+    .eod-section h2{margin:0 0 16px 0;font-size:16px}
+    .eod-task{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #e5e7eb}
+    .eod-task:last-child{border:none}
+    .eod-task .info{flex:1;font-size:12px}
+    .eod-task select{padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;min-width:180px}
+    .eod-task textarea{width:100%;padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;min-height:40px;resize:vertical;margin-top:4px}
+
+    /* Toast */
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:60;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* Loading overlay */
+    .loading-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center}
+    .loading-overlay.show{display:flex}
+    .loading-box{background:#fff;border-radius:16px;padding:32px 48px;text-align:center;font-weight:600}
+    .spinner{display:inline-block;width:32px;height:32px;border:3px solid #e5e7eb;border-top-color:#0ea5e9;border-radius:50%;animation:spin .6s linear infinite;margin-bottom:12px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* History Drawer */
+    .drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+    .drawer-mask.open{opacity:1;pointer-events:auto}
+    .drawer{position:fixed;top:0;right:-480px;width:480px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:41;display:flex;flex-direction:column}
+    .drawer.open{right:0}
+    .drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
+    .drawer .body{flex:1;overflow:auto;padding:16px 18px}
+    .history-day{margin-bottom:20px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+    .history-day .day-header{padding:10px 14px;background:#f8fafc;font-weight:600;font-size:13px;display:flex;justify-content:space-between}
+    .history-day .day-body{padding:10px 14px;font-size:12px}
+    .history-day .incomplete-item{padding:4px 0;color:#b91c1c}
+
+    .empty-state{text-align:center;padding:60px 20px;color:#64748b}
+    .empty-state .icon{font-size:48px;margin-bottom:12px}
+    .empty-state h3{margin:0 0 8px 0;color:#334155}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn success" onclick="generatePlan()">Generate Plan</button>
+      <button class="btn" onclick="openHistory()">History</button>
+      <a class="btn" href="/workflow">Workflow</a>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-box"><div class="spinner"></div><div id="loadingText">Loading...</div></div>
+  </div>
+
+  <div class="wrap">
+    <h1>DAILY WORK PLAN <span id="planDate" style="font-size:16px;font-weight:400;opacity:.7"></span></h1>
+
+    <!-- Stats Ribbon -->
+    <div class="stats-ribbon" id="statsRibbon">
+      <div class="stat-card"><span class="value" id="statPlanned">-</span><span class="label">Planned</span></div>
+      <div class="stat-card completed"><span class="value" id="statCompleted">-</span><span class="label">Completed</span></div>
+      <div class="stat-card remaining"><span class="value" id="statRemaining">-</span><span class="label">Remaining</span></div>
+      <div class="stat-card"><span class="value" id="statTime">-</span><span class="label">Est. Time Left</span></div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+      <div class="progress-label" id="progressLabel">0% complete</div>
+    </div>
+
+    <!-- Plan Content -->
+    <div id="planContent"></div>
+
+    <!-- End of Day Section (hidden until triggered) -->
+    <div class="eod-section" id="eodSection" style="display:none">
+      <h2>End of Day - Incomplete Tasks</h2>
+      <p style="font-size:12px;color:#64748b;margin-bottom:16px">Please select a reason for each task you weren't able to complete today.</p>
+      <div id="eodTasks"></div>
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn secondary" onclick="cancelEod()">Cancel</button>
+        <button class="btn danger" onclick="submitEndOfDay()">Submit Day Summary</button>
+      </div>
+    </div>
+
+    <!-- End My Day button -->
+    <div style="margin-top:24px;text-align:center" id="eodButtonWrap">
+      <button class="btn danger" onclick="showEodSection()" id="eodButton" style="display:none;padding:12px 32px;font-size:14px">End My Day</button>
+    </div>
+  </div>
+
+  <!-- History Drawer -->
+  <div class="drawer-mask" id="drawerMask" onclick="closeHistory()"></div>
+  <div class="drawer" id="historyDrawer">
+    <header><h3 style="margin:0">Plan History (7 days)</h3><button class="btn small secondary" onclick="closeHistory()">Close</button></header>
+    <div class="body" id="historyBody"><div class="loading">Loading...</div></div>
+  </div>
+
+<script>
+let plan = null;
+let taskTimers = {};
+let activeTaskId = null;
+let reasonCodes = [];
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', async () => {
+  const [planResp, codesResp] = await Promise.all([
+    fetch('/api/directed/plan'),
+    fetch('/api/directed/reason-codes')
+  ]);
+  const planData = await planResp.json();
+  const codesData = await codesResp.json();
+  reasonCodes = codesData.codes || [];
+  if (planData.plan) {
+    plan = planData.plan;
+    render();
+  } else {
+    showEmpty();
+  }
+});
+
+function showEmpty() {
+  document.getElementById('planContent').innerHTML = `
+    <div class="empty-state">
+      <div class="icon">&#128203;</div>
+      <h3>No plan for today</h3>
+      <p>Click <strong>Generate Plan</strong> to build today's work plan based on your processing rate and current priorities.</p>
+    </div>`;
+  document.getElementById('eodButton').style.display = 'none';
+}
+
+// --- Generate ---
+async function generatePlan() {
+  showLoading('Generating your daily plan...');
+  try {
+    const genResp = await fetch('/api/directed/generate', { method: 'POST' });
+    const genData = await genResp.json();
+    if (!genResp.ok || genData.error) {
+      toast('Error generating plan: ' + (genData.error || 'unknown error'), 'err');
+      hideLoading();
+      return;
+    }
+    const resp = await fetch('/api/directed/plan');
+    const data = await resp.json();
+    plan = data.plan;
+    render();
+    toast('Plan generated!', 'ok');
+  } catch (e) {
+    toast('Error generating plan: ' + e.message, 'err');
+  }
+  hideLoading();
+}
+
+// --- Render ---
+function render() {
+  if (!plan || !plan.tasks || !plan.tasks.length) { showEmpty(); return; }
+
+  document.getElementById('planDate').textContent = plan.planDate || '';
+  renderStats();
+  renderTasks();
+
+  const pending = plan.tasks.filter(t => t.status === 'pending');
+  document.getElementById('eodButton').style.display = pending.length > 0 ? 'inline-block' : 'none';
+}
+
+function renderStats() {
+  if (!plan) return;
+  const stats = plan.stats || {};
+  const completed = stats.completedCount || 0;
+  const total = stats.totalTasks || 0;
+  const remaining = total - completed - (stats.incompleteCount || 0);
+  const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+
+  document.getElementById('statPlanned').textContent = total;
+  document.getElementById('statCompleted').textContent = completed;
+  document.getElementById('statRemaining').textContent = remaining;
+
+  // Estimate remaining time
+  const rate = plan.userRate || {};
+  const avgColl = (rate.avgCollectionSec || 180) / 60;
+  const avgProc = (rate.avgProcessingSec || 60) / 60;
+  let estMin = 0;
+  for (const t of (plan.tasks || [])) {
+    if (t.status !== 'pending') continue;
+    estMin += t.taskType === 'collection' ? avgColl : avgProc;
+  }
+  const hrs = Math.floor(estMin / 60);
+  const mins = Math.round(estMin % 60);
+  document.getElementById('statTime').textContent = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent = `${pct}% complete (${completed}/${total})`;
+}
+
+function renderTasks() {
+  const container = document.getElementById('planContent');
+  const tasks = plan.tasks || [];
+
+  const houseTasks = tasks.filter(t => t.isHouse);
+  const vacantTasks = tasks.filter(t => !t.isHouse);
+
+  let html = '';
+
+  // House section
+  if (houseTasks.length) {
+    const houseEst = houseTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
+    html += `<div class="section-header" onclick="toggleSection('house')">
+      <span class="arrow" id="arrow_house">&#9660;</span>
+      HOUSE ACCOUNTS
+      <span class="count">${houseTasks.length} tasks, ~${Math.round(houseEst)} min</span>
+    </div>`;
+    html += `<div class="card" id="section_house">` + renderGroupedTasks(houseTasks, 'provider') + `</div>`;
+  }
+
+  // Vacant section
+  if (vacantTasks.length) {
+    const vacantEst = vacantTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
+    html += `<div class="section-header" onclick="toggleSection('vacant')">
+      <span class="arrow" id="arrow_vacant">&#9660;</span>
+      VACANT ACCOUNTS
+      <span class="count">${vacantTasks.length} tasks, ~${Math.round(vacantEst)} min</span>
+    </div>`;
+    html += `<div class="card" id="section_vacant">` + renderGroupedTasks(vacantTasks, 'property') + `</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function renderGroupedTasks(tasks, groupBy) {
+  // Group tasks
+  const groups = {};
+  for (const t of tasks) {
+    const key = groupBy === 'provider'
+      ? (t.providerGroup || t.vendorName || 'Unknown')
+      : (t.propertyName || 'Unknown');
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  }
+
+  let html = '<div class="task-list">';
+  for (const [groupName, groupTasks] of Object.entries(groups)) {
+    const groupEst = groupTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
+    const gid = 'g_' + groupName.replace(/\W/g, '_');
+    html += `<div class="group-header" onclick="toggleGroup('${gid}')">
+      <span class="arrow" id="arrow_${gid}">&#9660;</span>
+      <strong>${esc(groupName.toUpperCase())}</strong>
+      <span class="group-stats">${groupTasks.length} tasks, ~${Math.round(groupEst)} min</span>
+    </div>`;
+    html += `<div id="group_${gid}">`;
+    for (const t of groupTasks) {
+      html += renderTaskRow(t);
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderTaskRow(t) {
+  const isActive = activeTaskId === t.taskId;
+  const cls = ['task-row'];
+  if (isActive) cls.push('active');
+  if (t.status === 'completed') cls.push('completed');
+  if (t.status === 'incomplete') cls.push('incomplete');
+  if (!t.isHouse) cls.push('vacant');
+
+  // Source tag
+  let sourceHtml = '';
+  const src = t.source || {};
+  if (src.resolution === 'scraper') {
+    sourceHtml = `<span class="source-tag scraper">Scraper PDF (${src.scraperPdfCount || '?'})</span>`;
+  } else if (src.resolution === 'portal') {
+    const url = src.portalUrl || '';
+    const user = src.portalUsername || '';
+    sourceHtml = `<span class="source-tag portal">Portal${url ? ': ' + esc(url) : ''}${user ? ' | ' + esc(user) : ''}</span>`;
+  } else if (src.resolution === 'mail') {
+    sourceHtml = `<span class="source-tag mail">Check mail</span>`;
+  } else if (src.resolution === 'pipeline') {
+    sourceHtml = `<span class="source-tag">${t.subType || 'pipeline'}</span>`;
+  }
+
+  // Timer
+  let timerHtml = '';
+  if (isActive && taskTimers[t.taskId]) {
+    timerHtml = `<span class="timer" id="timer_${t.taskId}">0:00</span>`;
+  }
+
+  // Actions
+  let actionsHtml = '';
+  if (t.status === 'pending') {
+    if (!isActive) {
+      actionsHtml = `<button class="btn small" onclick="startTask('${t.taskId}')">Start</button>`;
+    } else {
+      if (t.taskType === 'collection') {
+        actionsHtml = `
+          <button class="btn small success" onclick="completeTask('${t.taskId}','imported')">Imported</button>
+          <button class="btn small" onclick="completeTask('${t.taskId}','logged_portal')">Portal</button>
+          <button class="btn small secondary" onclick="completeTask('${t.taskId}','checked_mail')">Mail</button>
+          <button class="btn small" style="background:#94a3b8" onclick="markIncomplete('${t.taskId}')">Skip</button>`;
+      } else {
+        const link = t.subType === 'review' ? `/invoices?pdf_id=${t.pdfId || ''}` :
+                     t.subType === 'post' ? `/post` : `/billback`;
+        actionsHtml = `
+          <a class="btn small" href="${link}" target="_blank">Open</a>
+          <button class="btn small success" onclick="completeTask('${t.taskId}','processed')">Done</button>
+          <button class="btn small" style="background:#94a3b8" onclick="markIncomplete('${t.taskId}')">Skip</button>`;
+      }
+    }
+  } else if (t.status === 'completed') {
+    actionsHtml = `<span style="color:#059669;font-size:11px">&#10003; ${t.completedAction || 'done'}</span>`;
+  } else if (t.status === 'incomplete') {
+    actionsHtml = `<span style="color:#b91c1c;font-size:11px">${t.incompleteReason || 'skipped'}</span>`;
+  }
+
+  const houseLabel = t.isHouse
+    ? `<span class="house-label">HOUSE</span>`
+    : `<span class="vacant-label">VACANT</span>`;
+
+  return `<div class="${cls.join(' ')}" data-task-id="${t.taskId}">
+    <span class="status-badge status-${t.urgencyStatus || 'ON_TRACK'}">${(t.urgencyStatus || '').replace('_',' ')}</span>
+    <span class="type-badge ${t.taskType}">${t.taskType}</span>
+    ${houseLabel}
+    <span class="col-property" title="${esc(t.propertyName)}">${esc(t.propertyName)}</span>
+    <span class="col-vendor" title="${esc(t.vendorName)}">${esc(t.vendorName)}</span>
+    <span class="col-account">${esc(t.accountNumber)}</span>
+    <span class="amount">${t.avgAmount ? '$' + t.avgAmount.toLocaleString() : ''}</span>
+    ${sourceHtml}
+    ${timerHtml}
+    <div class="task-actions">${actionsHtml}</div>
+  </div>`;
+}
+
+// --- Task Actions ---
+function startTask(taskId) {
+  activeTaskId = taskId;
+  taskTimers[taskId] = Date.now();
+  renderTasks();
+  // Start timer updates
+  const interval = setInterval(() => {
+    if (activeTaskId !== taskId) { clearInterval(interval); return; }
+    const el = document.getElementById('timer_' + taskId);
+    if (!el) { clearInterval(interval); return; }
+    const sec = Math.round((Date.now() - taskTimers[taskId]) / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    el.textContent = m + ':' + String(s).padStart(2, '0');
+  }, 1000);
+}
+
+async function completeTask(taskId, action) {
+  const duration = taskTimers[taskId] ? Math.round((Date.now() - taskTimers[taskId]) / 1000) : 0;
+  try {
+    const resp = await fetch('/api/directed/complete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ taskId, action, durationSec: duration })
+    });
+    const data = await resp.json();
+    if (!data.ok) { toast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
+    const task = plan.tasks.find(t => t.taskId === taskId);
+    if (task) {
+      task.status = 'completed';
+      task.completedAction = action;
+      task.completedAt = new Date().toISOString();
+    }
+    plan.stats.completedCount = plan.tasks.filter(t => t.status === 'completed').length;
+    if (activeTaskId === taskId) activeTaskId = null;
+    render();
+    toast('Task completed', 'ok');
+  } catch (e) {
+    toast('Error: ' + e.message, 'err');
+  }
+}
+
+async function markIncomplete(taskId) {
+  // Quick skip with "ran_out_of_time" reason; user can change in EOD
+  try {
+    const resp = await fetch('/api/directed/incomplete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ taskId, reasonCode: 'ran_out_of_time', notes: '' })
+    });
+    const data = await resp.json();
+    if (!data.ok) { toast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
+    const task = plan.tasks.find(t => t.taskId === taskId);
+    if (task) {
+      task.status = 'incomplete';
+      task.incompleteReason = 'ran_out_of_time';
+    }
+    plan.stats.incompleteCount = plan.tasks.filter(t => t.status === 'incomplete').length;
+    if (activeTaskId === taskId) activeTaskId = null;
+    render();
+  } catch (e) {
+    toast('Error: ' + e.message, 'err');
+  }
+}
+
+// --- End of Day ---
+function showEodSection() {
+  const pending = plan.tasks.filter(t => t.status === 'pending');
+  if (!pending.length) { toast('All tasks completed!', 'ok'); return; }
+
+  let html = '';
+  for (const t of pending) {
+    html += `<div class="eod-task">
+      <div class="info">
+        <strong>${esc(t.propertyName)}</strong> - ${esc(t.vendorName)} - ${esc(t.accountNumber)}
+        <br><span class="status-badge status-${t.urgencyStatus}">${(t.urgencyStatus || '').replace('_',' ')}</span>
+        <span class="type-badge ${t.taskType}">${t.taskType}</span>
+      </div>
+      <div>
+        <select id="reason_${t.taskId}">
+          <option value="">Select reason...</option>
+          ${reasonCodes.map(c => `<option value="${c.code}">${esc(c.label)}</option>`).join('')}
+        </select>
+        <textarea id="notes_${t.taskId}" placeholder="Optional notes..."></textarea>
+      </div>
+    </div>`;
+  }
+  document.getElementById('eodTasks').innerHTML = html;
+  document.getElementById('eodSection').style.display = 'block';
+  document.getElementById('eodButtonWrap').style.display = 'none';
+  document.getElementById('eodSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function cancelEod() {
+  document.getElementById('eodSection').style.display = 'none';
+  document.getElementById('eodButtonWrap').style.display = 'block';
+}
+
+async function submitEndOfDay() {
+  const pending = plan.tasks.filter(t => t.status === 'pending');
+  const incompletes = [];
+  for (const t of pending) {
+    const reason = document.getElementById('reason_' + t.taskId)?.value;
+    const notes = document.getElementById('notes_' + t.taskId)?.value || '';
+    if (!reason) {
+      toast('Please select a reason for all tasks', 'err');
+      return;
+    }
+    incompletes.push({ taskId: t.taskId, reasonCode: reason, notes });
+  }
+
+  showLoading('Submitting day summary...');
+  try {
+    const resp = await fetch('/api/directed/end-of-day', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ incompletes })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      // Update local plan
+      for (const item of incompletes) {
+        const task = plan.tasks.find(t => t.taskId === item.taskId);
+        if (task) {
+          task.status = 'incomplete';
+          task.incompleteReason = item.reasonCode;
+          task.incompleteNotes = item.notes;
+        }
+      }
+      plan.stats.incompleteCount = plan.tasks.filter(t => t.status === 'incomplete').length;
+      document.getElementById('eodSection').style.display = 'none';
+      render();
+      toast(`Day complete! ${data.completed} done, ${data.incomplete} incomplete`, 'ok');
+    } else {
+      toast('Error: ' + (data.error || 'Unknown'), 'err');
+    }
+  } catch (e) {
+    toast('Error: ' + e.message, 'err');
+  }
+  hideLoading();
+}
+
+// --- History Drawer ---
+async function openHistory() {
+  document.getElementById('drawerMask').classList.add('open');
+  document.getElementById('historyDrawer').classList.add('open');
+  document.getElementById('historyBody').innerHTML = '<div class="loading">Loading...</div>';
+
+  try {
+    const resp = await fetch('/api/directed/history?days=7');
+    const data = await resp.json();
+    const history = data.history || [];
+
+    if (!history.length) {
+      document.getElementById('historyBody').innerHTML = '<p style="color:#64748b">No history yet.</p>';
+      return;
+    }
+
+    let html = '';
+    for (const day of history) {
+      const completed = day.totalCompleted || 0;
+      const incomplete = day.totalIncomplete || 0;
+      const total = day.totalPlanned || 0;
+      const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+
+      html += `<div class="history-day">
+        <div class="day-header">
+          <span>${day.planDate}</span>
+          <span>${completed}/${total} (${pct}%)</span>
+        </div>
+        <div class="day-body">`;
+
+      if (day.incompletes && day.incompletes.length) {
+        html += '<div style="margin-top:4px"><strong style="font-size:11px;color:#b91c1c">Incomplete:</strong>';
+        for (const inc of day.incompletes) {
+          const label = reasonCodes.find(c => c.code === inc.reasonCode)?.label || inc.reasonCode;
+          html += `<div class="incomplete-item">${esc(inc.accountKey || '')} - ${esc(label)}${inc.notes ? ': ' + esc(inc.notes) : ''}</div>`;
+        }
+        html += '</div>';
+      }
+      html += '</div></div>';
+    }
+    document.getElementById('historyBody').innerHTML = html;
+  } catch (e) {
+    document.getElementById('historyBody').innerHTML = '<p style="color:#b91c1c">Error loading history</p>';
+  }
+}
+
+function closeHistory() {
+  document.getElementById('drawerMask').classList.remove('open');
+  document.getElementById('historyDrawer').classList.remove('open');
+}
+
+// --- Toggle sections ---
+function toggleSection(id) {
+  const el = document.getElementById('section_' + id);
+  const arrow = document.getElementById('arrow_' + id);
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = '';
+    if (arrow) arrow.innerHTML = '&#9660;';
+  } else {
+    el.style.display = 'none';
+    if (arrow) arrow.innerHTML = '&#9654;';
+  }
+}
+
+function toggleGroup(gid) {
+  const el = document.getElementById('group_' + gid);
+  const arrow = document.getElementById('arrow_' + gid);
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = '';
+    if (arrow) arrow.innerHTML = '&#9660;';
+  } else {
+    el.style.display = 'none';
+    if (arrow) arrow.innerHTML = '&#9654;';
+  }
+}
+
+// --- Utilities ---
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+function showLoading(text) {
+  document.getElementById('loadingText').textContent = text || 'Loading...';
+  document.getElementById('loadingOverlay').classList.add('show');
+}
+function hideLoading() { document.getElementById('loadingOverlay').classList.remove('show'); }
+
+function toast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + (type || '');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>

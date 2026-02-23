@@ -1,0 +1,96 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowListBucketOnPipelinePrefixes",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "Bill_Parser_1_Pending_Parsing/*",
+            "Bill_Parser_2_Parsed_Inputs/*",
+            "Bill_Parser_3_Parsed_Outputs/*",
+            "Bill_Parser_Failed_Jobs/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowGetFromPendingParsing",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_1_Pending_Parsing/*"
+    },
+    {
+      "Sid": "AllowGetFromParsedInputs",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_2_Parsed_Inputs/*"
+    },
+    {
+      "Sid": "AllowPutToParsedInputs",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_2_Parsed_Inputs/*"
+    },
+    {
+      "Sid": "AllowPutToParsedOutputs",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_3_Parsed_Outputs/*"
+    },
+    {
+      "Sid": "AllowPutToFailedJobs",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_Failed_Jobs/*"
+    },
+    {
+      "Sid": "AllowGetFromEnrichmentExports",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_Enrichment/exports/*"
+    },
+    {
+      "Sid": "AllowListBucketOnEnrichmentExports",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "Bill_Parser_Enrichment/exports/*"
+        }
+      }
+    },
+    {
+      "Sid": "AllowGetParserAndMatcherSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:us-east-1:789814232318:secret:gemini/parser-keys*",
+        "arn:aws:secretsmanager:us-east-1:789814232318:secret:gemini/matcher-keys*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knowledge Base - Bill Review @ JRK</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#1e293b;line-height:1.5}
+    .top{background:linear-gradient(135deg,#1e40af 0%,#3b82f6 100%);color:#fff;padding:12px 24px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+    .top a{color:#fff;text-decoration:none;font-weight:600}
+    .container{max-width:1400px;margin:0 auto;padding:24px}
+    .page-title{font-size:24px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:12px}
+    .page-title .icon{font-size:28px}
+
+    /* Layout */
+    .layout{display:grid;grid-template-columns:300px 1fr;gap:24px}
+    @media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+    /* Sidebar */
+    .sidebar{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);height:fit-content;position:sticky;top:80px}
+    .sidebar h3{font-size:14px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px}
+    .filter-group{margin-bottom:20px}
+    .filter-group label{display:block;font-size:13px;font-weight:500;margin-bottom:6px;color:#475569}
+    .filter-group select,.filter-group input{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;background:#fff}
+    .filter-group select:focus,.filter-group input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
+
+    /* Entity type buttons */
+    .entity-types{display:flex;gap:8px;margin-bottom:16px}
+    .entity-type-btn{flex:1;padding:10px;border:2px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;font-weight:500;text-align:center;transition:all 0.15s}
+    .entity-type-btn:hover{border-color:#3b82f6;background:#eff6ff}
+    .entity-type-btn.active{border-color:#3b82f6;background:#3b82f6;color:#fff}
+
+    /* Main content */
+    .main{min-width:0}
+
+    /* Add note button */
+    .add-note-btn{background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);color:#fff;border:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:20px;transition:all 0.15s}
+    .add-note-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(59,130,246,0.3)}
+
+    /* Notes list */
+    .notes-list{display:flex;flex-direction:column;gap:16px}
+    .note-card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);border-left:4px solid #3b82f6}
+    .note-card.category-billing_pattern{border-left-color:#8b5cf6}
+    .note-card.category-expected_values{border-left-color:#10b981}
+    .note-card.category-common_issues{border-left-color:#f59e0b}
+    .note-card.category-special_rules{border-left-color:#ef4444}
+    .note-card.category-gl_mapping{border-left-color:#06b6d4}
+    .note-card.category-gotchas{border-left-color:#ec4899}
+
+    .note-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+    .note-entity{font-size:16px;font-weight:600;color:#1e293b}
+    .note-entity-type{font-size:11px;font-weight:500;color:#fff;background:#64748b;padding:2px 8px;border-radius:4px;margin-left:8px}
+    .note-entity-type.vendor{background:#3b82f6}
+    .note-entity-type.property{background:#10b981}
+    .note-entity-type.account{background:#f59e0b}
+
+    .note-meta{display:flex;gap:12px;align-items:center;font-size:12px;color:#64748b}
+    .note-category{background:#f1f5f9;padding:4px 10px;border-radius:4px;font-weight:500}
+    .note-confidence{display:flex;align-items:center;gap:4px}
+    .note-confidence.high{color:#10b981}
+    .note-confidence.medium{color:#f59e0b}
+    .note-confidence.low{color:#ef4444}
+
+    .note-content{font-size:14px;color:#334155;margin-bottom:16px;white-space:pre-wrap;line-height:1.6}
+
+    .note-footer{display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid #f1f5f9}
+    .note-author{font-size:12px;color:#64748b}
+    .note-author strong{color:#1e293b}
+    .note-tags{display:flex;gap:6px;flex-wrap:wrap}
+    .note-tag{font-size:11px;background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:4px}
+
+    .note-actions{display:flex;gap:8px}
+    .note-action-btn{background:none;border:1px solid #e2e8f0;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer;transition:all 0.15s}
+    .note-action-btn:hover{background:#f8fafc;border-color:#cbd5e1}
+    .note-action-btn.verify{color:#10b981;border-color:#10b981}
+    .note-action-btn.verify:hover{background:#ecfdf5}
+    .note-action-btn.edit{color:#3b82f6;border-color:#3b82f6}
+    .note-action-btn.edit:hover{background:#eff6ff}
+    .note-action-btn.delete{color:#ef4444;border-color:#ef4444}
+    .note-action-btn.delete:hover{background:#fef2f2}
+
+    .verified-by{display:flex;align-items:center;gap:4px;font-size:11px;color:#10b981;margin-top:8px}
+    .verified-by .icon{font-size:14px}
+
+    /* Empty state */
+    .empty-state{text-align:center;padding:60px 20px;color:#64748b}
+    .empty-state .icon{font-size:48px;margin-bottom:16px;opacity:0.5}
+    .empty-state h3{font-size:18px;color:#1e293b;margin-bottom:8px}
+
+    /* Modal */
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;justify-content:center;align-items:center}
+    .modal-overlay.active{display:flex}
+    .modal{background:#fff;border-radius:16px;width:100%;max-width:600px;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
+    .modal-header{padding:20px 24px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center}
+    .modal-header h2{font-size:18px;font-weight:600}
+    .modal-close{background:none;border:none;font-size:24px;cursor:pointer;color:#64748b;padding:4px}
+    .modal-close:hover{color:#1e293b}
+    .modal-body{padding:24px}
+    .modal-footer{padding:16px 24px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:12px}
+
+    /* Form */
+    .form-group{margin-bottom:20px}
+    .form-group label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#475569}
+    .form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px}
+    .form-group textarea{min-height:150px;resize:vertical;font-family:inherit}
+    .form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
+    .form-hint{font-size:12px;color:#64748b;margin-top:4px}
+
+    .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media(max-width:500px){.form-row{grid-template-columns:1fr}}
+
+    .btn{padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.15s}
+    .btn-primary{background:#3b82f6;color:#fff;border:none}
+    .btn-primary:hover{background:#2563eb}
+    .btn-secondary{background:#fff;color:#475569;border:1px solid #e2e8f0}
+    .btn-secondary:hover{background:#f8fafc;border-color:#cbd5e1}
+
+    /* Stats */
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+    @media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}}
+    .stat-card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+    .stat-value{font-size:28px;font-weight:700;color:#1e293b}
+    .stat-label{font-size:12px;color:#64748b;margin-top:4px}
+
+    /* Loading */
+    .loading{text-align:center;padding:40px;color:#64748b}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/">Bill Review @ JRK</a> &nbsp;/&nbsp; Knowledge Base</div>
+    <div>{{ user }}</div>
+  </header>
+
+  <div class="container">
+    <h1 class="page-title"><span class="icon">📚</span> AP Knowledge Base</h1>
+
+    <div class="stats" id="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="statTotal">-</div>
+        <div class="stat-label">Total Notes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statVendors">-</div>
+        <div class="stat-label">Vendor Notes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statProperties">-</div>
+        <div class="stat-label">Property Notes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statContributors">-</div>
+        <div class="stat-label">Contributors</div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <h3>Filters</h3>
+
+        <div class="filter-group">
+          <label>Entity Type</label>
+          <div class="entity-types">
+            <button class="entity-type-btn active" data-type="">All</button>
+            <button class="entity-type-btn" data-type="vendor">Vendor</button>
+            <button class="entity-type-btn" data-type="property">Property</button>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label>Category</label>
+          <select id="filterCategory">
+            <option value="">All Categories</option>
+            <option value="billing_pattern">Billing Pattern</option>
+            <option value="expected_values">Expected Values</option>
+            <option value="common_issues">Common Issues</option>
+            <option value="special_rules">Special Rules</option>
+            <option value="gl_mapping">GL Mapping</option>
+            <option value="gotchas">Gotchas</option>
+            <option value="contacts">Contacts</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label>Search</label>
+          <input type="text" id="filterSearch" placeholder="Search notes...">
+        </div>
+
+        <div class="filter-group">
+          <label>Entity</label>
+          <input type="text" id="filterEntity" placeholder="Vendor or property name...">
+        </div>
+      </aside>
+
+      <main class="main">
+        <button class="add-note-btn" onclick="openAddModal()">
+          <span>+</span> Add Knowledge Note
+        </button>
+
+        <div class="notes-list" id="notesList">
+          <div class="loading">Loading notes...</div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Add/Edit Modal -->
+  <div class="modal-overlay" id="noteModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Add Knowledge Note</h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editSk" value="">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Entity Type *</label>
+            <select id="noteEntityType" onchange="updateEntityPlaceholder()">
+              <option value="vendor">Vendor</option>
+              <option value="property">Property</option>
+              <option value="account">Account</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Category *</label>
+            <select id="noteCategory">
+              <option value="expected_values">Expected Values</option>
+              <option value="billing_pattern">Billing Pattern</option>
+              <option value="common_issues">Common Issues</option>
+              <option value="special_rules">Special Rules</option>
+              <option value="gl_mapping">GL Mapping</option>
+              <option value="gotchas">Gotchas</option>
+              <option value="contacts">Contacts</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Entity ID *</label>
+            <input type="text" id="noteEntityId" placeholder="e.g., sce, edison, main_st_complex">
+            <div class="form-hint">Unique identifier (lowercase, underscores)</div>
+          </div>
+          <div class="form-group">
+            <label>Entity Name</label>
+            <input type="text" id="noteEntityName" placeholder="e.g., Southern California Edison">
+            <div class="form-hint">Display name</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Knowledge Note *</label>
+          <textarea id="noteContent" placeholder="Document what you know about this vendor/property...
+
+Examples:
+- Typical bill amounts and ranges
+- Billing frequency and due dates
+- Common issues to watch for
+- Special handling instructions"></textarea>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Tags</label>
+            <input type="text" id="noteTags" placeholder="comma, separated, tags">
+          </div>
+          <div class="form-group">
+            <label>Confidence</label>
+            <select id="noteConfidence">
+              <option value="high">High - Very certain</option>
+              <option value="medium" selected>Medium - Reasonably sure</option>
+              <option value="low">Low - Needs verification</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveNote()">Save Knowledge</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const currentUser = '{{ user }}';
+    let allNotes = [];
+    let filters = { entityType: '', category: '', search: '', entity: '' };
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      loadNotes();
+
+      // Filter listeners
+      document.querySelectorAll('.entity-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.entity-type-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          filters.entityType = btn.dataset.type;
+          renderNotes();
+        });
+      });
+
+      document.getElementById('filterCategory').addEventListener('change', e => {
+        filters.category = e.target.value;
+        renderNotes();
+      });
+
+      document.getElementById('filterSearch').addEventListener('input', debounce(e => {
+        filters.search = e.target.value.toLowerCase();
+        renderNotes();
+      }, 300));
+
+      document.getElementById('filterEntity').addEventListener('input', debounce(e => {
+        filters.entity = e.target.value.toLowerCase();
+        renderNotes();
+      }, 300));
+    });
+
+    function debounce(fn, delay) {
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), delay);
+      };
+    }
+
+    async function loadNotes() {
+      try {
+        const resp = await fetch('/api/knowledge?limit=500');
+        const data = await resp.json();
+        allNotes = data.notes || [];
+        updateStats();
+        renderNotes();
+      } catch (err) {
+        console.error('Error loading notes:', err);
+        document.getElementById('notesList').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><h3>Error loading notes</h3></div>';
+      }
+    }
+
+    function updateStats() {
+      const vendors = new Set();
+      const properties = new Set();
+      const contributors = new Set();
+
+      allNotes.forEach(n => {
+        contributors.add(n.author);
+        if (n.entity_type === 'vendor') vendors.add(n.entity_id);
+        if (n.entity_type === 'property') properties.add(n.entity_id);
+      });
+
+      document.getElementById('statTotal').textContent = allNotes.length;
+      document.getElementById('statVendors').textContent = vendors.size;
+      document.getElementById('statProperties').textContent = properties.size;
+      document.getElementById('statContributors').textContent = contributors.size;
+    }
+
+    function renderNotes() {
+      const list = document.getElementById('notesList');
+
+      // Apply filters
+      let filtered = allNotes.filter(n => {
+        if (filters.entityType && n.entity_type !== filters.entityType) return false;
+        if (filters.category && n.category !== filters.category) return false;
+        if (filters.search && !n.content.toLowerCase().includes(filters.search) && !n.entity_name.toLowerCase().includes(filters.search)) return false;
+        if (filters.entity && !n.entity_name.toLowerCase().includes(filters.entity) && !n.entity_id.toLowerCase().includes(filters.entity)) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">📝</div>
+            <h3>No notes found</h3>
+            <p>Try adjusting your filters or add a new note.</p>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = filtered.map(note => `
+        <div class="note-card category-${note.category}">
+          <div class="note-header">
+            <div>
+              <span class="note-entity">${escapeHtml(note.entity_name || note.entity_id)}</span>
+              <span class="note-entity-type ${note.entity_type}">${note.entity_type}</span>
+            </div>
+            <div class="note-meta">
+              <span class="note-category">${formatCategory(note.category)}</span>
+              <span class="note-confidence ${note.confidence}">
+                ${note.confidence === 'high' ? '✓✓' : note.confidence === 'medium' ? '✓' : '?'} ${note.confidence}
+              </span>
+            </div>
+          </div>
+          <div class="note-content">${escapeHtml(note.content)}</div>
+          ${note.tags && note.tags.length > 0 ? `
+            <div class="note-tags">
+              ${note.tags.map(t => `<span class="note-tag">${escapeHtml(t)}</span>`).join('')}
+            </div>
+          ` : ''}
+          ${note.verified_by && note.verified_by.length > 0 ? `
+            <div class="verified-by">
+              <span class="icon">✓</span> Verified by ${note.verified_by.length} other${note.verified_by.length > 1 ? 's' : ''}
+            </div>
+          ` : ''}
+          <div class="note-footer">
+            <div class="note-author">Added by <strong>${escapeHtml(note.author)}</strong> on ${formatDate(note.created_at)}</div>
+            <div class="note-actions">
+              ${note.author !== currentUser ? `<button class="note-action-btn verify" onclick="verifyNote('${escapeAttr(note.entity_type)}', '${escapeAttr(note.entity_id)}', '${escapeAttr(note.sk)}')">✓ Verify</button>` : ''}
+              ${note.author === currentUser ? `<button class="note-action-btn edit" onclick="editNote('${escapeAttr(note.entity_type)}', '${escapeAttr(note.entity_id)}', '${escapeAttr(note.sk)}')">Edit</button>` : ''}
+              ${note.author === currentUser ? `<button class="note-action-btn delete" onclick="deleteNote('${escapeAttr(note.entity_type)}', '${escapeAttr(note.entity_id)}', '${escapeAttr(note.sk)}')">Delete</button>` : ''}
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function formatCategory(cat) {
+      const map = {
+        'billing_pattern': 'Billing Pattern',
+        'expected_values': 'Expected Values',
+        'common_issues': 'Common Issues',
+        'special_rules': 'Special Rules',
+        'gl_mapping': 'GL Mapping',
+        'gotchas': 'Gotchas',
+        'contacts': 'Contacts'
+      };
+      return map[cat] || cat;
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function escapeAttr(str) {
+      if (!str) return '';
+      return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+    }
+
+    function openAddModal() {
+      document.getElementById('modalTitle').textContent = 'Add Knowledge Note';
+      document.getElementById('editSk').value = '';
+      document.getElementById('noteEntityType').value = 'vendor';
+      document.getElementById('noteCategory').value = 'expected_values';
+      document.getElementById('noteEntityId').value = '';
+      document.getElementById('noteEntityName').value = '';
+      document.getElementById('noteContent').value = '';
+      document.getElementById('noteTags').value = '';
+      document.getElementById('noteConfidence').value = 'medium';
+      document.getElementById('noteModal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('noteModal').classList.remove('active');
+    }
+
+    function editNote(entityType, entityId, sk) {
+      const note = allNotes.find(n => n.entity_type === entityType && n.entity_id === entityId && n.sk === sk);
+      if (!note) return;
+
+      document.getElementById('modalTitle').textContent = 'Edit Knowledge Note';
+      document.getElementById('editSk').value = sk;
+      document.getElementById('noteEntityType').value = note.entity_type;
+      document.getElementById('noteCategory').value = note.category;
+      document.getElementById('noteEntityId').value = note.entity_id;
+      document.getElementById('noteEntityName').value = note.entity_name;
+      document.getElementById('noteContent').value = note.content;
+      document.getElementById('noteTags').value = (note.tags || []).join(', ');
+      document.getElementById('noteConfidence').value = note.confidence;
+      document.getElementById('noteModal').classList.add('active');
+    }
+
+    async function saveNote() {
+      const entityType = document.getElementById('noteEntityType').value;
+      const entityId = document.getElementById('noteEntityId').value.trim();
+      const entityName = document.getElementById('noteEntityName').value.trim();
+      const category = document.getElementById('noteCategory').value;
+      const content = document.getElementById('noteContent').value.trim();
+      const tags = document.getElementById('noteTags').value.split(',').map(t => t.trim()).filter(t => t);
+      const confidence = document.getElementById('noteConfidence').value;
+      const editSk = document.getElementById('editSk').value;
+
+      if (!entityId || !content) {
+        alert('Entity ID and content are required.');
+        return;
+      }
+
+      try {
+        let resp;
+        if (editSk) {
+          // Update existing - MUST encode entityId since it can contain | for account types
+          resp = await fetch(`/api/knowledge/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sk: editSk, entity_name: entityName, category, content, confidence })
+          });
+        } else {
+          // Create new
+          resp = await fetch('/api/knowledge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity_type: entityType, entity_id: entityId, entity_name: entityName, category, content, tags, confidence })
+          });
+        }
+
+        const data = await resp.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+
+        closeModal();
+        loadNotes();
+      } catch (err) {
+        alert('Error saving note: ' + err.message);
+      }
+    }
+
+    async function verifyNote(entityType, entityId, sk) {
+      if (!confirm('Verify this knowledge note as accurate?')) return;
+
+      try {
+        const resp = await fetch(`/api/knowledge/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sk })
+        });
+
+        const data = await resp.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+
+        loadNotes();
+      } catch (err) {
+        alert('Error verifying note: ' + err.message);
+      }
+    }
+
+    async function deleteNote(entityType, entityId, sk) {
+      if (!confirm('Delete this knowledge note? This cannot be undone.')) return;
+
+      try {
+        const resp = await fetch(`/api/knowledge/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sk })
+        });
+
+        const data = await resp.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+
+        loadNotes();
+      } catch (err) {
+        alert('Error deleting note: ' + err.message);
+      }
+    }
+
+    function updateEntityPlaceholder() {
+      const type = document.getElementById('noteEntityType').value;
+      const idField = document.getElementById('noteEntityId');
+      const nameField = document.getElementById('noteEntityName');
+
+      if (type === 'vendor') {
+        idField.placeholder = 'e.g., sce, pg_e, socal_gas';
+        nameField.placeholder = 'e.g., Southern California Edison';
+      } else if (type === 'property') {
+        idField.placeholder = 'e.g., main_st_123, oak_park';
+        nameField.placeholder = 'e.g., Main Street Apartments';
+      } else {
+        idField.placeholder = 'e.g., prop_id|vendor_id|acct_num';
+        nameField.placeholder = 'e.g., Main St - SCE - 12345';
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+﻿{
+    "FunctionName":  "vendor-cache-builder",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:vendor-cache-builder",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/vendor-cache-lambda-role",
+    "Handler":  "build_vendor_cache.lambda_handler",
+    "CodeSize":  1071753,
+    "Description":  "",
+    "Timeout":  900,
+    "MemorySize":  512,
+    "LastModified":  "2025-10-16T20:56:35.000+0000",
+    "CodeSha256":  "Dw3BJ+cVsi/LZNeXBLE4evX2DpAjdUiS8oboOEb7Juw=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "DIM_VENDOR_PREFIX":  "Bill_Parser_Enrichment/exports/dim_vendor/",
+                                          "ENRICH_PREFIX":  "Bill_Parser_Enrichment/exports/",
+                                          "BUCKET":  "jrk-analytics-billing",
+                                          "DEBUG_CAPTURE":  "false",
+                                          "ENTRATA_CORE_SECRET_NAME":  "jrk/entrata_core",
+                                          "DIAG_BATCHES":  "0",
+                                          "DEST_PREFIX":  "vendors/",
+                                          "VENDOR_BATCH":  "100",
+                                          "DEST_BUCKET":  "api-vendor"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "de013b49-db63-418d-ad62-6b660725ed96",
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:4af3157c9dfde29be4e8f128147181e8978958ec7ddea506e754af7c3741a0a2"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/vendor-cache-builder"
+                      }
+}

@@ -1,0 +1,47 @@
+﻿{
+    "FunctionName":  "jrk-presigned-upload",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:jrk-presigned-upload",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/jrk-presigned-upload-role",
+    "Handler":  "lambda_presigned_upload.lambda_handler",
+    "CodeSize":  1502,
+    "Description":  "",
+    "Timeout":  3,
+    "MemorySize":  128,
+    "LastModified":  "2025-09-15T10:26:05.000+0000",
+    "CodeSha256":  "+TrB0blKCiCrheTzfA36i4kS1+ipendj2BGsrKI2pPk=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "ALLOWLIST_IPS":  "64.60.29.50",
+                                          "MAX_SIZE_BYTES":  "26214400",
+                                          "BUCKET":  "jrk-analytics-billing",
+                                          "EXPIRES_IN":  "600",
+                                          "PENDING_PREFIX":  "Bill_Parser_1_Pending_Parsing/"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "72a3b3b0-a0c3-447e-a3b3-948cdf83de38",
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:86ca4474369fee64939d2cf1cc596cb79bd2fda9dfc408b683e68b2072dde9c0"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/jrk-presigned-upload"
+                      }
+}

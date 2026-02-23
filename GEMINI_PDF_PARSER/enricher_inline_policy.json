@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowReadStage3Outputs",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_3_Parsed_Outputs/*"
+    },
+    {
+      "Sid": "AllowWriteStage4Outputs",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_4_Enriched_Outputs/*"
+    },
+    {
+      "Sid": "AllowReadEnrichmentExports",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_Enrichment/exports/*"
+    },
+    {
+      "Sid": "AllowListBucketPrefixes",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "Bill_Parser_3_Parsed_Outputs/*",
+            "Bill_Parser_4_Enriched_Outputs/*",
+            "Bill_Parser_Enrichment/exports/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowGetMatcherSecret",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "arn:aws:secretsmanager:us-east-1:789814232318:secret:gemini/matcher-keys*"
+    }
+  ]
+}

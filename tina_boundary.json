@@ -1,0 +1,178 @@
+{
+    "Version":  "2012-10-17",
+    "Statement":  [
+                      {
+                          "Sid":  "DenyModifyDeleteIfNotOwnedByTina",
+                          "Effect":  "Deny",
+                          "Action":  [
+                                         "s3:PutBucketPolicy",
+                                         "s3:PutBucketVersioning",
+                                         "s3:PutBucketAcl",
+                                         "s3:PutBucketPublicAccessBlock",
+                                         "s3:DeleteBucket",
+                                         "s3:PutBucketLogging",
+                                         "s3:PutBucketLifecycle*",
+                                         "s3:PutEncryptionConfiguration",
+                                         "s3:ReplicateObject",
+                                         "s3:DeleteObject*",
+                                         "s3:AbortMultipartUpload",
+                                         "s3:PutObject*",
+                                         "lambda:Update*",
+                                         "lambda:Delete*",
+                                         "lambda:AddPermission",
+                                         "lambda:RemovePermission",
+                                         "logs:PutRetentionPolicy",
+                                         "logs:Delete*",
+                                         "logs:PutResourcePolicy",
+                                         "states:Update*",
+                                         "states:Delete*",
+                                         "iam:CreatePolicyVersion",
+                                         "iam:DeletePolicy",
+                                         "iam:DeletePolicyVersion",
+                                         "iam:AttachRolePolicy",
+                                         "iam:DetachRolePolicy",
+                                         "iam:PutRolePolicy",
+                                         "iam:DeleteRolePolicy",
+                                         "iam:TagRole",
+                                         "iam:UntagRole"
+                                     ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringNotEquals":  {
+                                                                    "aws:ResourceTag/Owner":  "tina"
+                                                                }
+                                        }
+                      },
+                      {
+                          "Sid":  "DenyModifyDeleteWhenOwnerTagMissingButAllowBucketTagging",
+                          "Effect":  "Deny",
+                          "NotAction":  [
+                                            "s3:PutBucketTagging"
+                                        ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "Null":  {
+                                                         "aws:ResourceTag/Owner":  "true"
+                                                     }
+                                        }
+                      },
+                      {
+                          "Sid":  "DenyCreateWithoutOwnerTagTinaWhereSupported",
+                          "Effect":  "Deny",
+                          "Action":  [
+                                         "lambda:CreateFunction",
+                                         "logs:CreateLogGroup",
+                                         "logs:CreateLogStream",
+                                         "iam:CreatePolicy",
+                                         "iam:CreateRole",
+                                         "states:CreateStateMachine"
+                                     ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringNotEquals":  {
+                                                                    "aws:RequestTag/Owner":  "tina"
+                                                                }
+                                        }
+                      },
+                      {
+                          "Sid":  "DenyPutObjectWithoutOwnerTagTina",
+                          "Effect":  "Deny",
+                          "Action":  "s3:PutObject",
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringNotEquals":  {
+                                                                    "aws:RequestTag/Owner":  "tina"
+                                                                }
+                                        }
+                      },
+                      {
+                          "Sid":  "AllowTaggingToSetOwnerTina",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "tag:TagResources",
+                                         "tag:UntagResources",
+                                         "lambda:TagResource",
+                                         "lambda:UntagResource",
+                                         "states:TagResource",
+                                         "states:UntagResource",
+                                         "iam:TagRole",
+                                         "iam:TagPolicy",
+                                         "iam:UntagRole",
+                                         "iam:UntagPolicy",
+                                         "s3:PutBucketTagging",
+                                         "s3:PutObjectTagging"
+                                     ],
+                          "Resource":  "*"
+                      },
+                      {
+                          "Sid":  "DenyPassRoleNotOwnedByTina",
+                          "Effect":  "Deny",
+                          "Action":  "iam:PassRole",
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringNotEquals":  {
+                                                                    "aws:ResourceTag/Owner":  "tina"
+                                                                }
+                                        }
+                      },
+                      {
+                          "Sid":  "AllowReadOnlyEverywhere",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "s3:List*",
+                                         "s3:Get*",
+                                         "lambda:Get*",
+                                         "lambda:List*",
+                                         "logs:Describe*",
+                                         "logs:Get*",
+                                         "logs:List*",
+                                         "states:Describe*",
+                                         "states:List*",
+                                         "iam:Get*",
+                                         "iam:List*",
+                                         "tag:Get*",
+                                         "tag:Describe*"
+                                     ],
+                          "Resource":  "*"
+                      },
+                      {
+                          "Sid":  "AllowCreateIamWithOwnerTina",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "iam:CreateRole",
+                                         "iam:CreatePolicy"
+                                     ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringEquals":  {
+                                                                 "aws:RequestTag/Owner":  "tina"
+                                                             }
+                                        }
+                      },
+                      {
+                          "Sid":  "AllowManageOwnedIamRoles",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "iam:UpdateAssumeRolePolicy",
+                                         "iam:UpdateRole",
+                                         "iam:UpdateRoleDescription",
+                                         "iam:DeleteRole",
+                                         "iam:AttachRolePolicy",
+                                         "iam:DetachRolePolicy",
+                                         "iam:PutRolePolicy",
+                                         "iam:DeleteRolePolicy",
+                                         "iam:CreatePolicyVersion",
+                                         "iam:DeletePolicyVersion",
+                                         "iam:PassRole",
+                                         "iam:TagRole",
+                                         "iam:UntagRole"
+                                     ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringEquals":  {
+                                                                 "aws:ResourceTag/Owner":  "tina"
+                                                             }
+                                        }
+                      }
+                  ]
+}

@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Review Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#7c3aed; --bg2:#4c1d95; --glass:rgba(255,255,255,.92); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    header a{color:#fff;text-decoration:none;font-weight:600}
+    .btn{display:inline-block;padding:8px 16px;border-radius:10px;border:none;background:#fff;color:#7c3aed;cursor:pointer;text-decoration:none;font-weight:600}
+    .btn:hover{background:#f3f4f6}
+    .wrap{max-width:1200px;margin:20px auto;padding:0 24px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px;margin-bottom:20px}
+    h1{margin:0 0 8px 0;font-size:28px;color:#1e1b4b}
+    h2{margin:0 0 16px 0;font-size:18px;color:#5b21b6}
+    .subtitle{color:#6b7280;margin-bottom:24px}
+    .stats-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;margin-bottom:24px}
+    .stat-card{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:20px;text-align:center}
+    .stat-card.success{background:#d1fae5;border-color:#6ee7b7}
+    .stat-card.warning{background:#fef3c7;border-color:#fcd34d}
+    .stat-card.danger{background:#fee2e2;border-color:#fca5a5}
+    .stat-value{font-size:36px;font-weight:700;color:#1e1b4b;margin-bottom:4px}
+    .stat-label{font-size:13px;color:#6b7280;text-transform:uppercase}
+    .progress-bar{height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;margin:8px 0}
+    .progress-fill{height:100%;border-radius:6px;transition:width 0.5s}
+    .progress-fill.good{background:linear-gradient(90deg,#10b981,#34d399)}
+    .progress-fill.medium{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+    .progress-fill.bad{background:linear-gradient(90deg,#ef4444,#f87171)}
+    .recent-table{width:100%;border-collapse:collapse;font-size:13px}
+    .recent-table th{text-align:left;padding:10px;background:#f8fafc;border-bottom:2px solid #e2e8f0;color:#64748b;text-transform:uppercase;font-size:11px}
+    .recent-table td{padding:10px;border-bottom:1px solid #e2e8f0}
+    .badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600}
+    .badge.pass{background:#d1fae5;color:#047857}
+    .badge.review{background:#fef3c7;color:#b45309}
+    .badge.correct{background:#d1fae5;color:#047857}
+    .badge.wrong{background:#fee2e2;color:#b91c1c}
+    .badge.danger{background:#fee2e2;color:#b91c1c}
+    .loading{text-align:center;padding:40px;color:#7c3aed;font-size:16px}
+    .error{background:#fee2e2;color:#b91c1c;padding:16px;border-radius:8px;margin:20px 0}
+    .empty{background:#f8fafc;color:#64748b;padding:40px;text-align:center;border-radius:8px}
+    .info-box{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#1e40af}
+    .section{margin-bottom:32px}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <a href="/">Bill Review @ JRK</a>
+    <div>
+      <span style="margin-right:16px">AI Review Dashboard</span>
+      <a href="/" class="btn">Back to Dashboard</a>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="card">
+      <h1>AI Review Shadow Mode</h1>
+      <p class="subtitle">Tracking AI suggestion accuracy against human decisions. Goal: 95%+ before auto-actions.</p>
+
+      <div class="info-box">
+        <strong>Phase 2 Shadow Mode:</strong> AI analyzes bills and makes suggestions, but humans make all final decisions. This dashboard tracks how often AI suggestions match human actions to measure accuracy before enabling auto-pass or auto-delete.
+      </div>
+
+      <div id="content">
+        <div class="loading">Loading AI accuracy stats...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadStats() {
+      const content = document.getElementById('content');
+      try {
+        // Load both accuracy stats and learning stats
+        const [statsResp, learningResp] = await Promise.all([
+          fetch('/api/ai-review/stats?days=30', { credentials: 'same-origin' }),
+          fetch('/api/ai-learning/stats', { credentials: 'same-origin' })
+        ]);
+        const data = await statsResp.json();
+        const learning = await learningResp.json();
+
+        if (data.error) {
+          content.innerHTML = `<div class="error">${data.error}</div>`;
+          return;
+        }
+
+        if (data.total_reviews === 0) {
+          content.innerHTML = `
+            <div class="empty">
+              <h3>No AI Review Data Yet</h3>
+              <p>${data.message || 'As users review and submit bills, accuracy data will appear here.'}</p>
+            </div>
+          `;
+          return;
+        }
+
+        // Build dashboard HTML
+        const del = data.deletion_stats || {};
+        const ap = data.auto_pass_stats || {};
+        const precision = del.precision || 0;
+        const recall = del.recall || 0;
+        const f1 = del.f1_score || 0;
+        const apAcc = ap.accuracy || 0;
+
+        const progressClass = (val) => val >= 90 ? 'good' : val >= 70 ? 'medium' : 'bad';
+
+        content.innerHTML = `
+          <div class="section">
+            <h2>Overall Stats (Last ${data.days} Days)</h2>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value">${data.total_reviews}</div>
+                <div class="stat-label">Bills Reviewed</div>
+              </div>
+              <div class="stat-card ${apAcc >= 90 ? 'success' : apAcc >= 70 ? 'warning' : 'danger'}">
+                <div class="stat-value">${apAcc}%</div>
+                <div class="stat-label">Auto-Pass Accuracy</div>
+                <div class="progress-bar"><div class="progress-fill ${progressClass(apAcc)}" style="width:${apAcc}%"></div></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${data.avg_confidence}%</div>
+                <div class="stat-label">Avg AI Confidence</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <h2>Garbage Line Detection Accuracy</h2>
+            <div class="stats-grid">
+              <div class="stat-card success">
+                <div class="stat-value">${del.true_positives || 0}</div>
+                <div class="stat-label">True Positives</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">AI said delete, human deleted</div>
+              </div>
+              <div class="stat-card danger">
+                <div class="stat-value">${del.false_positives || 0}</div>
+                <div class="stat-label">False Positives</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">AI said delete, human kept</div>
+              </div>
+              <div class="stat-card warning">
+                <div class="stat-value">${del.false_negatives || 0}</div>
+                <div class="stat-label">False Negatives</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">AI said keep, human deleted</div>
+              </div>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value">${precision}%</div>
+                <div class="stat-label">Precision</div>
+                <div class="progress-bar"><div class="progress-fill ${progressClass(precision)}" style="width:${precision}%"></div></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${recall}%</div>
+                <div class="stat-label">Recall</div>
+                <div class="progress-bar"><div class="progress-fill ${progressClass(recall)}" style="width:${recall}%"></div></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${f1}%</div>
+                <div class="stat-label">F1 Score</div>
+                <div class="progress-bar"><div class="progress-fill ${progressClass(f1)}" style="width:${f1}%"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <h2>Recent Reviews</h2>
+            <table class="recent-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>User</th>
+                  <th>AI Predicted</th>
+                  <th>Result</th>
+                  <th>Deletions</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(data.recent_reviews || []).map(r => `
+                  <tr>
+                    <td>${new Date(r.timestamp).toLocaleString()}</td>
+                    <td>${r.user}</td>
+                    <td><span class="badge ${r.auto_pass_predicted ? 'pass' : 'review'}">${r.auto_pass_predicted ? 'PASS' : 'REVIEW'}</span></td>
+                    <td><span class="badge ${r.auto_pass_correct ? 'correct' : 'wrong'}">${r.auto_pass_correct ? 'CORRECT' : 'WRONG'}</span></td>
+                    <td>TP:${r.deletion_tp} FP:${r.deletion_fp} FN:${r.deletion_fn}</td>
+                    <td>${r.ai_confidence}%</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <h2>AI Learning Progress</h2>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value">${learning.total_actions_captured || 0}</div>
+                <div class="stat-label">Actions Captured</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">Human edits tracked</div>
+              </div>
+              <div class="stat-card success">
+                <div class="stat-value">${learning.total_active_patterns || 0}</div>
+                <div class="stat-label">Active Patterns</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">Learned from corrections</div>
+              </div>
+              <div class="stat-card ${learning.total_quarantined_patterns > 0 ? 'warning' : ''}">
+                <div class="stat-value">${learning.total_quarantined_patterns || 0}</div>
+                <div class="stat-label">Quarantined</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">Pending admin review</div>
+              </div>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value">${(learning.delete_patterns?.active || 0)}</div>
+                <div class="stat-label">Delete Patterns</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">Lines to auto-suggest delete</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${(learning.keep_patterns?.active || 0)}</div>
+                <div class="stat-label">Keep Patterns</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">Lines AI shouldn't flag</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${(learning.gl_patterns?.active || 0)}</div>
+                <div class="stat-label">GL Patterns</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:4px">GL code corrections</div>
+              </div>
+            </div>
+            ${(learning.recent_patterns || []).length > 0 ? `
+              <h3 style="margin:16px 0 8px;font-size:14px;color:#5b21b6">Recently Learned Patterns</h3>
+              <table class="recent-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Pattern</th>
+                    <th>Vendor</th>
+                    <th>Status</th>
+                    <th>Learned By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(learning.recent_patterns || []).map(p => `
+                    <tr>
+                      <td><span class="badge ${p.type === 'DELETE' ? 'danger' : p.type === 'KEEP' ? 'pass' : 'review'}">${p.type}</span></td>
+                      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${p.description_pattern || '-'}</td>
+                      <td>${p.vendor_id || '-'}</td>
+                      <td><span class="badge ${p.status === 'active' ? 'pass' : 'review'}">${p.status}</span></td>
+                      <td>${p.created_by || '-'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : ''}
+          </div>
+
+          <div class="section">
+            <h2>Rollout Criteria</h2>
+            <div class="info-box">
+              <strong>Current Status:</strong> Shadow Mode (observe only)<br><br>
+              <strong>Next Phase:</strong> Assisted Mode (pre-select deletions for human confirmation)<br>
+              <strong>Requirement:</strong> Deletion precision > 80%, Auto-pass accuracy > 80%<br><br>
+              <strong>Final Phase:</strong> Auto Mode (automatic actions)<br>
+              <strong>Requirement:</strong> Deletion precision > 95%, Auto-pass accuracy > 95%
+            </div>
+          </div>
+        `;
+
+      } catch (err) {
+        console.error('Error loading stats:', err);
+        content.innerHTML = `<div class="error">Failed to load AI review stats: ${err.message}</div>`;
+      }
+    }
+
+    // Load on page ready
+    loadStats();
+
+    // Auto-refresh every 60 seconds
+    setInterval(loadStats, 60000);
+  </script>
+</body>
+</html>

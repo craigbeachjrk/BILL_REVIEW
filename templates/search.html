@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Advanced Search - Bill Review @ JRK</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .wrap{max-width:1200px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 16px 0}
+    .search-form{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb}
+    .search-field{display:flex;flex-direction:column;gap:4px}
+    .search-field label{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase}
+    .search-field input,.search-field select{padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit;min-width:180px}
+    .search-field input:focus,.search-field select:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px rgba(14,165,233,.2)}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left}
+    th{background:rgba(2,132,199,0.08);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;position:sticky;top:0}
+    tr:hover{background:rgba(2,132,199,0.08)}
+    tr.clickable{cursor:pointer}
+    .muted{opacity:.7;font-size:12px}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .spinner{display:inline-block;width:24px;height:24px;border:3px solid #e5e7eb;border-top:3px solid #0ea5e9;border-radius:50%;animation:spin 1s linear infinite;margin-right:10px;vertical-align:middle}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .no-results{text-align:center;padding:40px;color:#64748b}
+    .result-count{font-size:13px;color:#64748b;margin-bottom:12px}
+    .highlight{background:#fef08a;padding:1px 2px;border-radius:2px}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+  <div class="wrap">
+    <div class="card">
+      <h1>Advanced Search</h1>
+      <div class="search-form">
+        <div class="search-field">
+          <label>Account ID</label>
+          <input type="text" id="searchAccount" placeholder="e.g. 12345678" />
+        </div>
+        <div class="search-field">
+          <label>Vendor</label>
+          <input type="text" id="searchVendor" placeholder="e.g. DTE Energy" />
+        </div>
+        <div class="search-field">
+          <label>Property</label>
+          <input type="text" id="searchProperty" placeholder="e.g. Oak Grove" />
+        </div>
+        <div class="search-field">
+          <label>Date Range</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="date" id="searchStartDate" style="min-width:140px" />
+            <span style="color:#64748b">to</span>
+            <input type="date" id="searchEndDate" style="min-width:140px" />
+          </div>
+        </div>
+        <div class="search-field">
+          <label>&nbsp;</label>
+          <button class="btn" onclick="doSearch()">Search</button>
+        </div>
+        <div class="search-field">
+          <label>&nbsp;</label>
+          <button class="btn secondary" onclick="clearSearch()">Clear</button>
+        </div>
+      </div>
+      <div id="resultCount" class="result-count" style="display:none"></div>
+      <div id="loading" class="loading" style="display:none">
+        <span class="spinner"></span>Searching across all parse dates...
+      </div>
+      <div id="noResults" class="no-results" style="display:none">
+        No results found. Try adjusting your search criteria.
+      </div>
+      <div id="resultsContainer" style="display:none;max-height:600px;overflow-y:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Parse Date</th>
+              <th>Account ID</th>
+              <th>Property</th>
+              <th>Vendor</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'err' ? 'err' : '');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function clearSearch() {
+      document.getElementById('searchAccount').value = '';
+      document.getElementById('searchVendor').value = '';
+      document.getElementById('searchProperty').value = '';
+      document.getElementById('searchStartDate').value = '';
+      document.getElementById('searchEndDate').value = '';
+      document.getElementById('resultsContainer').style.display = 'none';
+      document.getElementById('noResults').style.display = 'none';
+      document.getElementById('resultCount').style.display = 'none';
+    }
+
+    function escapeHtml(s) {
+      return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    function highlightMatch(text, search) {
+      if (!text) return '';
+      // First escape HTML to prevent XSS
+      const escaped = escapeHtml(text);
+      if (!search) return escaped;
+      // Now safely highlight the escaped text
+      const regex = new RegExp('(' + search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+      return escaped.replace(regex, '<span class="highlight">$1</span>');
+    }
+
+    async function doSearch() {
+      const account = document.getElementById('searchAccount').value.trim();
+      const vendor = document.getElementById('searchVendor').value.trim();
+      const property = document.getElementById('searchProperty').value.trim();
+      const startDate = document.getElementById('searchStartDate').value;
+      const endDate = document.getElementById('searchEndDate').value;
+
+      if (!account && !vendor && !property) {
+        showToast('Please enter at least one search term', 'err');
+        return;
+      }
+
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('resultsContainer').style.display = 'none';
+      document.getElementById('noResults').style.display = 'none';
+      document.getElementById('resultCount').style.display = 'none';
+
+      try {
+        const params = new URLSearchParams();
+        if (account) params.append('account', account);
+        if (vendor) params.append('vendor', vendor);
+        if (property) params.append('property', property);
+        if (startDate) params.append('start_date', startDate);
+        if (endDate) params.append('end_date', endDate);
+
+        const resp = await fetch('/api/search?' + params.toString());
+        const data = await resp.json();
+
+        document.getElementById('loading').style.display = 'none';
+
+        if (!resp.ok) {
+          showToast(data.error || 'Search failed', 'err');
+          return;
+        }
+
+        const results = data.results || [];
+        if (results.length === 0) {
+          document.getElementById('noResults').style.display = 'block';
+          return;
+        }
+
+        document.getElementById('resultCount').textContent = `Found ${results.length} result${results.length === 1 ? '' : 's'}${data.truncated ? ' (showing first 500)' : ''}`;
+        document.getElementById('resultCount').style.display = 'block';
+
+        const tbody = document.getElementById('resultsBody');
+        tbody.innerHTML = '';
+
+        results.forEach(r => {
+          const tr = document.createElement('tr');
+          tr.className = 'clickable';
+          tr.onclick = () => {
+            window.open('/review?date=' + r.date + '&pdf_id=' + encodeURIComponent(r.pdf_id), '_blank');
+          };
+
+          tr.innerHTML = `
+            <td>${escapeHtml(r.date)}</td>
+            <td>${highlightMatch(r.account_id, account)}</td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.property || '')}">${highlightMatch(r.property, property)}</td>
+            <td>${highlightMatch(r.vendor, vendor)}</td>
+            <td>$${(r.amount || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        document.getElementById('resultsContainer').style.display = 'block';
+
+      } catch (e) {
+        document.getElementById('loading').style.display = 'none';
+        showToast('Search error: ' + e.message, 'err');
+      }
+    }
+
+    // Allow Enter key to trigger search
+    document.querySelectorAll('.search-field input').forEach(input => {
+      input.addEventListener('keypress', e => {
+        if (e.key === 'Enter') doSearch();
+      });
+    });
+
+    // Set default date range to last 60 days
+    const today = new Date();
+    const sixtyDaysAgo = new Date(today);
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    document.getElementById('searchEndDate').value = today.toISOString().split('T')[0];
+    document.getElementById('searchStartDate').value = sixtyDaysAgo.toISOString().split('T')[0];
+
+    // Check for URL parameter and auto-search
+    const urlParams = new URLSearchParams(window.location.search);
+    const qParam = urlParams.get('q');
+    if (qParam) {
+      document.getElementById('searchAccount').value = qParam;
+      doSearch();
+    }
+  </script>
+</body>
+</html>

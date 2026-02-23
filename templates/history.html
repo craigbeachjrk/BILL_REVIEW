@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HISTORY · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    select,input[type="date"],input[type="text"]{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:fixed}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0}
+    tr:hover{background:#f9fafb}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.posted{background:#d1fae5;color:#065f46}
+    .badge.archived{background:#dbeafe;color:#1e40af}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto}
+    .improve-modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:6px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{display:block;width:calc(100% - 24px);max-width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .improve-modal-box textarea{min-height:120px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · HISTORY</a></div>
+    <div class="logout">
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+  <div id="toast" class="toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h1>HISTORY - Archived Bills</h1>
+
+    <div class="card">
+      <div class="controls">
+        <label>Archived Date Range:</label>
+        <input type="date" id="startDate" />
+        <label>to</label>
+        <input type="date" id="endDate" />
+        <button class="btn" onclick="loadHistory()">Load History</button>
+        <button class="btn secondary" onclick="clearFilters()">Clear</button>
+      </div>
+
+      <div class="controls" style="border-top:1px solid #e5e7eb;padding-top:12px;margin-top:12px">
+        <label>Filter:</label>
+        <input type="text" id="filterProperty" placeholder="Property" style="width:150px" oninput="applyFilters()" />
+        <input type="text" id="filterVendor" placeholder="Vendor" style="width:150px" oninput="applyFilters()" />
+        <input type="text" id="filterAccount" placeholder="Account #" style="width:150px" oninput="applyFilters()" />
+      </div>
+
+      <div class="summary" id="summary" style="display:none">
+        <div class="summary-item">
+          <div class="summary-label">Total Archived Items</div>
+          <div class="summary-value" id="totalItems">0</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">Properties</div>
+          <div class="summary-value" id="totalProperties">0</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">Total Amount</div>
+          <div class="summary-value" id="totalAmount">$0.00</div>
+        </div>
+      </div>
+
+      <div id="loading" class="loading">Select a date range and click Load History</div>
+
+      <div id="tableContainer" style="display:none;overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:8%">Archived</th>
+              <th style="width:10%">Property</th>
+              <th style="width:10%">Vendor</th>
+              <th style="width:10%">Account #</th>
+              <th style="width:12%">Service Address</th>
+              <th style="width:8%">Utility Type</th>
+              <th style="width:8%">Charge Code</th>
+              <th style="width:10%">Bill Period</th>
+              <th style="width:6%">Days</th>
+              <th style="width:8%">Amount</th>
+              <th style="width:10%">Status</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allLineItems = [];
+    let filteredItems = [];
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function showImproveToast(msg, type){
+      const t = document.getElementById('improveToast');
+      t.textContent = msg;
+      t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function loadHistory(){
+      const startDate = document.getElementById('startDate').value;
+      const endDate = document.getElementById('endDate').value;
+
+      if (!startDate || !endDate) {
+        showToast('Please select start and end dates', 'err');
+        return;
+      }
+
+      document.getElementById('loading').textContent = 'Loading archived bills...';
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('tableContainer').style.display = 'none';
+      document.getElementById('summary').style.display = 'none';
+
+      try {
+        const response = await fetch(`/api/history/archived?start=${startDate}&end=${endDate}`);
+        if (!response.ok) throw new Error('Failed to load history');
+
+        const data = await response.json();
+        allLineItems = data.line_items || [];
+        filteredItems = [...allLineItems];
+
+        renderTable();
+        updateSummary();
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('tableContainer').style.display = 'block';
+        document.getElementById('summary').style.display = 'flex';
+      } catch (e) {
+        console.error('Error loading history:', e);
+        document.getElementById('loading').textContent = 'Error loading history: ' + e.message;
+        showToast('Error loading history', 'err');
+      }
+    }
+
+    function applyFilters(){
+      const propFilter = document.getElementById('filterProperty').value.toLowerCase();
+      const vendorFilter = document.getElementById('filterVendor').value.toLowerCase();
+      const acctFilter = document.getElementById('filterAccount').value.toLowerCase();
+
+      filteredItems = allLineItems.filter(item => {
+        const prop = (item.EnrichedPropertyName || '').toLowerCase();
+        const vendor = (item['Vendor Name'] || '').toLowerCase();
+        const acct = (item['Account Number'] || '').toLowerCase();
+
+        return prop.includes(propFilter) && vendor.includes(vendorFilter) && acct.includes(acctFilter);
+      });
+
+      renderTable();
+      updateSummary();
+    }
+
+    function renderTable(){
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      filteredItems.forEach((item) => {
+        const tr = document.createElement('tr');
+
+        // Archived Date
+        const tdArchived = document.createElement('td');
+        tdArchived.textContent = item.__archived_date__ || 'N/A';
+        tdArchived.style.fontSize = '11px';
+        tr.appendChild(tdArchived);
+
+        // Property
+        const tdProp = document.createElement('td');
+        tdProp.textContent = item.EnrichedPropertyName || 'N/A';
+        tdProp.title = item.EnrichedPropertyName;
+        tdProp.style.fontSize = '11px';
+        tr.appendChild(tdProp);
+
+        // Vendor
+        const tdVendor = document.createElement('td');
+        tdVendor.textContent = item['Vendor Name'] || 'N/A';
+        tdVendor.style.fontSize = '11px';
+        tr.appendChild(tdVendor);
+
+        // Account Number
+        const tdAcct = document.createElement('td');
+        tdAcct.textContent = item['Account Number'] || 'N/A';
+        tdAcct.style.fontSize = '11px';
+        tr.appendChild(tdAcct);
+
+        // Service Address
+        const tdAddr = document.createElement('td');
+        const addr = item['Service Address'] || '';
+        tdAddr.textContent = addr.length > 30 ? addr.substring(0, 30) + '...' : addr;
+        tdAddr.title = addr;
+        tdAddr.style.fontSize = '11px';
+        tr.appendChild(tdAddr);
+
+        // Utility Type
+        const tdUtil = document.createElement('td');
+        tdUtil.textContent = item['Utility Type'] || 'N/A';
+        tdUtil.style.fontSize = '11px';
+        tr.appendChild(tdUtil);
+
+        // Charge Code
+        const tdChargeCode = document.createElement('td');
+        tdChargeCode.textContent = item['Charge Code'] || 'N/A';
+        tdChargeCode.style.fontSize = '11px';
+        tr.appendChild(tdChargeCode);
+
+        // Bill Period
+        const tdPeriod = document.createElement('td');
+        const start = item['Bill Period Start'] || '';
+        const end = item['Bill Period End'] || '';
+        tdPeriod.textContent = start && end ? `${start.substring(0,5)} - ${end.substring(0,5)}` : 'N/A';
+        tdPeriod.style.fontSize = '10px';
+        tr.appendChild(tdPeriod);
+
+        // Days
+        const tdDays = document.createElement('td');
+        tdDays.textContent = item['Number of Days'] || 'N/A';
+        tdDays.style.fontSize = '11px';
+        tr.appendChild(tdDays);
+
+        // Amount
+        const tdAmount = document.createElement('td');
+        tdAmount.textContent = '$' + (parseFloat(item['Line Item Charge'] || 0).toFixed(2));
+        tdAmount.style.textAlign = 'right';
+        tdAmount.style.fontSize = '11px';
+        tr.appendChild(tdAmount);
+
+        // Status
+        const tdStatus = document.createElement('td');
+        const status = item.Status || 'Unknown';
+        if (status === 'Posted') {
+          tdStatus.innerHTML = '<span class="badge posted">Posted</span>';
+        } else {
+          tdStatus.innerHTML = '<span class="badge archived">Archived</span>';
+        }
+        tr.appendChild(tdStatus);
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateSummary(){
+      const total = filteredItems.length;
+      const properties = new Set(filteredItems.map(i => i.EnrichedPropertyName)).size;
+      const totalAmt = filteredItems.reduce((sum, i) => sum + parseFloat(i['Line Item Charge'] || 0), 0);
+
+      document.getElementById('totalItems').textContent = total;
+      document.getElementById('totalProperties').textContent = properties;
+      document.getElementById('totalAmount').textContent = '$' + totalAmt.toFixed(2);
+    }
+
+    function clearFilters(){
+      document.getElementById('startDate').value = '';
+      document.getElementById('endDate').value = '';
+      document.getElementById('filterProperty').value = '';
+      document.getElementById('filterVendor').value = '';
+      document.getElementById('filterAccount').value = '';
+      allLineItems = [];
+      filteredItems = [];
+      document.getElementById('tableContainer').style.display = 'none';
+      document.getElementById('summary').style.display = 'none';
+      document.getElementById('loading').textContent = 'Select a date range and click Load History';
+      document.getElementById('loading').style.display = 'block';
+    }
+
+    // Set default dates (last 30 days)
+    const today = new Date();
+    const monthAgo = new Date(today);
+    monthAgo.setDate(monthAgo.getDate() - 30);
+    document.getElementById('startDate').value = monthAgo.toISOString().split('T')[0];
+    document.getElementById('endDate').value = today.toISOString().split('T')[0];
+
+    // IMPROVE modal functionality
+    (function(){
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return;
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

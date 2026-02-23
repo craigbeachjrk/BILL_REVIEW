@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Invoices · {{ date }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --chip:#e5e7eb; --ok:#16a34a33; --warn:#facc1533; --err:#ef444433; }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:rgba(220,38,38,0.25);color:#1e293b;border:2px solid #dc2626}
+    .btn.danger:hover{background:rgba(220,38,38,0.4)}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .btn.outline{background:rgba(255,255,255,0.15);border:2px solid #1e293b;color:#1e293b}
+    .btn.outline:hover{background:rgba(255,255,255,0.35)}
+    .btn.outline.purple{border-color:#7c3aed;color:#1e293b;background:rgba(124,58,237,0.12)}
+    .btn.outline.purple:hover{background:rgba(124,58,237,0.25)}
+    .btn.outline.cyan{border-color:#0891b2;color:#1e293b;background:rgba(8,145,178,0.12)}
+    .btn.outline.cyan:hover{background:rgba(8,145,178,0.25)}
+    .btn.outline.orange{border-color:#ea580c;color:#1e293b;background:rgba(234,88,12,0.12)}
+    .btn.outline.orange:hover{background:rgba(234,88,12,0.25)}
+    .wrap{max-width:95%;margin:30px auto;padding:0 24px}
+    .card{background:rgba(255,255,255,0.85);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.35);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px 28px}
+    h1{margin:0 0 14px 0;font-size:22px}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left}
+    th.sortable{cursor:pointer;user-select:none}
+    th.sortable:hover{background:rgba(2,132,199,0.1)}
+    th.sort-asc::after{content:' ▲';font-size:10px;color:#0ea5e9}
+    th.sort-desc::after{content:' ▼';font-size:10px;color:#0ea5e9}
+    tr:hover{background:rgba(2,132,199,0.08)}
+    tr.hidden-complete{display:none}
+    .toggle-label{display:flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none}
+    .toggle-label input{width:16px;height:16px;cursor:pointer}
+    .chip{display:inline-block;padding:4px 8px;border-radius:999px;background:var(--chip);font-size:12px}
+    .status-REVIEW{background:var(--err)}
+    .status-PARTIAL{background:var(--warn)}
+    .status-COMPLETE{background:var(--ok)}
+    .multi-account-badge{background:#f97316;color:#fff;font-size:11px;padding:3px 8px;border-radius:6px;margin-left:6px;white-space:nowrap;vertical-align:middle}
+    .multi-account-row{background:rgba(249,115,22,0.08)}
+    .split-btn{background:#7c3aed;color:#fff;font-size:11px;padding:4px 10px;border-radius:4px;border:none;cursor:pointer;margin-left:6px;position:relative;z-index:5;font-weight:600;vertical-align:middle}
+    .split-btn:hover{background:#6d28d9;transform:scale(1.05)}
+    .split-btn:active{transform:scale(0.98)}
+    a.btn{display:inline-block;margin-top:12px;padding:8px 12px;background:#0ea5e9;color:#fff;border-radius:10px;text-decoration:none}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+    .bulk-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .bulk-modal-overlay.show{display:flex}
+    .bulk-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:90%;padding:24px;max-height:80vh;overflow-y:auto}
+    .bulk-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .bulk-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .bulk-modal-box select,.bulk-modal-box input,.bulk-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .bulk-modal-box textarea{min-height:100px;resize:vertical}
+    .bulk-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .bulk-search-input{margin-bottom:8px}
+    .bulk-select-list{max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px}
+    .bulk-select-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6}
+    .bulk-select-item:last-child{border-bottom:none}
+    .bulk-select-item:hover{background:#f0f9ff}
+    .bulk-select-item.selected{background:#dbeafe;font-weight:600}
+    /* Loading overlay */
+    .loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:20000;align-items:center;justify-content:center;flex-direction:column}
+    .loading-overlay.show{display:flex}
+    .loading-spinner{width:50px;height:50px;border:4px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .loading-text{color:#fff;font-size:16px;margin-top:16px;text-shadow:0 2px 4px rgba(0,0,0,0.3)}
+    /* Hide table body until JS initializes to prevent jolt */
+    tbody.initializing{visibility:hidden}
+    /* Filter dropdowns */
+    .filter-group{display:flex;gap:4px;align-items:center;padding:4px 8px;background:rgba(255,255,255,0.5);border-radius:8px;border:1px solid rgba(0,0,0,0.1)}
+    .filter-select{padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff;cursor:pointer;min-width:80px;max-width:120px}
+    .filter-select:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 2px rgba(14,165,233,0.2)}
+    .filter-label{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase}
+    .filter-clear-btn{padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:11px;background:#fff;cursor:pointer;color:#64748b}
+    .filter-clear-btn:hover{background:#f1f5f9;border-color:#94a3b8}
+    tr.filtered-out{display:none}
+  </style>
+</head>
+<body>
+  <!-- Loading overlay for page reloads -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Updating invoices...</div>
+  </div>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk Assign Property Modal -->
+  <div id="assignPropModal" class="bulk-modal-overlay">
+    <div class="bulk-modal-box">
+      <h2>Assign Property to Selected Invoices</h2>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">This will update all lines in <strong><span id="propSelCount">0</span></strong> selected invoice(s).</p>
+      <label>Search Property</label>
+      <input type="text" id="propSearchInput" class="bulk-search-input" placeholder="Type to filter properties..." oninput="filterPropertyList()" />
+      <div id="propSelectList" class="bulk-select-list"></div>
+      <input type="hidden" id="selectedPropId" />
+      <input type="hidden" id="selectedPropName" />
+      <div class="bulk-modal-actions">
+        <button class="btn secondary" onclick="closeAssignProperty()">Cancel</button>
+        <button class="btn" style="background:#7c3aed" onclick="submitAssignProperty()">Assign Property</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk Assign Vendor Modal -->
+  <div id="assignVendModal" class="bulk-modal-overlay">
+    <div class="bulk-modal-box">
+      <h2>Assign Vendor to Selected Invoices</h2>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">This will update all lines in <strong><span id="vendSelCount">0</span></strong> selected invoice(s).</p>
+      <label>Search Vendor</label>
+      <input type="text" id="vendSearchInput" class="bulk-search-input" placeholder="Type to filter vendors..." oninput="filterVendorList()" />
+      <div id="vendSelectList" class="bulk-select-list"></div>
+      <input type="hidden" id="selectedVendId" />
+      <input type="hidden" id="selectedVendName" />
+      <div class="bulk-modal-actions">
+        <button class="btn secondary" onclick="closeAssignVendor()">Cancel</button>
+        <button class="btn" style="background:#0891b2" onclick="submitAssignVendor()">Assign Vendor</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk Rework Modal -->
+  <div id="reworkModal" class="bulk-modal-overlay">
+    <div class="bulk-modal-box">
+      <h2>Send to Rework</h2>
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Send <strong><span id="reworkSelCount">0</span></strong> selected invoice(s) back for re-parsing. The same notes will be applied to all.</p>
+      <label for="reworkNotes">Notes for Parser (applied to all selected)</label>
+      <textarea id="reworkNotes" placeholder="e.g., 'Missing line items', 'Wrong account number', 'Need to extract meter reads'..."></textarea>
+      <div class="bulk-modal-actions">
+        <button class="btn secondary" onclick="closeReworkModal()">Cancel</button>
+        <button class="btn" style="background:#ea580c" onclick="submitBulkRework()">Send to Rework</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+      <div class="card">
+      <div class="toolbar" style="flex-wrap:wrap;gap:12px">
+        <h1 style="flex:1;min-width:200px">Invoices Parsed on {{ date }}</h1>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <label class="toggle-label">
+            <input type="checkbox" id="hideCompleted" onchange="toggleHideCompleted()" />
+            Hide Completed
+          </label>
+          <button class="btn small" onclick="toggleSelectAll()" title="Toggle select all visible rows">Select All</button>
+          <div class="filter-group">
+            <select id="filterProperty" class="filter-select" onchange="applyFilters()" title="Filter by Property">
+              <option value="">Property</option>
+            </select>
+            <select id="filterVendor" class="filter-select" onchange="applyFilters()" title="Filter by Vendor">
+              <option value="">Vendor</option>
+            </select>
+            <select id="filterAccount" class="filter-select" onchange="applyFilters()" title="Filter by Account">
+              <option value="">Account</option>
+            </select>
+            <select id="filterLines" class="filter-select" onchange="applyFilters()" title="Filter by Line Count" style="min-width:60px">
+              <option value="">Lines</option>
+            </select>
+            <select id="filterTotal" class="filter-select" onchange="applyFilters()" title="Filter by Total Amount" style="min-width:70px">
+              <option value="">Total</option>
+            </select>
+            <select id="filterStatus" class="filter-select" onchange="applyFilters()" title="Filter by Status" style="min-width:70px">
+              <option value="">Status</option>
+            </select>
+            <button class="filter-clear-btn" onclick="clearFilters()" title="Clear all filters">Reset</button>
+          </div>
+          <button id="assignPropBtn" class="btn small outline purple" onclick="showAssignProperty()" title="Assign property to selected invoices" disabled>Assign Property</button>
+          <button id="assignVendBtn" class="btn small outline cyan" onclick="showAssignVendor()" title="Assign vendor to selected invoices" disabled>Assign Vendor</button>
+          <button id="reworkBtn" class="btn small outline orange" onclick="showReworkModal()" title="Send selected invoices back for re-parsing" disabled>Send to Rework</button>
+          <button id="delSelBtn" class="btn small danger" onclick="deleteSelected()" title="Delete selected parsed invoices from S3" disabled>Delete (<span id="selCount">0</span>)</button>
+          <button class="btn small secondary" onclick="refreshStatuses()" title="Re-check statuses from DynamoDB and S3">Refresh Status</button>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px"></th>
+            <th class="sortable" data-col="1" data-type="string" style="min-width:180px">Property</th>
+            <th class="sortable" data-col="2" data-type="string" style="min-width:160px">Vendor</th>
+            <th class="sortable" data-col="3" data-type="string">Account</th>
+            <th class="sortable" data-col="4" data-type="string">Parsed</th>
+            <th class="sortable" data-col="5" data-type="string">Submitted</th>
+            <th class="sortable" data-col="6" data-type="number" style="width:60px">Lines</th>
+            <th class="sortable" data-col="7" data-type="currency" style="width:100px">Total</th>
+            <th class="sortable" data-col="8" data-type="string" style="width:90px">Status</th>
+          </tr>
+        </thead>
+        <tbody class="initializing">
+          {% for inv in invoices %}
+            <tr data-pdf-id="{{ inv.pdf_id }}" data-status="{{ inv.status }}" data-review-url="/review?date={{ inv.parsed_date }}&pdf_id={{ inv.pdf_id }}" class="{% if inv.multi_account %}multi-account-row{% endif %}" tabindex="0" onclick="if(event.target.type!=='checkbox' && !event.target.closest('.split-btn') && !event.target.closest('.multi-account-badge') && !event.target.classList.contains('pick-cell')){ location.href='/review?date={{ inv.parsed_date }}&pdf_id={{ inv.pdf_id }}'; }" style="cursor:pointer">
+              <td class="pick-cell" style="text-align:center;cursor:pointer" onclick="event.stopPropagation(); this.querySelector('input').click();"><input type="checkbox" class="pick" value="{{ inv.pdf_id }}" onclick="event.stopPropagation()" style="width:18px;height:18px;cursor:pointer" /></td>
+              <td title="{{ inv.property or '' }}" data-sort="{{ inv.property or '' }}">{{ inv.property or '—' }}</td>
+              <td data-sort="{{ inv.vendor }}">
+                {{ inv.vendor }}
+                {% if inv.multi_account %}
+                <span class="multi-account-badge" title="This PDF contains {{ inv.account_count }} different account numbers.">{{ inv.account_count }} Accounts</span>
+                <button type="button" class="split-btn" onclick="event.stopPropagation(); splitBill('{{ inv.pdf_id }}'); return false;" title="Split into separate invoices">Split</button>
+                {% endif %}
+              </td>
+              <td data-sort="{{ inv.account or '' }}">{{ inv.account }}</td>
+              <td data-sort="{{ inv.parsed_dt or inv.parsed_date or '' }}" style="white-space:nowrap">{{ inv.parsed_dt_fmt or inv.parsed_dt or inv.parsed_date }}</td>
+              <td data-sort="{{ inv.submitted_at or '' }}" style="white-space:nowrap;color:#64748b">{{ inv.submitted_at_fmt or '—' }}</td>
+              <td style="text-align:right">{{ inv.count }}</td>
+              <td style="text-align:right">${{ "%.2f"|format(inv.total_amount|default(0)) }}</td>
+              <td><span class="chip status-{{ inv.status }} status-chip">{{ inv.status }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      
+    </div>
+  </div>
+  <script>
+    async function refreshStatuses(){
+      try{
+        const r = await fetch('/api/invoices_status?date={{ date }}&cb=' + Date.now());
+        const j = await r.json();
+        if (!r.ok) return;
+        const byId = Object.create(null);
+        (j.invoices||[]).forEach(x => { byId[x.pdf_id] = x; });
+        document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
+          const id = tr.getAttribute('data-pdf-id');
+          const meta = byId[id];
+          if (!meta) return;
+          const chip = tr.querySelector('.status-chip');
+          if (!chip) return;
+          chip.textContent = meta.status;
+          chip.classList.remove('status-REVIEW','status-PARTIAL','status-COMPLETE');
+          chip.classList.add('status-' + meta.status);
+          // Update property, vendor, account, and line count cells
+          const tds = tr.querySelectorAll('td');
+          if (tds && tds.length >= 9){
+            // columns: [0]=checkbox [1]=property [2]=vendor [3]=account [4]=parsed [5]=submitted [6]=lines [7]=total [8]=status
+            if (meta.property) tds[1].textContent = meta.property;
+            // For vendor cell, preserve the multi-account badge if present
+            if (meta.vendor) {
+              const badge = tds[2].querySelector('.multi-account-badge');
+              if (badge) {
+                // Only update the text node before the badge
+                const textNode = tds[2].firstChild;
+                if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+                  textNode.textContent = meta.vendor + ' ';
+                }
+              } else {
+                tds[2].textContent = meta.vendor;
+              }
+            }
+            if (meta.account) tds[3].textContent = meta.account;
+            if (meta.submitted_at_fmt) { tds[5].textContent = meta.submitted_at_fmt; tds[5].dataset.sort = meta.submitted_at || ''; }
+            if (typeof meta.count === 'number') tds[6].textContent = String(meta.count);
+          }
+          // Update data-status for hide completed toggle
+          tr.dataset.status = meta.status;
+          // Re-apply hide filter
+          if (document.getElementById('hideCompleted').checked && meta.status === 'COMPLETE') {
+            tr.classList.add('hidden-complete');
+          } else {
+            tr.classList.remove('hidden-complete');
+          }
+        });
+      }catch(e){ /* swallow for now */ }
+    }
+
+    function toggleHideCompleted(){
+      const hide = document.getElementById('hideCompleted').checked;
+      // Save preference
+      try { localStorage.setItem('invoices_hideCompleted', hide ? '1' : '0'); } catch(e) {}
+      document.querySelectorAll('tbody tr[data-status="COMPLETE"]').forEach(tr => {
+        if (hide) {
+          tr.classList.add('hidden-complete');
+          // Uncheck if hidden
+          const cb = tr.querySelector('.pick');
+          if (cb) cb.checked = false;
+        } else {
+          tr.classList.remove('hidden-complete');
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function updateSelectedCount(){
+      const n = document.querySelectorAll('.pick:checked').length;
+      const btn = document.getElementById('delSelBtn');
+      const span = document.getElementById('selCount');
+      if (span) span.textContent = n.toString();
+      if (btn) btn.disabled = n === 0;
+      // Enable/disable bulk action buttons
+      const propBtn = document.getElementById('assignPropBtn');
+      const vendBtn = document.getElementById('assignVendBtn');
+      const reworkBtn = document.getElementById('reworkBtn');
+      if (propBtn) propBtn.disabled = n === 0;
+      if (vendBtn) vendBtn.disabled = n === 0;
+      if (reworkBtn) reworkBtn.disabled = n === 0;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.pick').forEach(c => c.addEventListener('change', updateSelectedCount));
+      updateSelectedCount();
+      // Restore hide completed preference
+      try {
+        const saved = localStorage.getItem('invoices_hideCompleted');
+        if (saved === '1') {
+          document.getElementById('hideCompleted').checked = true;
+          toggleHideCompleted();
+        }
+      } catch(e) {}
+
+      // Populate and restore filters
+      populateFilters();
+
+      // Show table now that hide filter is applied (prevents jolt)
+      const tbody = document.querySelector('tbody');
+      if (tbody) tbody.classList.remove('initializing');
+
+      // Auto-refresh on load so vendor/account/count reflect latest edits
+      refreshStatuses();
+    });
+
+    async function deleteSelected(){
+      const picks = Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+      if (!picks.length){ alert('Select at least one row to delete.'); return; }
+      if (!confirm('Delete ' + picks.length + ' parsed invoice(s) from S3? This cannot be undone.')) return;
+      const fd = new FormData();
+      fd.append('date', '{{ date }}');
+      fd.append('pdf_ids', picks.join(','));
+      const r = await fetch('/api/delete_parsed', { method:'POST', body: fd });
+      const j = await r.json();
+      if (r.ok && j && j.ok){
+        // remove deleted rows from the table
+        const set = new Set(picks);
+        document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
+          if (set.has(tr.getAttribute('data-pdf-id'))){ tr.remove(); }
+        });
+        updateSelectedCount();
+      } else {
+        alert('Delete failed: ' + ((j && (j.error||JSON.stringify(j))) || 'Unknown error'));
+      }
+    }
+
+    async function splitBill(pdfId){
+      if (!confirm('Split this multi-account PDF into separate bills?\n\nThis will create a separate invoice for each account number found in this PDF.')) return;
+      const fd = new FormData();
+      fd.append('date', '{{ date }}');
+      fd.append('pdf_id', pdfId);
+      try {
+        const r = await fetch('/api/split_bill', { method:'POST', body: fd });
+        const j = await r.json();
+        if (r.ok && j && j.ok){
+          alert('Split successful!\n\n' + j.message + '\n\nPage will reload to show the new separate invoices.');
+          location.reload();
+        } else {
+          alert('Split failed: ' + ((j && (j.error||JSON.stringify(j))) || 'Unknown error'));
+        }
+      } catch(e) {
+        alert('Split failed: ' + e.message);
+      }
+    }
+
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+
+    // Table sorting functionality with localStorage persistence
+    (function(){
+      const SORT_KEY = 'invoices_sort';
+      let currentSort = { col: null, dir: 'asc' };
+
+      // Load saved sort from localStorage
+      try {
+        const saved = localStorage.getItem(SORT_KEY);
+        if (saved) currentSort = JSON.parse(saved);
+      } catch(e) {}
+
+      function sortTable(colIndex, dataType, skipToggle) {
+        const tbody = document.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        // Toggle direction if same column (unless restoring saved sort)
+        if (!skipToggle) {
+          if (currentSort.col === colIndex) {
+            currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+          } else {
+            currentSort.col = colIndex;
+            currentSort.dir = 'asc';
+          }
+          // Save to localStorage
+          try { localStorage.setItem(SORT_KEY, JSON.stringify(currentSort)); } catch(e) {}
+        }
+
+        // Update header classes
+        document.querySelectorAll('th.sortable').forEach(th => {
+          th.classList.remove('sort-asc', 'sort-desc');
+        });
+        const th = document.querySelector(`th[data-col="${colIndex}"]`);
+        if (th) th.classList.add(currentSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.slice().sort((a, b) => {
+          const cellA = a.querySelectorAll('td')[colIndex];
+          const cellB = b.querySelectorAll('td')[colIndex];
+          let valA = cellA ? (cellA.dataset.sort !== undefined ? cellA.dataset.sort : cellA.textContent).trim() : '';
+          let valB = cellB ? (cellB.dataset.sort !== undefined ? cellB.dataset.sort : cellB.textContent).trim() : '';
+
+          let cmp = 0;
+          if (dataType === 'number') {
+            cmp = (parseInt(valA) || 0) - (parseInt(valB) || 0);
+          } else if (dataType === 'currency') {
+            cmp = (parseFloat(valA.replace(/[$,]/g, '')) || 0) - (parseFloat(valB.replace(/[$,]/g, '')) || 0);
+          } else {
+            valA = valA.toLowerCase();
+            valB = valB.toLowerCase();
+            cmp = valA.localeCompare(valB);
+          }
+
+          return currentSort.dir === 'asc' ? cmp : -cmp;
+        });
+
+        sortedRows.forEach(row => tbody.appendChild(row));
+      }
+
+      // Add click handlers to sortable headers
+      document.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const col = parseInt(th.dataset.col);
+          const type = th.dataset.type || 'string';
+          sortTable(col, type, false);
+        });
+      });
+
+      // Restore saved sort on page load
+      if (currentSort.col !== null) {
+        const th = document.querySelector(`th[data-col="${currentSort.col}"]`);
+        if (th) {
+          const type = th.dataset.type || 'string';
+          sortTable(currentSort.col, type, true);
+        }
+      }
+    })();
+
+    // ========== BULK OPERATIONS ==========
+    let allProperties = [];
+    let allVendors = [];
+
+    function getSelectedPdfIds() {
+      return Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+    }
+
+    function showToast(msg, type) {
+      const t = document.getElementById('improveToast');
+      t.textContent = msg;
+      t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function showLoading(msg) {
+      const overlay = document.getElementById('loadingOverlay');
+      const text = overlay.querySelector('.loading-text');
+      if (msg) text.textContent = msg;
+      overlay.classList.add('show');
+    }
+
+    function clearAllChecks() {
+      document.querySelectorAll('.pick').forEach(cb => { cb.checked = false; });
+      updateSelectedCount();
+    }
+
+    // --- PROPERTY ASSIGNMENT ---
+    async function loadProperties() {
+      if (allProperties.length) return;
+      try {
+        const r = await fetch('/api/catalog/properties');
+        const j = await r.json();
+        allProperties = j.items || [];
+      } catch(e) { allProperties = []; }
+    }
+
+    function renderPropertyList(filter = '') {
+      const list = document.getElementById('propSelectList');
+      const lc = filter.toLowerCase();
+      const filtered = allProperties.filter(p => !lc || (p.name || '').toLowerCase().includes(lc) || (p.id || '').toLowerCase().includes(lc));
+      list.innerHTML = filtered.slice(0, 50).map(p => {
+        const safeId = escapeHtml(p.id || '');
+        const safeName = escapeHtml(p.name || '');
+        const displayName = escapeHtml(p.name || p.id || '(no name)');
+        return `<div class="bulk-select-item" data-id="${safeId}" data-name="${safeName}" onclick="selectProperty(this)">${displayName}</div>`;
+      }).join('') || '<div style="padding:10px;color:#94a3b8">No properties found</div>';
+    }
+
+    function filterPropertyList() {
+      const val = document.getElementById('propSearchInput').value;
+      renderPropertyList(val);
+    }
+
+    function selectProperty(el) {
+      document.querySelectorAll('#propSelectList .bulk-select-item').forEach(e => e.classList.remove('selected'));
+      el.classList.add('selected');
+      document.getElementById('selectedPropId').value = el.dataset.id;
+      document.getElementById('selectedPropName').value = el.dataset.name;
+    }
+
+    async function showAssignProperty() {
+      const picks = getSelectedPdfIds();
+      if (!picks.length) return;
+      document.getElementById('propSelCount').textContent = picks.length;
+      document.getElementById('propSearchInput').value = '';
+      document.getElementById('selectedPropId').value = '';
+      document.getElementById('selectedPropName').value = '';
+      await loadProperties();
+      renderPropertyList();
+      document.getElementById('assignPropModal').classList.add('show');
+    }
+
+    function closeAssignProperty() {
+      document.getElementById('assignPropModal').classList.remove('show');
+    }
+
+    async function submitAssignProperty() {
+      const picks = getSelectedPdfIds();
+      const propId = document.getElementById('selectedPropId').value;
+      const propName = document.getElementById('selectedPropName').value;
+      if (!propId && !propName) { alert('Please select a property'); return; }
+      if (!picks.length) { alert('No invoices selected'); return; }
+
+      const fd = new FormData();
+      fd.append('date', '{{ date }}');
+      fd.append('pdf_ids', picks.join(','));
+      fd.append('property_id', propId);
+      fd.append('property_name', propName);
+
+      try {
+        const r = await fetch('/api/bulk_assign_property', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          showToast(`Property assigned to ${j.updated || picks.length} invoice(s). Reloading...`, 'ok');
+          closeAssignProperty();
+          showLoading('Applying property changes...');
+          // Reload page to show updated data (cache invalidation makes this necessary)
+          setTimeout(() => location.reload(), 300);
+        } else {
+          showToast('Failed: ' + (j.error || 'Unknown error'), 'err');
+        }
+      } catch(e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    // --- VENDOR ASSIGNMENT ---
+    async function loadVendors() {
+      if (allVendors.length) return;
+      try {
+        const r = await fetch('/api/catalog/vendors');
+        const j = await r.json();
+        allVendors = j.items || [];
+      } catch(e) { allVendors = []; }
+    }
+
+    function renderVendorList(filter = '') {
+      const list = document.getElementById('vendSelectList');
+      const lc = filter.toLowerCase();
+      const filtered = allVendors.filter(v => !lc || (v.name || '').toLowerCase().includes(lc) || (v.id || '').toLowerCase().includes(lc) || (v.code || '').toLowerCase().includes(lc));
+      list.innerHTML = filtered.slice(0, 50).map(v => {
+        const safeId = escapeHtml(v.id || '');
+        const safeName = escapeHtml(v.name || '');
+        const safeCode = escapeHtml(v.code || '');
+        const displayName = v.code ? escapeHtml(`${v.name || ''} (${v.code})`) : escapeHtml(v.name || v.id || '(no name)');
+        return `<div class="bulk-select-item" data-id="${safeId}" data-name="${safeName}" data-code="${safeCode}" onclick="selectVendor(this)">${displayName}</div>`;
+      }).join('') || '<div style="padding:10px;color:#94a3b8">No vendors found</div>';
+    }
+
+    function filterVendorList() {
+      const val = document.getElementById('vendSearchInput').value;
+      renderVendorList(val);
+    }
+
+    function selectVendor(el) {
+      document.querySelectorAll('#vendSelectList .bulk-select-item').forEach(e => e.classList.remove('selected'));
+      el.classList.add('selected');
+      document.getElementById('selectedVendId').value = el.dataset.id;
+      document.getElementById('selectedVendName').value = el.dataset.name;
+    }
+
+    async function showAssignVendor() {
+      const picks = getSelectedPdfIds();
+      if (!picks.length) return;
+      document.getElementById('vendSelCount').textContent = picks.length;
+      document.getElementById('vendSearchInput').value = '';
+      document.getElementById('selectedVendId').value = '';
+      document.getElementById('selectedVendName').value = '';
+      await loadVendors();
+      renderVendorList();
+      document.getElementById('assignVendModal').classList.add('show');
+    }
+
+    function closeAssignVendor() {
+      document.getElementById('assignVendModal').classList.remove('show');
+    }
+
+    async function submitAssignVendor() {
+      const picks = getSelectedPdfIds();
+      const vendId = document.getElementById('selectedVendId').value;
+      const vendName = document.getElementById('selectedVendName').value;
+      if (!vendId && !vendName) { alert('Please select a vendor'); return; }
+      if (!picks.length) { alert('No invoices selected'); return; }
+
+      const fd = new FormData();
+      fd.append('date', '{{ date }}');
+      fd.append('pdf_ids', picks.join(','));
+      fd.append('vendor_id', vendId);
+      fd.append('vendor_name', vendName);
+
+      try {
+        const r = await fetch('/api/bulk_assign_vendor', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          showToast(`Vendor assigned to ${j.updated || picks.length} invoice(s). Reloading...`, 'ok');
+          closeAssignVendor();
+          showLoading('Applying vendor changes...');
+          // Reload page to show updated data (cache invalidation makes this necessary)
+          setTimeout(() => location.reload(), 300);
+        } else {
+          showToast('Failed: ' + (j.error || 'Unknown error'), 'err');
+        }
+      } catch(e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    // --- BULK REWORK ---
+    function showReworkModal() {
+      const picks = getSelectedPdfIds();
+      if (!picks.length) return;
+      document.getElementById('reworkSelCount').textContent = picks.length;
+      document.getElementById('reworkNotes').value = '';
+      document.getElementById('reworkModal').classList.add('show');
+    }
+
+    function closeReworkModal() {
+      document.getElementById('reworkModal').classList.remove('show');
+    }
+
+    async function submitBulkRework() {
+      const picks = getSelectedPdfIds();
+      const notes = document.getElementById('reworkNotes').value.trim();
+      if (!picks.length) { alert('No invoices selected'); return; }
+      if (!notes) { alert('Please enter notes for the parser'); return; }
+      if (!confirm(`Send ${picks.length} invoice(s) back for re-parsing?\n\nThis will delete the current parsed data and queue the PDFs for re-processing.`)) return;
+
+      const fd = new FormData();
+      fd.append('date', '{{ date }}');
+      fd.append('pdf_ids', picks.join(','));
+      fd.append('notes', notes);
+
+      try {
+        const r = await fetch('/api/bulk_rework', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          showToast(`${j.sent || picks.length} invoice(s) sent to rework`, 'ok');
+          closeReworkModal();
+          // Remove reworked rows from table
+          const set = new Set(picks);
+          document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
+            if (set.has(tr.getAttribute('data-pdf-id'))) tr.remove();
+          });
+          updateSelectedCount();
+          clearAllChecks();
+        } else {
+          showToast('Failed: ' + (j.error || 'Unknown error'), 'err');
+        }
+      } catch(e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    // Close modals on overlay click
+    ['assignPropModal', 'assignVendModal', 'reworkModal'].forEach(id => {
+      document.getElementById(id).addEventListener('click', e => {
+        if (e.target.classList.contains('bulk-modal-overlay')) {
+          e.target.classList.remove('show');
+        }
+      });
+    });
+
+    // ========== TABLE FILTERS ==========
+    const FILTER_KEY = 'invoices_filters';
+
+    function populateFilters() {
+      const rows = document.querySelectorAll('tbody tr[data-pdf-id]');
+      const properties = new Set();
+      const vendors = new Set();
+      const accounts = new Set();
+      const lines = new Set();
+      const totals = new Set();
+      const statuses = new Set();
+
+      rows.forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length >= 9) {
+          const prop = (tds[1].dataset.sort || tds[1].textContent || '').trim();
+          const vend = (tds[2].dataset.sort || tds[2].textContent || '').trim().split('\n')[0].trim();
+          const acct = (tds[3].dataset.sort || tds[3].textContent || '').trim();
+          const lineCount = (tds[6].textContent || '').trim();
+          const total = (tds[7].textContent || '').trim();
+          const status = tr.dataset.status || '';
+
+          if (prop && prop !== '—') properties.add(prop);
+          if (vend) vendors.add(vend);
+          if (acct) accounts.add(acct);
+          if (lineCount) lines.add(lineCount);
+          if (total) totals.add(total);
+          if (status) statuses.add(status);
+        }
+      });
+
+      // Sort and populate dropdowns
+      populateDropdown('filterProperty', Array.from(properties).sort(), 'Property');
+      populateDropdown('filterVendor', Array.from(vendors).sort(), 'Vendor');
+      populateDropdown('filterAccount', Array.from(accounts).sort(), 'Account');
+      populateDropdown('filterLines', Array.from(lines).sort((a,b) => parseInt(a) - parseInt(b)), 'Lines');
+      populateDropdown('filterTotal', Array.from(totals).sort((a,b) => {
+        const va = parseFloat(a.replace(/[$,]/g, '')) || 0;
+        const vb = parseFloat(b.replace(/[$,]/g, '')) || 0;
+        return va - vb;
+      }), 'Total');
+      populateDropdown('filterStatus', Array.from(statuses).sort(), 'Status');
+
+      // Restore saved filters
+      restoreFilters();
+    }
+
+    function populateDropdown(id, values, placeholder) {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      sel.innerHTML = `<option value="">${placeholder}</option>` +
+        values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(truncate(v, 20))}</option>`).join('');
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function truncate(str, len) {
+      return str.length > len ? str.substring(0, len) + '...' : str;
+    }
+
+    function applyFilters() {
+      const filterProp = document.getElementById('filterProperty').value;
+      const filterVend = document.getElementById('filterVendor').value;
+      const filterAcct = document.getElementById('filterAccount').value;
+      const filterLines = document.getElementById('filterLines').value;
+      const filterTotal = document.getElementById('filterTotal').value;
+      const filterStatus = document.getElementById('filterStatus').value;
+
+      // Save filters to localStorage
+      try {
+        localStorage.setItem(FILTER_KEY, JSON.stringify({
+          property: filterProp, vendor: filterVend, account: filterAcct,
+          lines: filterLines, total: filterTotal, status: filterStatus
+        }));
+      } catch(e) {}
+
+      const rows = document.querySelectorAll('tbody tr[data-pdf-id]');
+      rows.forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length < 9) return;
+
+        const prop = (tds[1].dataset.sort || tds[1].textContent || '').trim();
+        const vend = (tds[2].dataset.sort || tds[2].textContent || '').trim().split('\n')[0].trim();
+        const acct = (tds[3].dataset.sort || tds[3].textContent || '').trim();
+        const lineCount = (tds[6].textContent || '').trim();
+        const total = (tds[7].textContent || '').trim();
+        const status = tr.dataset.status || '';
+
+        let show = true;
+        if (filterProp && prop !== filterProp) show = false;
+        if (filterVend && vend !== filterVend) show = false;
+        if (filterAcct && acct !== filterAcct) show = false;
+        if (filterLines && lineCount !== filterLines) show = false;
+        if (filterTotal && total !== filterTotal) show = false;
+        if (filterStatus && status !== filterStatus) show = false;
+
+        if (show) {
+          tr.classList.remove('filtered-out');
+        } else {
+          tr.classList.add('filtered-out');
+          // Uncheck hidden rows
+          const cb = tr.querySelector('.pick');
+          if (cb) cb.checked = false;
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function clearFilters() {
+      document.getElementById('filterProperty').value = '';
+      document.getElementById('filterVendor').value = '';
+      document.getElementById('filterAccount').value = '';
+      document.getElementById('filterLines').value = '';
+      document.getElementById('filterTotal').value = '';
+      document.getElementById('filterStatus').value = '';
+      try { localStorage.removeItem(FILTER_KEY); } catch(e) {}
+      applyFilters();
+    }
+
+    function restoreFilters() {
+      try {
+        const saved = localStorage.getItem(FILTER_KEY);
+        if (saved) {
+          const f = JSON.parse(saved);
+          if (f.property) document.getElementById('filterProperty').value = f.property;
+          if (f.vendor) document.getElementById('filterVendor').value = f.vendor;
+          if (f.account) document.getElementById('filterAccount').value = f.account;
+          if (f.lines) document.getElementById('filterLines').value = f.lines;
+          if (f.total) document.getElementById('filterTotal').value = f.total;
+          if (f.status) document.getElementById('filterStatus').value = f.status;
+          applyFilters();
+        }
+      } catch(e) {}
+    }
+
+    // Toggle select all visible (not hidden or filtered-out) rows
+    function toggleSelectAll(){
+      const visibleCheckboxes = document.querySelectorAll('tbody tr:not(.hidden-complete):not(.filtered-out) .pick');
+      const allChecked = Array.from(visibleCheckboxes).every(c => c.checked);
+      visibleCheckboxes.forEach(c => { c.checked = !allChecked; });
+      updateSelectedCount();
+    }
+
+    // === KEYBOARD NAVIGATION FOR INVOICE ROWS ===
+    (function() {
+      function getVisibleRows() {
+        return Array.from(document.querySelectorAll('tbody tr[data-pdf-id]:not(.hidden-complete):not(.filtered-out)'));
+      }
+
+      // Focus first row after page loads
+      setTimeout(() => {
+        const rows = getVisibleRows();
+        if (rows.length > 0) {
+          rows[0].focus();
+        }
+      }, 300);
+
+      // Handle keyboard events
+      document.addEventListener('keydown', function(e) {
+        const active = document.activeElement;
+        if (!active || active.tagName !== 'TR' || !active.hasAttribute('data-pdf-id')) return;
+
+        const rows = getVisibleRows();
+        const idx = rows.indexOf(active);
+        if (idx === -1) return;
+
+        if (e.key === 'Enter') {
+          // Open the invoice
+          e.preventDefault();
+          const url = active.getAttribute('data-review-url');
+          if (url) location.href = url;
+        } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+          // Move to next row
+          e.preventDefault();
+          const nextIdx = idx + 1;
+          if (nextIdx < rows.length) {
+            rows[nextIdx].focus();
+            rows[nextIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+          // Move to previous row
+          e.preventDefault();
+          const prevIdx = idx - 1;
+          if (prevIdx >= 0) {
+            rows[prevIdx].focus();
+            rows[prevIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        } else if (e.key === ' ') {
+          // Space toggles checkbox
+          e.preventDefault();
+          const cb = active.querySelector('.pick');
+          if (cb) {
+            cb.checked = !cb.checked;
+            updateSelectedCount();
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

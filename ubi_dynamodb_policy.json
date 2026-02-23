@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:789814232318:table/jrk-bill-ubi-assignments",
+        "arn:aws:dynamodb:us-east-1:789814232318:table/jrk-bill-ubi-assignments/index/*",
+        "arn:aws:dynamodb:us-east-1:789814232318:table/jrk-bill-ubi-archived"
+      ]
+    }
+  ]
+}

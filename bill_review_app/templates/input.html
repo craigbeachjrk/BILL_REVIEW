@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Input · Upload PDFs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:900px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 12px 0}
+    .drop{border:2px dashed #94a3b8;border-radius:16px;padding:30px;text-align:center;background:#fff}
+    .drop.drag{background:#ecfeff;border-color:#06b6d4}
+    .muted{opacity:.8;font-size:13px}
+    .list{margin-top:14px}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;margin-bottom:8px}
+    code{background:#f1f5f9;padding:2px 6px;border-radius:6px}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <h1>Upload Invoice PDFs</h1>
+      <p class="muted">Drop Invoice PDFs to send them to JRK's Bill Parser for ingestion. Remember — one invoice per PDF!</p>
+      <div id="drop" class="drop">
+        <p><strong>Drag & drop</strong> PDFs here, or</p>
+        <p><input id="file" type="file" multiple accept="application/pdf" /></p>
+      </div>
+      <div id="list" class="list"></div>
+      <div class="actions" style="text-align:center;margin-top:12px">
+        <button class="btn" id="postBtn">Post to System</button>
+      </div>
+    </div>
+    </div>
+  </div>
+  <script>
+    const drop = document.getElementById('drop');
+    const inp = document.getElementById('file');
+    const list = document.getElementById('list');
+
+    const queue = [];
+
+    function addRow(text){
+      const el = document.createElement('div');
+      el.className = 'row';
+      el.innerHTML = `<span>${text}</span>`;
+      list.prepend(el);
+    }
+
+    function enqueue(files){
+      for (const f of files){
+        queue.push(f);
+        addRow(`Queued ${f.name}`);
+      }
+    }
+
+    async function upload(file){
+      const fd = new FormData();
+      fd.append('file', file);
+      addRow(`Uploading ${file.name}...`);
+      try{
+        const r = await fetch('/api/upload_input', { method:'POST', body: fd, credentials:'same-origin' });
+        let j = null;
+        try { j = await r.json(); } catch(_) { /* non-JSON response */ }
+        if (r.ok && j && j.ok){
+          addRow(`✔ Uploaded <code>${j.key}</code>`);
+        } else {
+          addRow(`✖ Failed ${file.name}: ${j && (j.error||JSON.stringify(j)) || (r.status + ' ' + r.statusText)}`);
+        }
+      } catch(e){
+        addRow(`✖ Network error for ${file.name}: ${e}`);
+      }
+    }
+
+    inp.addEventListener('change', () => { if (inp.files && inp.files.length) enqueue(inp.files); });
+
+    ;['dragenter','dragover'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); drop.classList.add('drag'); }));
+    ;['dragleave','drop'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('drag'); }));
+    drop.addEventListener('drop', e => {
+      const files = e.dataTransfer.files;
+      if (files && files.length) enqueue(files);
+    });
+
+    document.getElementById('postBtn').addEventListener('click', async (e) => {
+      if (!queue.length){ addRow('Nothing queued.'); return; }
+      const btn = e.currentTarget; btn.disabled = true; const old = btn.textContent; btn.textContent = 'Posting…';
+      const copy = queue.splice(0, queue.length);
+      for (const f of copy){ await upload(f); }
+      addRow('Done posting queued files.');
+      btn.disabled = false; btn.textContent = old;
+      // Clear the file input so the browser's "X files selected" label resets
+      try { inp.value = ''; } catch(_) {}
+    });
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

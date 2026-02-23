@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DEBUG · Bug & Enhancement Triage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:fixed}
+    @media (max-width: 768px) {
+      .wrap{padding:0 20px}
+      .card{padding:20px}
+    }
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb}
+    th{background:#f9fafb;font-weight:600}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600}
+    .badge.open{background:#fef3c7;color:#92400e}
+    .badge.in-progress{background:#dbeafe;color:#1e40af}
+    .badge.resolved{background:#d1fae5;color:#065f46}
+    .badge.high{background:#fee2e2;color:#991b1b}
+    .badge.medium{background:#fef3c7;color:#92400e}
+    .badge.low{background:#e5e7eb;color:#374151}
+    select{padding:6px 10px;border-radius:6px;border:1px solid #e5e7eb;font-size:12px}
+    .report-row{cursor:pointer;transition:background .1s}
+    .report-row:hover{background:#f9fafb}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    a{color:#0ea5e9}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto}
+    .improve-modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:6px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{display:block;width:calc(100% - 24px);max-width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .improve-modal-box textarea{min-height:120px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · DEBUG</a></div>
+    <div class="logout">
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>Bug & Enhancement Reports</h1>
+    <div class="card">
+      <div style="overflow-x:auto;">
+        <table id="reportsTable">
+          <thead>
+            <tr>
+              <th style="width:40%">Title</th>
+              <th style="width:12%">Requestor</th>
+              <th style="width:12%">Status</th>
+              <th style="width:12%">Priority</th>
+              <th style="width:12%">Created</th>
+              <th style="width:12%">Page</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let reports = [];
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function loadReports(){
+      try {
+        console.log('Loading reports from /api/debug/reports...');
+        const r = await fetch('/api/debug/reports');
+        console.log('Response status:', r.status, r.statusText);
+        if (!r.ok) {
+          const errorText = await r.text();
+          console.error('Error response:', errorText);
+          throw new Error('Failed to load: ' + r.status);
+        }
+        const data = await r.json();
+        console.log('Loaded reports:', data);
+        reports = data.reports || [];
+        renderReports();
+      } catch (e) {
+        console.error('Error loading reports:', e);
+        showToast('Error loading reports: ' + e.message, 'err');
+      }
+    }
+
+    function renderReports(){
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      for (const rep of reports){
+        const tr = document.createElement('tr');
+        tr.className = 'report-row';
+
+        // Title + Description
+        const tdTitle = document.createElement('td');
+        tdTitle.innerHTML = `<div style="font-weight:600">${escapeHtml(rep.title)}</div><div style="font-size:12px;color:#64748b;margin-top:4px">${escapeHtml(rep.description).substring(0, 100)}...</div>`;
+        tr.appendChild(tdTitle);
+
+        // Requestor
+        const tdReq = document.createElement('td');
+        tdReq.textContent = rep.requestor;
+        tr.appendChild(tdReq);
+
+        // Status
+        const tdStatus = document.createElement('td');
+        const selStatus = document.createElement('select');
+        selStatus.innerHTML = '<option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option>';
+        selStatus.value = rep.status;
+        selStatus.onchange = () => updateReport(rep.report_id, {status: selStatus.value});
+        tdStatus.appendChild(selStatus);
+        tr.appendChild(tdStatus);
+
+        // Priority
+        const tdPriority = document.createElement('td');
+        const selPriority = document.createElement('select');
+        selPriority.innerHTML = '<option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option>';
+        selPriority.value = rep.priority;
+        selPriority.onchange = () => updateReport(rep.report_id, {priority: selPriority.value});
+        tdPriority.appendChild(selPriority);
+        tr.appendChild(tdPriority);
+
+        // Created
+        const tdCreated = document.createElement('td');
+        tdCreated.textContent = formatDate(rep.created_utc);
+        tdCreated.style.fontSize = '12px';
+        tr.appendChild(tdCreated);
+
+        // Page Link
+        const tdPage = document.createElement('td');
+        if (rep.page_url){
+          const a = document.createElement('a');
+          a.href = rep.page_url;
+          a.textContent = 'View Page';
+          a.style.fontSize = '12px';
+          tdPage.appendChild(a);
+        }
+        tr.appendChild(tdPage);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function updateReport(reportId, updates){
+      try {
+        const r = await fetch(`/api/debug/report/${reportId}/update`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(updates)
+        });
+        if (!r.ok) throw new Error('Update failed');
+        showToast('Updated successfully', 'ok');
+        loadReports();
+      } catch (e) {
+        showToast('Error updating report', 'err');
+      }
+    }
+
+    function escapeHtml(text){
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    function formatDate(isoStr){
+      if (!isoStr) return '';
+      try {
+        const d = new Date(isoStr);
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      } catch {
+        return isoStr.substring(0, 10);
+      }
+    }
+
+    loadReports();
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+          loadReports(); // Reload the reports table to show the new report
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

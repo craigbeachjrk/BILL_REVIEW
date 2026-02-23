@@ -1,0 +1,1652 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>METRICS · Bill Review @ JRK</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-bottom:20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px}
+    .card h2{margin:0 0 16px 0;font-size:16px}
+    .stat-card{text-align:center}
+    .stat-card .value{font-size:36px;font-weight:700;color:#0ea5e9}
+    .stat-card .label{font-size:14px;color:#64748b;margin-top:4px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
+    @media (max-width: 768px) {
+      .wrap{padding:0 20px}
+      .card{padding:20px}
+    }
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb}
+    th{background:#f9fafb;font-weight:600}
+    .bar-chart{display:flex;flex-direction:column;gap:8px}
+    .bar-row{display:flex;align-items:center;gap:10px}
+    .bar-label{width:80px;font-size:13px;text-align:right;flex-shrink:0}
+    .bar-container{flex:1;max-width:600px;background:#e5e7eb;border-radius:4px;height:24px}
+    .bar-fill{height:24px;background:linear-gradient(90deg,#0ea5e9,#4338ca);border-radius:4px;min-width:4px;transition:width 0.3s}
+    .bar-value{font-size:12px;color:#64748b;width:40px;text-align:right;flex-shrink:0}
+    .pipeline-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+    .pipeline-stage{background:#f8fafc;border-radius:12px;padding:16px;text-align:center;border:2px solid #e5e7eb;transition:border-color .2s}
+    .pipeline-stage:hover{border-color:#0ea5e9}
+    .pipeline-stage .stage-count{font-size:28px;font-weight:700;margin-bottom:4px}
+    .pipeline-stage .stage-name{font-size:13px;color:#475569;font-weight:600}
+    .pipeline-stage .stage-age{font-size:11px;color:#94a3b8;margin-top:4px}
+    .job-id{font-family:monospace;font-size:11px;color:#64748b}
+    .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.review{background:#dbeafe;color:#1d4ed8}
+    .badge.posted{background:#d1fae5;color:#047857}
+    .badge.billback{background:#cffafe;color:#0e7490}
+    .badge.pending{background:#fef3c7;color:#b45309}
+    .badge.rework{background:#ede9fe;color:#6d28d9}
+    .badge.failed{background:#fee2e2;color:#b91c1c}
+    .filters{display:flex;gap:12px;align-items:center;margin-bottom:20px}
+    .filters label{font-size:13px;color:#475569}
+    .filters input[type="date"],.filters select{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px}
+    .loading{color:#64748b;font-style:italic;padding:20px;text-align:center}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto}
+    .improve-modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:6px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{display:block;width:calc(100% - 24px);max-width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .improve-modal-box textarea{min-height:120px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+    .tab-bar{display:flex;gap:4px;margin-bottom:20px}
+    .tab-btn{padding:12px 24px;border-radius:12px 12px 0 0;border:none;background:rgba(255,255,255,.4);color:#0f172a;cursor:pointer;font-size:14px;font-weight:600;transition:all .15s}
+    .tab-btn:hover{background:rgba(255,255,255,.6)}
+    .tab-btn.active{background:var(--glass);box-shadow:0 -4px 12px rgba(0,0,0,.08)}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+    .override-row{display:grid;grid-template-columns:200px 1fr 120px;gap:12px;padding:12px;background:#f8fafc;border-radius:8px;margin-bottom:8px;align-items:start}
+    .override-row:hover{background:#f1f5f9}
+    .override-prop{font-weight:600;color:#0f172a}
+    .override-users{font-size:13px;color:#475569}
+    .override-types{display:flex;flex-wrap:wrap;gap:4px}
+    .change-badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .change-badge.property{background:#dbeafe;color:#1d4ed8}
+    .change-badge.vendor{background:#d1fae5;color:#047857}
+    .change-badge.gl{background:#fef3c7;color:#b45309}
+    .change-badge.amount{background:#fee2e2;color:#b91c1c}
+    .change-badge.utility{background:#ede9fe;color:#6d28d9}
+    .change-badge.meter{background:#cffafe;color:#0e7490}
+    .change-badge.date{background:#fce7f3;color:#be185d}
+    .change-badge.other{background:#e5e7eb;color:#374151}
+    .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+    .summary-stat{background:#f8fafc;border-radius:12px;padding:16px;text-align:center}
+    .summary-stat .value{font-size:24px;font-weight:700;color:#8b5cf6}
+    .summary-stat .label{font-size:12px;color:#64748b;margin-top:4px}
+    .detail-table{font-size:13px}
+    .detail-table th{position:sticky;top:0;background:#f9fafb;z-index:10}
+    .field-detail{font-family:monospace;font-size:11px;background:#f1f5f9;padding:4px 8px;border-radius:4px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · METRICS</a></div>
+    <div class="logout">
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>Processing Metrics</h1>
+
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('people')">PEOPLE</button>
+      <button class="tab-btn" onclick="switchTab('overrides')">OVERRIDES</button>
+      <button class="tab-btn" onclick="switchTab('logins')">LOGINS</button>
+      <button class="tab-btn" onclick="switchTab('outliers')">OUTLIERS</button>
+    </div>
+
+    <!-- PEOPLE Tab Content -->
+    <div id="peopleTab" class="tab-content active">
+
+    <!-- View Mode Filter -->
+    <div class="card" style="margin-bottom:20px;padding:16px 24px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:600;color:#475569">View Mode</div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <select id="viewModeFilter" onchange="onViewModeChange()" style="padding:8px 16px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px;font-weight:600">
+            <option value="weekly">Weekly</option>
+            <option value="daily">Daily</option>
+          </select>
+          <div id="weekFilterContainer">
+            <select id="weekFilter" onchange="onWeekChange()" style="padding:8px 16px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px;min-width:200px">
+            </select>
+          </div>
+          <div id="dateFilterContainer" style="display:none">
+            <input type="date" id="submitterDateFilter" onchange="loadSubmitterStats(); loadActivityDetail();" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pipeline Summary -->
+    <div class="card" style="margin-bottom:20px">
+      <h2>Pipeline Status</h2>
+      <div id="pipelineSummary" class="pipeline-grid loading">Loading...</div>
+    </div>
+
+    <!-- Submitter Productivity -->
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0">Submitter Productivity <span id="dateRangeLabel" style="font-weight:400;font-size:14px;color:#64748b"></span></h2>
+        <div style="display:flex;gap:12px;align-items:center">
+          <label style="font-size:13px;color:#475569">Filter by AP:</label>
+          <select id="wowSubmitterFilter" onchange="loadWeekOverWeek(); loadSubmitterStats();" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px;min-width:150px">
+            <option value="">All Team</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Week Over Week Summary (last 6 weeks) -->
+      <div style="margin-bottom:24px">
+        <h3 style="margin:0 0 12px 0;font-size:14px;color:#475569">Week Over Week (Last 6 Weeks)</h3>
+        <div id="wowTable" class="loading">Loading...</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <!-- Submitted (Parse → POST) -->
+        <div>
+          <h3 style="margin:0 0 12px 0;font-size:14px;color:#0ea5e9">Submitted (Parse → POST)</h3>
+          <div id="submittedTable" class="loading">Loading...</div>
+        </div>
+        <!-- Posted (POST → Billback) -->
+        <div>
+          <h3 style="margin:0 0 12px 0;font-size:14px;color:#10b981">Posted (POST → Billback)</h3>
+          <div id="postedTable" class="loading">Loading...</div>
+        </div>
+      </div>
+      <!-- Aggregate Totals -->
+      <div style="margin-top:20px;padding-top:16px;border-top:2px solid #e5e7eb">
+        <h3 style="margin:0 0 12px 0;font-size:14px;color:#8b5cf6">Aggregate Totals (Submitted + Posted)</h3>
+        <div id="aggregateTable" class="loading">Loading...</div>
+      </div>
+      <!-- Aggregate by Submitter -->
+      <div style="margin-top:20px">
+        <h3 style="margin:0 0 12px 0;font-size:14px;color:#8b5cf6">Aggregate by Submitter</h3>
+        <div id="aggregateBySubmitterTable" class="loading">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Activity Timeline Detail -->
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0">Activity Timeline <span id="activityDateLabel" style="font-weight:400;font-size:14px;color:#64748b"></span></h2>
+        <div style="display:flex;gap:12px;align-items:center">
+          <label style="font-size:13px;color:#475569">Filter by submitter:</label>
+          <select id="activitySubmitterFilter" onchange="filterActivityTable()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px">
+            <option value="">All Submitters</option>
+          </select>
+          <button class="btn small" onclick="loadActivityDetail()">Refresh</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:12px">
+        Detailed submission log showing each invoice with timestamp.
+      </div>
+      <div id="activityTable" class="loading">Loading...</div>
+    </div>
+
+    </div><!-- End PEOPLE Tab -->
+
+    <!-- OVERRIDES Tab Content -->
+    <div id="overridesTab" class="tab-content">
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Override Statistics</h2>
+          <button class="btn small" onclick="loadOverrideStats()">Refresh</button>
+        </div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:16px">
+          Aggregate analytics of field overrides made by users. Cached for 10 minutes.
+        </div>
+
+        <!-- Summary Stats -->
+        <div id="overrideSummary" class="summary-grid loading">Loading...</div>
+
+        <!-- Change Type Distribution -->
+        <div style="margin-bottom:20px">
+          <h3 style="margin:0 0 12px 0;font-size:14px;color:#475569">Change Type Distribution</h3>
+          <div id="changeTypeChart" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
+      </div>
+
+      <!-- WHO IS MAKING CHANGES - Horizontal Bar Chart -->
+      <div class="card" style="margin-bottom:20px">
+        <h2>Who Is Making Changes (Last 3 Weeks)</h2>
+        <div style="font-size:12px;color:#64748b;margin-bottom:16px">
+          Horizontal bars show total overrides per user. Hover for breakdown by change type.
+        </div>
+        <div id="userBarChart" class="loading">Loading...</div>
+      </div>
+
+      <!-- By Property -->
+      <div class="card" style="margin-bottom:20px">
+        <h2>Overrides by Property</h2>
+        <div id="overridesByProperty" class="loading">Loading...</div>
+      </div>
+
+      <!-- Recent Override Detail -->
+      <div class="card" style="margin-bottom:20px">
+        <h2>Recent Override Detail</h2>
+        <div style="max-height:400px;overflow-y:auto">
+          <div id="overrideDetail" class="loading">Loading...</div>
+        </div>
+      </div>
+    </div><!-- End OVERRIDES Tab -->
+
+    <!-- LOGINS Tab Content -->
+    <div id="loginsTab" class="tab-content">
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Login Statistics</h2>
+          <button class="btn small" onclick="loadLoginStats()">Refresh</button>
+        </div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:16px">
+          Tracking logins since feature was enabled. Cached for 10 minutes.
+        </div>
+
+        <!-- Summary Stats -->
+        <div id="loginSummary" class="summary-grid loading">Loading...</div>
+      </div>
+
+      <!-- Login Frequency Bar Chart -->
+      <div class="card" style="margin-bottom:20px">
+        <h2>Login Frequency by User</h2>
+        <div style="font-size:12px;color:#64748b;margin-bottom:16px">
+          Total logins per user. Shows December and January activity separately.
+        </div>
+        <div id="loginBarChart" class="loading">Loading...</div>
+      </div>
+
+      <!-- User Detail Table -->
+      <div class="card" style="margin-bottom:20px">
+        <h2>User Login Detail</h2>
+        <div style="max-height:500px;overflow-y:auto">
+          <div id="loginDetailTable" class="loading">Loading...</div>
+        </div>
+      </div>
+    </div><!-- End LOGINS Tab -->
+
+    <!-- OUTLIERS Tab Content -->
+    <div id="outliersTab" class="tab-content">
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Outlier Detection</h2>
+          <div style="display:flex;gap:12px;align-items:center">
+            <button class="btn small" onclick="scanForOutliers()">Scan for Outliers</button>
+            <button class="btn small" onclick="loadOutliers()">Refresh</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:16px">
+          Bills with amounts significantly different from historical patterns. Uses standard deviation (3+ std) for accounts with 6+ bills, or 50%+ change for accounts with 3-5 bills.
+        </div>
+
+        <!-- Summary Stats -->
+        <div id="outlierSummary" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
+          <div style="background:#f8fafc;padding:16px;border-radius:8px;text-align:center">
+            <div id="outlierTotal" style="font-size:24px;font-weight:700;color:#475569">-</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Total</div>
+          </div>
+          <div style="background:#fef2f2;padding:16px;border-radius:8px;text-align:center">
+            <div id="outlierSpikes" style="font-size:24px;font-weight:700;color:#ef4444">-</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Spikes</div>
+          </div>
+          <div style="background:#eff6ff;padding:16px;border-radius:8px;text-align:center">
+            <div id="outlierDrops" style="font-size:24px;font-weight:700;color:#3b82f6">-</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Drops</div>
+          </div>
+          <div style="background:#fefce8;padding:16px;border-radius:8px;text-align:center">
+            <div id="outlierPending" style="font-size:24px;font-weight:700;color:#eab308">-</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Pending</div>
+          </div>
+          <div style="background:#f0fdf4;padding:16px;border-radius:8px;text-align:center">
+            <div id="outlierReviewed" style="font-size:24px;font-weight:700;color:#22c55e">-</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Reviewed</div>
+          </div>
+        </div>
+
+        <!-- Filter Controls -->
+        <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+          <label style="font-size:13px;color:#475569">Filter:</label>
+          <select id="outlierStatusFilter" onchange="filterOutliers()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px">
+            <option value="">All Status</option>
+            <option value="pending">Pending Only</option>
+            <option value="resolved">Resolved</option>
+            <option value="false_positive">False Positives</option>
+          </select>
+          <select id="outlierTypeFilter" onchange="filterOutliers()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px">
+            <option value="">All Types</option>
+            <option value="SPIKE">Spikes Only</option>
+            <option value="DROP">Drops Only</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Outliers Table -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="max-height:600px;overflow-y:auto">
+          <table id="outliersTable" style="width:100%;border-collapse:collapse">
+            <thead style="position:sticky;top:0;background:#fff;z-index:10">
+              <tr style="border-bottom:2px solid #e5e7eb;text-align:left">
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569">Status</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569">Property</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569">Vendor</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569">Account</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569;text-align:right">Amount</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569;text-align:right">Expected</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569;text-align:right">Z-Score</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569">Date</th>
+                <th style="padding:12px 8px;font-size:12px;font-weight:600;color:#475569">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="outliersTableBody">
+              <tr><td colspan="9" style="padding:40px;text-align:center;color:#64748b">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Outlier Detail Modal -->
+      <div id="outlierDetailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center">
+        <div style="background:white;border-radius:16px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <h3 style="margin:0">Outlier Detail</h3>
+            <button onclick="closeOutlierModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#64748b">&times;</button>
+          </div>
+          <div id="outlierDetailContent">Loading...</div>
+          <div style="margin-top:20px;display:flex;gap:12px">
+            <button class="btn" onclick="markOutlierResolved()">Mark Resolved</button>
+            <button class="btn" style="background:#f1f5f9;color:#475569" onclick="markOutlierFalsePositive()">False Positive</button>
+          </div>
+        </div>
+      </div>
+    </div><!-- End OUTLIERS Tab -->
+
+  </div>
+
+  <script>
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function formatTime(seconds) {
+      const hours = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      if (hours > 0) {
+        return `${hours}h ${mins}m`;
+      }
+      return `${mins}m`;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    async function loadPipelineSummary() {
+      try {
+        const r = await fetch('/api/metrics/pipeline-summary');
+        if (!r.ok) throw new Error('Failed to load');
+        const data = await r.json();
+        renderPipelineSummary(data.stages);
+      } catch (e) {
+        document.getElementById('pipelineSummary').innerHTML = '<div class="loading">Error loading pipeline data</div>';
+      }
+    }
+
+    function renderPipelineSummary(stages) {
+      const container = document.getElementById('pipelineSummary');
+      if (!stages || stages.length === 0) {
+        container.innerHTML = '<div class="loading">No pipeline data</div>';
+        return;
+      }
+
+      let html = '';
+      for (const s of stages) {
+        const ageText = s.oldest_age_days !== null ? `Oldest: ${s.oldest_age_days}d ago` : '';
+        html += `<div class="pipeline-stage" style="border-color:${s.color}20" onclick="filterByStage('${s.id}')">
+          <div class="stage-count" style="color:${s.color}">${s.count.toLocaleString()}</div>
+          <div class="stage-name">${escapeHtml(s.name)}</div>
+          ${ageText ? `<div class="stage-age">${ageText}</div>` : ''}
+        </div>`;
+      }
+      container.innerHTML = html;
+      container.classList.remove('loading');
+    }
+
+    function filterByStage(stageId) {
+      // No longer used but kept for pipeline click compatibility
+      console.log('Stage filter:', stageId);
+    }
+
+    // Week Over Week data
+    let wowData = null;
+
+    async function loadWeekOverWeek() {
+      const submitterFilter = document.getElementById('wowSubmitterFilter').value;
+      document.getElementById('wowTable').innerHTML = '<div class="loading">Loading week-over-week data...</div>';
+
+      try {
+        let url = '/api/metrics/week-over-week?weeks=6';
+        if (submitterFilter) {
+          url += `&submitter=${encodeURIComponent(submitterFilter)}`;
+        }
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('Failed to load');
+        wowData = await r.json();
+        renderWeekOverWeek();
+        populateWowSubmitterFilter();
+      } catch (e) {
+        console.error('Week over week error:', e);
+        document.getElementById('wowTable').innerHTML = '<div class="loading" style="color:#ef4444">Error loading data</div>';
+      }
+    }
+
+    function populateWowSubmitterFilter() {
+      if (!wowData || !wowData.all_submitters) return;
+
+      const select = document.getElementById('wowSubmitterFilter');
+      const currentValue = select.value;
+
+      // Only repopulate if empty (preserve selection)
+      if (select.options.length <= 1) {
+        for (const sub of wowData.all_submitters) {
+          const opt = document.createElement('option');
+          opt.value = sub;
+          opt.textContent = sub.split('@')[0];
+          select.appendChild(opt);
+        }
+      }
+
+      // Restore selection
+      if (currentValue) {
+        select.value = currentValue;
+      }
+    }
+
+    function renderWeekOverWeek() {
+      const container = document.getElementById('wowTable');
+      if (!wowData || !wowData.weeks || wowData.weeks.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No data available</div>';
+        return;
+      }
+
+      const filterLabel = wowData.submitter_filter ? wowData.submitter_filter.split('@')[0] : 'All Team';
+
+      let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+      html += '<thead><tr style="background:#f8fafc">';
+      html += '<th style="padding:10px;text-align:left;border-bottom:2px solid #e5e7eb">Week</th>';
+      html += '<th style="padding:10px;text-align:right;border-bottom:2px solid #e5e7eb">Invoices</th>';
+      html += '<th style="padding:10px;text-align:right;border-bottom:2px solid #e5e7eb">Lines</th>';
+      html += '<th style="padding:10px;text-align:right;border-bottom:2px solid #e5e7eb">Dollars</th>';
+      html += '<th style="padding:10px;text-align:right;border-bottom:2px solid #e5e7eb;color:#b91c1c">Late Fees</th>';
+      html += '<th style="padding:10px;text-align:right;border-bottom:2px solid #e5e7eb" title="Invoice change vs prior week">vs Prior</th>';
+      html += '</tr></thead><tbody>';
+
+      for (const week of wowData.weeks) {
+        // Format change vs prior week
+        let changeHtml = '<span style="color:#94a3b8">—</span>';
+        if (week.change) {
+          const diff = week.change.invoices;
+          if (diff > 0) {
+            changeHtml = `<span style="color:#059669;font-weight:600">+${diff}</span>`;
+          } else if (diff < 0) {
+            changeHtml = `<span style="color:#dc2626;font-weight:600">${diff}</span>`;
+          } else {
+            changeHtml = '<span style="color:#94a3b8">0</span>';
+          }
+        }
+
+        html += `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:10px;font-weight:500">${escapeHtml(week.label)}</td>
+          <td style="padding:10px;text-align:right">${week.invoices.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">${week.lines.toLocaleString()}</td>
+          <td style="padding:10px;text-align:right">$${week.dollars.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0})}</td>
+          <td style="padding:10px;text-align:right;font-weight:600;color:${week.late_fees > 0 ? '#b91c1c' : '#059669'}">$${week.late_fees.toFixed(2)}</td>
+          <td style="padding:10px;text-align:right">${changeHtml}</td>
+        </tr>`;
+      }
+
+      // Totals row
+      const totals = wowData.weeks.reduce((acc, w) => {
+        acc.invoices += w.invoices;
+        acc.lines += w.lines;
+        acc.dollars += w.dollars;
+        acc.late_fees += w.late_fees;
+        return acc;
+      }, {invoices: 0, lines: 0, dollars: 0, late_fees: 0});
+
+      html += `<tr style="background:#f8fafc;font-weight:700">
+        <td style="padding:10px">TOTAL (${filterLabel})</td>
+        <td style="padding:10px;text-align:right">${totals.invoices.toLocaleString()}</td>
+        <td style="padding:10px;text-align:right">${totals.lines.toLocaleString()}</td>
+        <td style="padding:10px;text-align:right">$${totals.dollars.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0})}</td>
+        <td style="padding:10px;text-align:right;color:${totals.late_fees > 0 ? '#b91c1c' : '#059669'}">$${totals.late_fees.toFixed(2)}</td>
+        <td style="padding:10px;text-align:right"></td>
+      </tr>`;
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+
+    async function loadSubmitterStats() {
+      const dateParam = getDateParams();
+      updateDateRangeLabel();
+
+      document.getElementById('submittedTable').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('postedTable').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('aggregateTable').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('aggregateBySubmitterTable').innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const r = await fetch('/api/metrics/submitter-stats' + dateParam);
+        if (!r.ok) throw new Error('Failed to load');
+        const data = await r.json();
+        renderSubmitterTable('submittedTable', data.submitted, data.submitted_totals, '#0ea5e9');
+        renderSubmitterTable('postedTable', data.posted, data.posted_totals, '#10b981');
+        renderAggregateTotals(data.aggregate_totals);
+        renderSubmitterTable('aggregateBySubmitterTable', data.aggregate_by_submitter, data.aggregate_totals, '#8b5cf6');
+      } catch (e) {
+        document.getElementById('submittedTable').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('postedTable').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('aggregateTable').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('aggregateBySubmitterTable').innerHTML = '<div class="loading">Error loading data</div>';
+      }
+    }
+
+    function renderAggregateTotals(totals) {
+      const container = document.getElementById('aggregateTable');
+      if (!totals) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No data</div>';
+        return;
+      }
+      container.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;text-align:center">
+          <div style="background:#f8fafc;padding:16px;border-radius:8px">
+            <div style="font-size:24px;font-weight:700;color:#8b5cf6">${totals.invoices.toLocaleString()}</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Total Invoices</div>
+          </div>
+          <div style="background:#f8fafc;padding:16px;border-radius:8px">
+            <div style="font-size:24px;font-weight:700;color:#8b5cf6">${totals.lines.toLocaleString()}</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Total Lines</div>
+          </div>
+          <div style="background:#f8fafc;padding:16px;border-radius:8px">
+            <div style="font-size:24px;font-weight:700;color:#8b5cf6">$${totals.dollars.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">Total Dollars</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSubmitterTable(containerId, items, totals, color) {
+      const container = document.getElementById(containerId);
+      if (!items || items.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No data for this date</div>';
+        return;
+      }
+
+      let html = '<table><thead><tr><th>Submitter</th><th style="text-align:right">Invoices</th><th style="text-align:right">Lines</th><th style="text-align:right">Dollars</th></tr></thead><tbody>';
+      for (const s of items) {
+        html += `<tr>
+          <td style="font-weight:600">${escapeHtml(s.submitter)}</td>
+          <td style="text-align:right">${s.invoices.toLocaleString()}</td>
+          <td style="text-align:right">${s.lines.toLocaleString()}</td>
+          <td style="text-align:right">$${s.dollars.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+        </tr>`;
+      }
+      // Totals row
+      html += `<tr style="background:#f8fafc;font-weight:700;border-top:2px solid ${color}">
+        <td>TOTAL</td>
+        <td style="text-align:right">${totals.invoices.toLocaleString()}</td>
+        <td style="text-align:right">${totals.lines.toLocaleString()}</td>
+        <td style="text-align:right">$${totals.dollars.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+      </tr>`;
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    // Activity detail data
+    let activityData = [];
+
+    async function loadActivityDetail() {
+      const dateParam = getDateParams();
+
+      document.getElementById('activityTable').innerHTML = '<div class="loading">Loading activity detail...</div>';
+
+      try {
+        const r = await fetch('/api/metrics/activity-detail' + dateParam);
+        if (!r.ok) throw new Error('Failed to load');
+        const data = await r.json();
+        activityData = data.activities || [];
+
+        // Update date label based on view mode
+        const dateLabel = document.getElementById('activityDateLabel');
+        if (currentViewMode === 'weekly' && data.start_date && data.end_date) {
+          const startD = new Date(data.start_date + 'T12:00:00');
+          const endD = new Date(data.end_date + 'T12:00:00');
+          const startStr = startD.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const endStr = endD.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          dateLabel.textContent = `— ${startStr} to ${endStr}`;
+        } else if (data.date) {
+          const d = new Date(data.date + 'T12:00:00');
+          dateLabel.textContent = '— ' + d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        populateSubmitterFilter();
+        renderActivityTable();
+      } catch (e) {
+        document.getElementById('activityTable').innerHTML = '<div class="loading">Error loading activity data</div>';
+      }
+    }
+
+    function populateSubmitterFilter() {
+      const select = document.getElementById('activitySubmitterFilter');
+      const submitters = [...new Set(activityData.map(a => a.submitter))].sort();
+
+      // Preserve current selection if possible
+      const currentValue = select.value;
+
+      select.innerHTML = '<option value="">All Submitters</option>';
+      for (const s of submitters) {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        select.appendChild(opt);
+      }
+
+      // Restore selection
+      if (currentValue && submitters.includes(currentValue)) {
+        select.value = currentValue;
+      }
+    }
+
+    function filterActivityTable() {
+      renderActivityTable();
+    }
+
+    function formatActivityTime(isoString) {
+      if (!isoString) return 'N/A';
+      try {
+        // Parse as UTC and convert to Pacific time
+        const d = new Date(isoString + (isoString.includes('Z') ? '' : 'Z'));
+        return d.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          timeZone: 'America/Los_Angeles'
+        });
+      } catch (e) {
+        return isoString;
+      }
+    }
+
+    function getHourInPacific(isoString) {
+      if (!isoString) return '';
+      try {
+        const d = new Date(isoString + (isoString.includes('Z') ? '' : 'Z'));
+        return d.toLocaleString('en-US', { hour: '2-digit', hour12: false, timeZone: 'America/Los_Angeles' });
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function getDateInPacific(isoString) {
+      if (!isoString) return '';
+      try {
+        const d = new Date(isoString + (isoString.includes('Z') ? '' : 'Z'));
+        return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function formatDateHeader(isoString) {
+      if (!isoString) return '';
+      try {
+        const d = new Date(isoString + (isoString.includes('Z') ? '' : 'Z'));
+        return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function renderActivityTable() {
+      const container = document.getElementById('activityTable');
+      const submitterFilter = document.getElementById('activitySubmitterFilter').value;
+
+      let filtered = activityData;
+      if (submitterFilter) {
+        filtered = activityData.filter(a => a.submitter === submitterFilter);
+      }
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No activity found for this date</div>';
+        return;
+      }
+
+      // Group by date and hour for visual separation (important for weekly view)
+      let html = '<table style="font-size:13px"><thead><tr>';
+      html += '<th style="width:90px">Time</th>';
+      html += '<th>Submitter</th>';
+      html += '<th>Property</th>';
+      html += '<th>Vendor</th>';
+      html += '<th style="text-align:center">Lines</th>';
+      html += '<th style="text-align:right">Dollars</th>';
+      html += '<th style="text-align:center">Type</th>';
+      html += '</tr></thead><tbody>';
+
+      let lastDate = null;
+      let lastHour = null;
+      for (const a of filtered) {
+        const time = formatActivityTime(a.submitted_at);
+        const dateKey = getDateInPacific(a.submitted_at);
+        const hour = getHourInPacific(a.submitted_at);
+
+        // Add date separator for weekly view (shows which day we're looking at)
+        if (dateKey && dateKey !== lastDate) {
+          const dateLabel = formatDateHeader(a.submitted_at);
+          html += `<tr style="background:#1e40af"><td colspan="7" style="font-weight:700;color:#fff;padding:12px 16px;font-size:14px">${dateLabel}</td></tr>`;
+          lastDate = dateKey;
+          lastHour = null;  // Reset hour tracking for new day
+        }
+
+        // Add hour separator (Pacific time)
+        if (hour && hour !== lastHour) {
+          const hourNum = parseInt(hour);
+          const hourLabel = hourNum === 0 ? '12 AM' : hourNum < 12 ? `${hourNum} AM` : hourNum === 12 ? '12 PM' : `${hourNum - 12} PM`;
+          html += `<tr style="background:#e0f2fe"><td colspan="7" style="font-weight:600;color:#0369a1;padding:8px 12px">${hourLabel} PT</td></tr>`;
+          lastHour = hour;
+        }
+
+        let typeBadge;
+        if (a.type === 'submitted') {
+          typeBadge = '<span class="badge review">Submitted</span>';
+        } else if (a.type === 'posted') {
+          typeBadge = '<span class="badge posted">Posted</span>';
+        } else if (a.type === 'advanced') {
+          typeBadge = '<span class="badge billback">Advanced</span>';
+        } else {
+          typeBadge = '<span class="badge pending">Unknown</span>';
+        }
+
+        html += `<tr>
+          <td style="font-family:monospace;font-weight:600">${time}</td>
+          <td>${escapeHtml(a.submitter)}</td>
+          <td title="${escapeHtml(a.property)}">${escapeHtml((a.property || '').substring(0, 25))}${(a.property || '').length > 25 ? '...' : ''}</td>
+          <td title="${escapeHtml(a.vendor)}">${escapeHtml((a.vendor || '').substring(0, 25))}${(a.vendor || '').length > 25 ? '...' : ''}</td>
+          <td style="text-align:center">${a.lines}</td>
+          <td style="text-align:right">$${a.dollars.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+          <td style="text-align:center">${typeBadge}</td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      html += `<div style="margin-top:12px;font-size:12px;color:#64748b;text-align:right">${filtered.length} activities</div>`;
+      container.innerHTML = html;
+    }
+
+    // Set default date to today in Pacific time (not UTC)
+    function getTodayPacific() {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      return formatter.format(new Date()); // Returns YYYY-MM-DD format
+    }
+    document.getElementById('submitterDateFilter').value = getTodayPacific();
+
+    // Weekly view logic
+    let currentViewMode = 'weekly';
+    let selectedWeekStart = null;
+
+    function getWeekOptions() {
+      // Generate last 12 weeks of options
+      const weeks = [];
+      const today = new Date();
+      // Adjust to Pacific time
+      const pacificOffset = -8 * 60; // PST offset in minutes
+      const localOffset = today.getTimezoneOffset();
+      today.setMinutes(today.getMinutes() + localOffset + pacificOffset);
+
+      // Find the Monday of current week
+      const dayOfWeek = today.getDay();
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const currentMonday = new Date(today);
+      currentMonday.setDate(today.getDate() + mondayOffset);
+      currentMonday.setHours(0, 0, 0, 0);
+
+      for (let i = 0; i < 12; i++) {
+        const weekStart = new Date(currentMonday);
+        weekStart.setDate(currentMonday.getDate() - (i * 7));
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+
+        weeks.push({
+          start: weekStart.toISOString().split('T')[0],
+          end: weekEnd.toISOString().split('T')[0],
+          label: formatWeekLabel(weekStart, weekEnd)
+        });
+      }
+      return weeks;
+    }
+
+    function formatWeekLabel(start, end) {
+      const startMonth = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const endMonth = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `Week of ${startMonth} - ${endMonth}`;
+    }
+
+    function populateWeekDropdown() {
+      const select = document.getElementById('weekFilter');
+      const weeks = getWeekOptions();
+      select.innerHTML = '';
+
+      for (const week of weeks) {
+        const opt = document.createElement('option');
+        opt.value = week.start + '|' + week.end;
+        opt.textContent = week.label;
+        select.appendChild(opt);
+      }
+
+      // Default to current week
+      if (weeks.length > 0) {
+        selectedWeekStart = weeks[0].start;
+      }
+    }
+
+    function onViewModeChange() {
+      const mode = document.getElementById('viewModeFilter').value;
+      currentViewMode = mode;
+
+      const weekContainer = document.getElementById('weekFilterContainer');
+      const dateContainer = document.getElementById('dateFilterContainer');
+
+      if (mode === 'weekly') {
+        weekContainer.style.display = 'block';
+        dateContainer.style.display = 'none';
+        onWeekChange();
+      } else {
+        weekContainer.style.display = 'none';
+        dateContainer.style.display = 'block';
+        loadSubmitterStats();
+        loadActivityDetail();
+      }
+    }
+
+    function onWeekChange() {
+      const val = document.getElementById('weekFilter').value;
+      if (val) {
+        const [start, end] = val.split('|');
+        selectedWeekStart = start;
+        loadSubmitterStats();
+        loadActivityDetail();
+      }
+    }
+
+    function getDateParams() {
+      if (currentViewMode === 'weekly') {
+        const val = document.getElementById('weekFilter').value;
+        if (val) {
+          const [start, end] = val.split('|');
+          return `?start_date=${start}&end_date=${end}`;
+        }
+      }
+      const dateFilter = document.getElementById('submitterDateFilter').value;
+      return dateFilter ? `?date=${dateFilter}` : '';
+    }
+
+    function updateDateRangeLabel() {
+      const label = document.getElementById('dateRangeLabel');
+      if (currentViewMode === 'weekly') {
+        const val = document.getElementById('weekFilter').value;
+        if (val) {
+          const [start, end] = val.split('|');
+          const startDate = new Date(start + 'T12:00:00');
+          const endDate = new Date(end + 'T12:00:00');
+          const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          label.textContent = `— ${startStr} to ${endStr}`;
+        }
+      } else {
+        const dateFilter = document.getElementById('submitterDateFilter').value;
+        if (dateFilter) {
+          const d = new Date(dateFilter + 'T12:00:00');
+          label.textContent = '— ' + d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+        }
+      }
+    }
+
+    // Initialize week dropdown
+    populateWeekDropdown();
+
+    // Tab switching
+    function switchTab(tabName) {
+      // Update tab buttons
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector(`.tab-btn[onclick*="${tabName}"]`).classList.add('active');
+
+      // Update tab content
+      document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+      document.getElementById(tabName + 'Tab').classList.add('active');
+
+      // Load data if switching to overrides
+      if (tabName === 'overrides' && !overridesLoaded) {
+        loadOverrideStats();
+      }
+
+      // Load data if switching to logins
+      if (tabName === 'logins' && !loginsLoaded) {
+        loadLoginStats();
+      }
+
+      // Load data if switching to outliers
+      if (tabName === 'outliers' && !outliersLoaded) {
+        loadOutliers();
+      }
+    }
+
+    let overridesLoaded = false;
+    let overrideData = null;
+    let loginsLoaded = false;
+    let loginData = null;
+    let outliersLoaded = false;
+    let outlierData = [];
+    let selectedOutlierId = null;
+
+    // -------- OUTLIER FUNCTIONS --------
+    async function loadOutliers() {
+      document.getElementById('outliersTableBody').innerHTML = '<tr><td colspan="9" style="padding:40px;text-align:center;color:#64748b">Loading...</td></tr>';
+
+      try {
+        const statusFilter = document.getElementById('outlierStatusFilter').value;
+        const typeFilter = document.getElementById('outlierTypeFilter').value;
+
+        let url = '/api/metrics/outliers?';
+        if (statusFilter) url += `status=${statusFilter}&`;
+        if (typeFilter) url += `outlier_type=${typeFilter}&`;
+
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('Failed to load');
+        const data = await r.json();
+        outlierData = data.outliers || [];
+        outliersLoaded = true;
+
+        // Update summary
+        document.getElementById('outlierTotal').textContent = data.summary?.total || 0;
+        document.getElementById('outlierSpikes').textContent = data.summary?.spikes || 0;
+        document.getElementById('outlierDrops').textContent = data.summary?.drops || 0;
+        document.getElementById('outlierPending').textContent = data.summary?.pending || 0;
+        document.getElementById('outlierReviewed').textContent = data.summary?.reviewed || 0;
+
+        renderOutliersTable();
+      } catch (e) {
+        console.error('Load outliers error:', e);
+        document.getElementById('outliersTableBody').innerHTML = '<tr><td colspan="9" style="padding:40px;text-align:center;color:#ef4444">Error loading outliers</td></tr>';
+      }
+    }
+
+    function renderOutliersTable() {
+      const tbody = document.getElementById('outliersTableBody');
+
+      if (outlierData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="padding:40px;text-align:center;color:#64748b">No outliers detected. Click "Scan for Outliers" to analyze recent bills.</td></tr>';
+        return;
+      }
+
+      let html = '';
+      for (const o of outlierData) {
+        const statusBadge = getOutlierStatusBadge(o.outlier_type, o.status);
+        const zScore = o.z_score ? Math.abs(o.z_score).toFixed(1) : (o.pct_change ? o.pct_change.toFixed(0) + '%' : '-');
+
+        html += `<tr style="border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="showOutlierDetail('${o.pdf_id}')">
+          <td style="padding:12px 8px">${statusBadge}</td>
+          <td style="padding:12px 8px;font-size:13px">${escapeHtml(o.property_name || '-')}</td>
+          <td style="padding:12px 8px;font-size:13px">${escapeHtml(o.vendor_name || '-')}</td>
+          <td style="padding:12px 8px;font-size:13px;font-family:monospace">${escapeHtml(o.account_number || '-')}</td>
+          <td style="padding:12px 8px;font-size:13px;text-align:right;font-weight:600;color:${o.outlier_type === 'SPIKE' ? '#ef4444' : '#3b82f6'}">$${(o.amount || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          <td style="padding:12px 8px;font-size:13px;text-align:right;color:#64748b">~$${(o.historical_mean || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          <td style="padding:12px 8px;font-size:13px;text-align:right;font-weight:600">${zScore}</td>
+          <td style="padding:12px 8px;font-size:12px;color:#64748b">${o.bill_date || '-'}</td>
+          <td style="padding:12px 8px">
+            <button class="btn small" style="font-size:11px;padding:4px 8px" onclick="event.stopPropagation(); showOutlierDetail('${o.pdf_id}')">View</button>
+          </td>
+        </tr>`;
+      }
+      tbody.innerHTML = html;
+    }
+
+    function getOutlierStatusBadge(type, status) {
+      let bgColor, textColor, label;
+
+      if (status === 'resolved') {
+        bgColor = '#dcfce7'; textColor = '#166534'; label = 'Resolved';
+      } else if (status === 'false_positive') {
+        bgColor = '#f1f5f9'; textColor = '#64748b'; label = 'False +';
+      } else if (type === 'SPIKE') {
+        bgColor = '#fef2f2'; textColor = '#dc2626'; label = 'SPIKE';
+      } else if (type === 'DROP') {
+        bgColor = '#eff6ff'; textColor = '#2563eb'; label = 'DROP';
+      } else {
+        bgColor = '#fefce8'; textColor = '#ca8a04'; label = 'Pending';
+      }
+
+      return `<span style="display:inline-block;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${bgColor};color:${textColor}">${label}</span>`;
+    }
+
+    function filterOutliers() {
+      loadOutliers();
+    }
+
+    async function scanForOutliers() {
+      if (!confirm('Scan recent bills for outliers? This may take a minute.')) return;
+
+      try {
+        const r = await fetch('/api/metrics/outliers/scan', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({days_back: 30})
+        });
+        if (!r.ok) throw new Error('Failed to start scan');
+        const data = await r.json();
+        showToast('Outlier scan started. Refresh in a minute to see results.', 'ok');
+      } catch (e) {
+        showToast('Error starting scan: ' + e.message, 'err');
+      }
+    }
+
+    function showOutlierDetail(pdfId) {
+      selectedOutlierId = pdfId;
+      const o = outlierData.find(x => x.pdf_id === pdfId);
+      if (!o) return;
+
+      const content = document.getElementById('outlierDetailContent');
+      const zInfo = o.z_score
+        ? `<strong>${Math.abs(o.z_score).toFixed(1)}</strong> standard deviations ${o.z_score > 0 ? 'above' : 'below'} mean`
+        : `<strong>${o.pct_change?.toFixed(0)}%</strong> ${o.outlier_type === 'SPIKE' ? 'above' : 'below'} median`;
+
+      content.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+          <div>
+            <div style="font-size:12px;color:#64748b">Property</div>
+            <div style="font-weight:600">${escapeHtml(o.property_name)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:#64748b">Vendor</div>
+            <div style="font-weight:600">${escapeHtml(o.vendor_name)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:#64748b">Account</div>
+            <div style="font-weight:600;font-family:monospace">${escapeHtml(o.account_number)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:#64748b">Invoice</div>
+            <div style="font-weight:600">${escapeHtml(o.invoice_number)}</div>
+          </div>
+        </div>
+        <div style="background:#f8fafc;padding:16px;border-radius:8px;margin-bottom:16px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;text-align:center">
+            <div>
+              <div style="font-size:12px;color:#64748b">Bill Amount</div>
+              <div style="font-size:24px;font-weight:700;color:${o.outlier_type === 'SPIKE' ? '#ef4444' : '#3b82f6'}">$${o.amount?.toLocaleString()}</div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#64748b">Historical Mean</div>
+              <div style="font-size:24px;font-weight:700;color:#64748b">$${o.historical_mean?.toLocaleString()}</div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#64748b">Std Dev</div>
+              <div style="font-size:24px;font-weight:700;color:#64748b">$${o.historical_std?.toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:${o.outlier_type === 'SPIKE' ? '#fef2f2' : '#eff6ff'};padding:12px;border-radius:8px;margin-bottom:16px">
+          <div style="font-weight:600;color:${o.outlier_type === 'SPIKE' ? '#dc2626' : '#2563eb'}">
+            ${o.outlier_type}: ${zInfo}
+          </div>
+          <div style="font-size:13px;margin-top:8px;color:#475569">${escapeHtml(o.reason || '')}</div>
+        </div>
+        <div style="font-size:12px;color:#64748b">
+          Based on ${o.historical_n || 0} historical bills | Detection method: ${o.method || 'std_dev'}
+        </div>
+        ${o.reviewed_by ? `<div style="margin-top:12px;padding:12px;background:#f0fdf4;border-radius:8px;font-size:13px">
+          Reviewed by ${escapeHtml(o.reviewed_by)} | Status: ${o.status}
+          ${o.review_notes ? '<br>Notes: ' + escapeHtml(o.review_notes) : ''}
+        </div>` : ''}
+      `;
+
+      document.getElementById('outlierDetailModal').style.display = 'flex';
+    }
+
+    function closeOutlierModal() {
+      document.getElementById('outlierDetailModal').style.display = 'none';
+      selectedOutlierId = null;
+    }
+
+    async function markOutlierResolved() {
+      if (!selectedOutlierId) return;
+      await updateOutlierStatus('resolved');
+    }
+
+    async function markOutlierFalsePositive() {
+      if (!selectedOutlierId) return;
+      await updateOutlierStatus('false_positive');
+    }
+
+    async function updateOutlierStatus(status) {
+      try {
+        const r = await fetch(`/api/metrics/outliers/${selectedOutlierId}/review`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({status: status, notes: ''})
+        });
+        if (!r.ok) throw new Error('Failed to update');
+        showToast('Outlier marked as ' + status, 'ok');
+        closeOutlierModal();
+        loadOutliers();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    async function loadLoginStats() {
+      document.getElementById('loginSummary').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('loginBarChart').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('loginDetailTable').innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const r = await fetch('/api/metrics/logins');
+        if (!r.ok) throw new Error('Failed to load');
+        loginData = await r.json();
+        loginsLoaded = true;
+        renderLoginSummary(loginData);
+        renderLoginBarChart(loginData.user_stats);
+        renderLoginDetailTable(loginData.user_stats);
+      } catch (e) {
+        console.error('Login stats error:', e);
+        document.getElementById('loginSummary').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('loginBarChart').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('loginDetailTable').innerHTML = '<div class="loading">Error loading data</div>';
+      }
+    }
+
+    function renderLoginSummary(data) {
+      const container = document.getElementById('loginSummary');
+      const dateRange = data.date_range || {};
+      const rangeText = dateRange.first && dateRange.last
+        ? `${dateRange.first} to ${dateRange.last}`
+        : 'No data yet';
+
+      container.innerHTML = `
+        <div class="summary-stat">
+          <div class="value">${data.total_logins.toLocaleString()}</div>
+          <div class="label">Total Logins</div>
+        </div>
+        <div class="summary-stat">
+          <div class="value">${data.unique_users}</div>
+          <div class="label">Unique Users</div>
+        </div>
+        <div class="summary-stat" style="grid-column: span 2">
+          <div class="value" style="font-size:16px">${escapeHtml(rangeText)}</div>
+          <div class="label">Date Range</div>
+        </div>
+      `;
+      container.classList.remove('loading');
+    }
+
+    function renderLoginBarChart(userStats) {
+      const container = document.getElementById('loginBarChart');
+      if (!userStats || userStats.length === 0) {
+        container.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center">No login data available yet. Logins will be tracked from now on.</div>';
+        return;
+      }
+
+      const maxCount = userStats[0].total_logins || 1;
+
+      let html = '<div style="display:flex;flex-direction:column;gap:8px">';
+
+      for (const data of userStats) {
+        const user = data.user;
+        const pct = Math.round((data.total_logins / maxCount) * 100);
+
+        // Show December vs January breakdown
+        const decCount = data.december_logins || 0;
+        const janCount = data.january_logins || 0;
+        const monthBreakdown = `Dec: ${decCount}, Jan: ${janCount}`;
+
+        html += `<div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px">
+          <div style="width:180px;font-weight:600;font-size:13px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(user)}">${escapeHtml(user.split('@')[0])}</div>
+          <div style="flex:1;max-width:400px;background:#e5e7eb;border-radius:4px;height:28px;position:relative">
+            <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#10b981,#059669);border-radius:4px;min-width:4px"></div>
+          </div>
+          <div style="width:50px;font-weight:700;font-size:14px;text-align:right">${data.total_logins}</div>
+          <div style="font-size:11px;color:#64748b;width:80px">${data.days_active}d active</div>
+          <div style="font-size:11px;color:#64748b;width:120px" title="December vs January logins">${escapeHtml(monthBreakdown)}</div>
+        </div>`;
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function formatLoginDate(isoString) {
+      if (!isoString) return 'N/A';
+      try {
+        const d = new Date(isoString + (isoString.includes('Z') ? '' : 'Z'));
+        return d.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone: 'America/Los_Angeles'
+        });
+      } catch (e) {
+        return isoString;
+      }
+    }
+
+    function renderLoginDetailTable(userStats) {
+      const container = document.getElementById('loginDetailTable');
+      if (!userStats || userStats.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No login data available</div>';
+        return;
+      }
+
+      let html = '<table class="detail-table" style="width:100%"><thead><tr>';
+      html += '<th>User</th>';
+      html += '<th style="text-align:center">Total Logins</th>';
+      html += '<th style="text-align:center">Days Active</th>';
+      html += '<th style="text-align:center">Avg/Day</th>';
+      html += '<th style="text-align:center">Dec 2024</th>';
+      html += '<th style="text-align:center">Jan 2025</th>';
+      html += '<th style="text-align:center">Last 7 Days</th>';
+      html += '<th>First Login</th>';
+      html += '<th>Last Login</th>';
+      html += '</tr></thead><tbody>';
+
+      for (const u of userStats) {
+        // Color code December/January
+        const decStyle = u.december_logins === 0 ? 'color:#b91c1c;font-weight:700' : 'color:#059669';
+        const janStyle = u.january_logins === 0 ? 'color:#b91c1c;font-weight:700' : 'color:#059669';
+
+        html += `<tr>
+          <td style="font-weight:600">${escapeHtml(u.user)}</td>
+          <td style="text-align:center;font-weight:600">${u.total_logins}</td>
+          <td style="text-align:center">${u.days_active}</td>
+          <td style="text-align:center">${u.avg_logins_per_day}</td>
+          <td style="text-align:center;${decStyle}">${u.december_logins}</td>
+          <td style="text-align:center;${janStyle}">${u.january_logins}</td>
+          <td style="text-align:center;font-weight:600">${u.recent_logins}</td>
+          <td style="font-family:monospace;font-size:11px">${formatLoginDate(u.first_login)}</td>
+          <td style="font-family:monospace;font-size:11px">${formatLoginDate(u.last_login)}</td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    async function loadOverrideStats() {
+      document.getElementById('overrideSummary').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('changeTypeChart').innerHTML = '';
+      document.getElementById('userBarChart').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('overridesByProperty').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('overrideDetail').innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const r = await fetch('/api/metrics/overrides');
+        if (!r.ok) throw new Error('Failed to load');
+        overrideData = await r.json();
+        overridesLoaded = true;
+        renderOverrideSummary(overrideData);
+        renderChangeTypeChart(overrideData.change_type_totals);
+        renderUserBarChart(overrideData.user_stats);
+        renderOverridesByProperty(overrideData.by_property);
+        renderOverrideDetail(overrideData.raw_overrides);
+      } catch (e) {
+        console.error('Override stats error:', e);
+        document.getElementById('overrideSummary').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('userBarChart').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('overridesByProperty').innerHTML = '<div class="loading">Error loading data</div>';
+        document.getElementById('overrideDetail').innerHTML = '<div class="loading">Error loading data</div>';
+      }
+    }
+
+    function renderUserBarChart(userStats) {
+      const container = document.getElementById('userBarChart');
+      if (!userStats || userStats.length === 0) {
+        container.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center">No override data available</div>';
+        return;
+      }
+
+      const maxCount = userStats[0].total || 1;
+
+      let html = '<div style="display:flex;flex-direction:column;gap:8px">';
+
+      for (const data of userStats) {
+        const user = data.user;
+        const pct = Math.round((data.total / maxCount) * 100);
+        const typeBreakdown = Object.entries(data.change_types || {})
+          .sort((a, b) => b[1] - a[1])
+          .map(([type, count]) => `${type}: ${count}`)
+          .join(', ');
+
+        html += `<div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px">
+          <div style="width:180px;font-weight:600;font-size:13px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(user)}">${escapeHtml(user.split('@')[0])}</div>
+          <div style="flex:1;max-width:400px;background:#e5e7eb;border-radius:4px;height:28px;position:relative">
+            <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#0ea5e9,#4338ca);border-radius:4px;min-width:4px"></div>
+          </div>
+          <div style="width:50px;font-weight:700;font-size:14px;text-align:right">${data.total}</div>
+          <div style="font-size:11px;color:#64748b;width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(typeBreakdown)}">${escapeHtml(typeBreakdown)}</div>
+        </div>`;
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function renderOverrideSummary(data) {
+      const container = document.getElementById('overrideSummary');
+      container.innerHTML = `
+        <div class="summary-stat">
+          <div class="value">${data.total_overrides.toLocaleString()}</div>
+          <div class="label">Total Overrides</div>
+        </div>
+        <div class="summary-stat">
+          <div class="value">${data.unique_users}</div>
+          <div class="label">Users Making Changes</div>
+        </div>
+        <div class="summary-stat">
+          <div class="value">${data.by_property.length}</div>
+          <div class="label">Properties Affected</div>
+        </div>
+        <div class="summary-stat">
+          <div class="value">${Object.keys(data.change_type_totals).length}</div>
+          <div class="label">Change Types</div>
+        </div>
+      `;
+      container.classList.remove('loading');
+    }
+
+    function getChangeBadgeClass(type) {
+      const classes = {
+        'Property': 'property',
+        'Vendor': 'vendor',
+        'GL Account': 'gl',
+        'Amount': 'amount',
+        'Utility Type': 'utility',
+        'Meter': 'meter',
+        'Service Date': 'date',
+        'Other': 'other'
+      };
+      return classes[type] || 'other';
+    }
+
+    function renderChangeTypeChart(types) {
+      const container = document.getElementById('changeTypeChart');
+      if (!types || Object.keys(types).length === 0) {
+        container.innerHTML = '<span style="color:#64748b">No change types recorded</span>';
+        return;
+      }
+
+      let html = '';
+      const sorted = Object.entries(types).sort((a, b) => b[1] - a[1]);
+      for (const [type, count] of sorted) {
+        const badgeClass = getChangeBadgeClass(type);
+        html += `<div style="background:#f8fafc;padding:8px 12px;border-radius:8px;display:flex;align-items:center;gap:8px">
+          <span class="change-badge ${badgeClass}">${escapeHtml(type)}</span>
+          <span style="font-weight:600">${count.toLocaleString()}</span>
+        </div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    function renderOverridesByProperty(properties) {
+      const container = document.getElementById('overridesByProperty');
+      if (!properties || properties.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No overrides found</div>';
+        return;
+      }
+
+      let html = '';
+      for (const prop of properties) {
+        // Build user list
+        const userList = prop.user_stats.map(u =>
+          `<span style="margin-right:8px">${escapeHtml(u.user)} <strong>(${u.count})</strong></span>`
+        ).join('');
+
+        // Build change type badges
+        const typeBadges = Object.entries(prop.change_type_counts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([type, count]) => {
+            const badgeClass = getChangeBadgeClass(type);
+            return `<span class="change-badge ${badgeClass}">${escapeHtml(type)} (${count})</span>`;
+          }).join('');
+
+        // Generate a safe ID from property name
+        const safeId = prop.property_name.replace(/[^a-zA-Z0-9]/g, '_');
+
+        html += `<div class="override-row">
+          <div>
+            <div class="override-prop">${escapeHtml(prop.property_name)}</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px">${prop.total_overrides} override${prop.total_overrides !== 1 ? 's' : ''}</div>
+          </div>
+          <div>
+            <div class="override-users">${userList}</div>
+            <div class="override-types" style="margin-top:6px">${typeBadges}</div>
+          </div>
+          <div style="text-align:right">
+            <button class="btn small secondary" onclick="togglePropertyDetail('${safeId}')">Detail</button>
+          </div>
+        </div>
+        <div id="propDetail_${safeId}" style="display:none;padding:12px;background:#fff;border-radius:8px;margin:-4px 0 8px 0;border:1px solid #e5e7eb">
+          ${renderPropertyRecentChanges(prop.recent_changes)}
+        </div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    function togglePropertyDetail(safeId) {
+      const el = document.getElementById('propDetail_' + safeId);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    }
+
+    function renderPropertyRecentChanges(changes) {
+      if (!changes || changes.length === 0) {
+        return '<div style="color:#64748b">No recent changes</div>';
+      }
+
+      let html = '<table class="detail-table" style="width:100%"><thead><tr>';
+      html += '<th>User</th><th>Change Types</th><th>Vendor</th><th>Time</th><th>Fields Changed</th>';
+      html += '</tr></thead><tbody>';
+
+      for (const c of changes) {
+        const typeBadges = c.change_types.map(type => {
+          const badgeClass = getChangeBadgeClass(type);
+          return `<span class="change-badge ${badgeClass}">${escapeHtml(type)}</span>`;
+        }).join(' ');
+
+        const time = formatActivityTime(c.updated_utc);
+        const fieldSummary = Object.keys(c.fields || {}).slice(0, 3).join(', ');
+
+        html += `<tr>
+          <td>${escapeHtml(c.user)}</td>
+          <td>${typeBadges}</td>
+          <td>${escapeHtml(c.vendor_name || '-')}</td>
+          <td style="font-family:monospace;font-size:11px">${time}</td>
+          <td><span class="field-detail" title="${escapeHtml(JSON.stringify(c.fields))}">${escapeHtml(fieldSummary) || '-'}</span></td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      return html;
+    }
+
+    function renderOverrideDetail(overrides) {
+      const container = document.getElementById('overrideDetail');
+      if (!overrides || overrides.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">No recent overrides</div>';
+        return;
+      }
+
+      let html = '<table class="detail-table" style="width:100%"><thead><tr>';
+      html += '<th>User</th><th>Property</th><th>Change Types</th><th>Vendor Override</th><th>Time</th>';
+      html += '</tr></thead><tbody>';
+
+      // Sort by time descending
+      const sorted = [...overrides].sort((a, b) =>
+        (b.updated_utc || '').localeCompare(a.updated_utc || '')
+      );
+
+      for (const o of sorted.slice(0, 50)) {
+        const typeBadges = o.change_types.map(type => {
+          const badgeClass = getChangeBadgeClass(type);
+          return `<span class="change-badge ${badgeClass}">${escapeHtml(type)}</span>`;
+        }).join(' ');
+
+        const time = formatActivityTime(o.updated_utc);
+
+        html += `<tr>
+          <td>${escapeHtml(o.user)}</td>
+          <td title="${escapeHtml(o.property_name)}">${escapeHtml((o.property_name || '').substring(0, 20))}${(o.property_name || '').length > 20 ? '...' : ''}</td>
+          <td>${typeBadges}</td>
+          <td>${escapeHtml(o.vendor_name || '-')}</td>
+          <td style="font-family:monospace;font-size:11px">${time}</td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      if (overrides.length > 50) {
+        html += `<div style="margin-top:8px;font-size:12px;color:#64748b">Showing 50 of ${overrides.length} overrides</div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    // Initial load - start with weekly view
+    loadPipelineSummary();
+    loadWeekOverWeek(); // Load week-over-week stats at top
+    onWeekChange(); // This will call loadSubmitterStats() and loadActivityDetail()
+
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return;
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

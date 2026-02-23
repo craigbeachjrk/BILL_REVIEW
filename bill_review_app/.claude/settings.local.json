@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws apprunner start-deployment:*)",
+      "Bash(gunzip:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfix: move bills from BILLBACK to POST and improve button hover detection\n\n- Changed send-to-post endpoint to MOVE bills instead of copy (deletes from Stage 7 after copying to Stage 6)\n- Updated billback.html: changed Send to POST button to fade blue with black outline\n- Fixed button hover/click detection across all templates:\n  - Added z-index:100 to all sticky headers (13 files)\n  - Added cursor:pointer and z-index:1 to home page tiles (landing.html, index.html, config_menu.html)\n- Updated confirmation message to clarify it''s a MOVE operation\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \".\\deploy_billback.ps1\")",
+      "Bash(aws sso login:*)",
+      "Bash(aws configure:*)",
+      "Bash(cmd.exe /c \"aws configure sso\")",
+      "Bash(cat:*)",
+      "Bash(aws sts get-caller-identity:*)",
+      "Bash(cd:*)",
+      "Bash(git commit:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"H:\\Business_Intelligence\\1. COMPLETED_PROJECTS\\WINDSURF_DEV\\deploy_billback.ps1\")",
+      "Bash(aws codebuild batch-get-builds:*)",
+      "Bash(aws apprunner list-services:*)",
+      "Bash(aws ecr describe-images:*)",
+      "Bash(aws logs tail:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"H:\\Business_Intelligence\\1. COMPLETED_PROJECTS\\WINDSURF_DEV\\get_logs.ps1\")",
+      "Bash(aws logs describe-log-groups:*)",
+      "Bash(aws iam list-attached-role-policies:*)",
+      "Bash(aws iam create-policy:*)",
+      "Bash(aws iam attach-role-policy:*)",
+      "Bash(Select-String \"master-bills\" -Context 5)",
+      "Bash(aws s3 cp:*)",
+      "Bash(Select-String -Pattern \"MASTER BILL DETAIL\")",
+      "Bash(aws dynamodb get-item:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(aws dynamodb list-tables:*)",
+      "Bash(python:*)",
+      "Bash(aws dynamodb describe-table:*)",
+      "Bash(aws apprunner list-operations:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \".\\get_logs.ps1\")",
+      "Bash(aws dynamodb scan:*)",
+      "Bash(pkill:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \".\\deploy_app.ps1\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

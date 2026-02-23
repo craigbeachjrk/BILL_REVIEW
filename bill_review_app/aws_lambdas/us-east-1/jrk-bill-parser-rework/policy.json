@@ -1,0 +1,4 @@
+﻿{
+    "Policy":  "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"s3invoke-rework\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"s3.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser-rework\",\"Condition\":{\"StringEquals\":{\"AWS:SourceAccount\":\"789814232318\"},\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:s3:::jrk-analytics-billing\"}}},{\"Sid\":\"s3invoke-rework-final\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"s3.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser-rework\",\"Condition\":{\"StringEquals\":{\"AWS:SourceAccount\":\"789814232318\"},\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:s3:::jrk-analytics-billing\"}}}]}",
+    "RevisionId":  "6ea9e898-fd11-4d9d-95a2-19621751a7d0"
+}

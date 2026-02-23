@@ -1,0 +1,8 @@
+# Ignore local build artifacts in this app folder
+bill_review_app_src.zip
+*.zip
+
+# Node/Python caches just in case
+node_modules/
+__pycache__/
+*.log

@@ -1,0 +1,53 @@
+================================================================================
+DEPLOYMENT EXCLUSIONS - DO NOT MODIFY WITHOUT UNDERSTANDING
+================================================================================
+
+The deploy_app.ps1 script is configured to create a LEAN deployment package.
+This reduces deployment from ~280 MB to ~1 MB.
+
+EXCLUDED DIRECTORIES (do not add these back):
+---------------------------------------------
+- aws_lambdas/     (241 MB) - Lambda code deployed separately via Lambda deploy scripts
+- infra/           (0.08 MB) - Infrastructure/Terraform code, not needed at runtime
+- deploy/          (4.2 MB)  - Build artifacts
+- test/            (0.67 MB) - Test data
+- secrets/         (0.48 MB) - SECURITY RISK - never deploy secrets
+- scripts/         (0.07 MB) - Dev scripts
+- .claude/         (0.01 MB) - Claude config
+- .git/            - Git history
+- __pycache__/     - Python cache
+- .venv/, venv/    - Virtual environments
+- node_modules/    - Node dependencies
+- dd=*/            - Debug/test data folders (pattern match)
+
+EXCLUDED FILE TYPES:
+--------------------
+- *.zip            - Build artifacts (e.g., aggregator_deploy.zip at 30 MB)
+- *.md             - Documentation not needed at runtime
+- *.ps1            - PowerShell dev scripts
+- .gitignore       - Git config
+
+INCLUDED (runtime essentials only):
+-----------------------------------
+Directories:
+- data/            - Config data files
+- templates/       - HTML templates
+
+Files:
+- app.py           - Flask app
+- auth.py          - Authentication
+- main.py          - Main application code
+- utils.py         - Utilities
+- requirements.txt - Python dependencies
+- Dockerfile       - Container build
+- buildspec.yml    - CodeBuild spec
+- apprunner_config.json
+- VERSION.txt
+
+================================================================================
+TOTAL DEPLOYMENT SIZE: ~1 MB (was 280 MB before exclusions)
+================================================================================
+
+Last updated: 2025-11-21
+Reason: Deployment was taking too long due to bloated package including
+        Lambda code, test data, and build artifacts.

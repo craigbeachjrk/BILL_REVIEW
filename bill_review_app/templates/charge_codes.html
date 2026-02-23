@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CHARGE CODES</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:1000}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:900px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px}
+    h1{margin:0 0 16px 0;font-size:24px}
+    .tableWrap{overflow-x:auto;background:#fff;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0}
+    input[type="text"]{width:calc(100% - 12px);padding:6px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px}
+    .add-row{margin-top:12px;text-align:right}
+    .toast-wrap{position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px}
+    .toast{background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.3);opacity:1}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10001;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10002;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+    .delete-btn{background:#ef4444;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px}
+    .delete-btn:hover{background:#dc2626}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/config" style="color:#fff;text-decoration:none;font-weight:600">CONFIG · CHARGE CODES</a></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="save()">SAVE</button>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/config">Back</a>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div id="toastWrap" class="toast-wrap" aria-live="polite"></div>
+  <div class="wrap">
+    <div class="card">
+      <h1>Charge Codes Configuration</h1>
+      <p style="color:#64748b;font-size:13px;margin-bottom:16px">Define charge codes and their associated utility names for UBI mapping.</p>
+      <div class="tableWrap">
+        <table id="chargeTable">
+          <thead>
+            <tr>
+              <th style="width:30%">Charge Code</th>
+              <th style="width:60%">Utility Name</th>
+              <th style="width:10%">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="add-row">
+        <button class="btn" onclick="addRow()">Add Row</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let chargeCodes = [];
+
+    function showToast(message, type){
+      const wrap = document.getElementById('toastWrap');
+      const el = document.createElement('div');
+      el.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      el.textContent = message;
+      wrap.appendChild(el);
+      setTimeout(() => {
+        el.style.transition = 'opacity .3s';
+        el.style.opacity = '0';
+        setTimeout(() => wrap.removeChild(el), 300);
+      }, 2500);
+    }
+
+    function showImproveToast(msg, type){
+      const t = document.getElementById('improveToast');
+      t.textContent = msg;
+      t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function render(){
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+
+      chargeCodes.forEach((item, idx) => {
+        const tr = document.createElement('tr');
+
+        // Charge Code
+        const tdCode = document.createElement('td');
+        const inputCode = document.createElement('input');
+        inputCode.type = 'text';
+        inputCode.value = item.chargeCode || '';
+        inputCode.oninput = () => { item.chargeCode = inputCode.value.trim(); };
+        tdCode.appendChild(inputCode);
+        tr.appendChild(tdCode);
+
+        // Utility Name
+        const tdUtil = document.createElement('td');
+        const inputUtil = document.createElement('input');
+        inputUtil.type = 'text';
+        inputUtil.value = item.utilityName || '';
+        inputUtil.oninput = () => { item.utilityName = inputUtil.value.trim(); };
+        tdUtil.appendChild(inputUtil);
+        tr.appendChild(tdUtil);
+
+        // Actions
+        const tdActions = document.createElement('td');
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delete-btn';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = () => deleteRow(idx);
+        tdActions.appendChild(delBtn);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function addRow(){
+      chargeCodes.push({ chargeCode: '', utilityName: '' });
+      render();
+    }
+
+    function deleteRow(idx){
+      if (confirm('Delete this charge code?')) {
+        chargeCodes.splice(idx, 1);
+        render();
+      }
+    }
+
+    async function load(){
+      try {
+        const response = await fetch('/api/config/charge-codes');
+        if (!response.ok) throw new Error('Failed to load');
+        const data = await response.json();
+        chargeCodes = data.items || [];
+        render();
+      } catch (e) {
+        console.error('Error loading charge codes:', e);
+        showToast('Error loading charge codes', 'err');
+      }
+    }
+
+    async function save(){
+      try {
+        // Filter out empty rows
+        const toSave = chargeCodes.filter(c => c.chargeCode && c.chargeCode.trim());
+
+        const response = await fetch('/api/config/charge-codes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: toSave })
+        });
+
+        if (!response.ok) throw new Error('Failed to save');
+        const data = await response.json();
+        showToast(`Saved ${data.saved} charge codes`, 'ok');
+      } catch (e) {
+        console.error('Error saving charge codes:', e);
+        showToast('Error saving charge codes', 'err');
+      }
+    }
+
+    // Load on page load
+    load();
+
+    // IMPROVE modal functionality
+    (function(){
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return;
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CONFIG · UBI Account Management</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 16px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:4px 8px;font-size:12px}
+    .wrap{max-width:1800px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 12px 0}
+    .help-box{background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px;margin-bottom:16px;font-size:13px}
+    .help-box strong{color:#92400e}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
+    th,td{padding:12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}
+    th{background:#f8fafc;font-weight:600;cursor:pointer;position:sticky;top:0;z-index:10}
+    th.center, td.center{text-align:center}
+    tr:hover{background:rgba(14,165,233,0.05)}
+    .filters input{width:100%;padding:6px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px}
+    .tableWrap{overflow:auto;max-height:650px;border-radius:12px;border:1px solid #e5e7eb;margin:16px 0}
+    .toast-wrap{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+    .toast{min-width:260px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.yes{background:#d1fae5;color:#065f46}
+    .badge.no{background:#fee2e2;color:#991b1b}
+    .toggle-switch{position:relative;display:inline-block;width:46px;height:24px}
+    .toggle-switch input{opacity:0;width:0;height:0}
+    .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#cbd5e1;border-radius:24px;transition:.3s}
+    .slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background-color:white;border-radius:50%;transition:.3s}
+    input:checked + .slider{background-color:#10b981}
+    input:checked + .slider:before{transform:translateX(22px)}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button id="saveBtn" class="btn" title="Save Account Status">Save All</button>
+      <a class="btn secondary" href="/config">Config Menu</a>
+      <a class="btn secondary" href="/">Home</a>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastWrap" class="toast-wrap"></div>
+
+  <div class="wrap">
+    <div class="card">
+      <h1>UBI Account Management</h1>
+
+      <div class="help-box">
+        <strong>How this works:</strong><br>
+        • <strong>IS TRACKED</strong> - Account is monitored for bill cadence tracking<br>
+        • <strong>IS UBI</strong> - Account charges are included in UBI (Unrelated Business Income) billback batches<br>
+        • Both flags are <strong>independent</strong> - you can track without UBI, or mark as UBI without tracking<br>
+        • Changes are saved when you click "Save All" or toggle a switch<br>
+        • Only accounts configured in "Account Tracking" appear here
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 12px 0">
+        <h2 style="margin:0">Accounts (<span id="accountCount">0</span> total, <span id="trackedCount">0</span> tracked, <span id="ubiCount">0</span> UBI)</h2>
+        <button class="btn secondary" id="refreshBtn">Refresh</button>
+      </div>
+
+      <div class="tableWrap">
+        <table id="accountTable">
+          <thead>
+            <tr>
+              <th data-col="vendorId" style="width:8%">Vendor ID</th>
+              <th data-col="vendorName" style="width:16%">Vendor Name</th>
+              <th data-col="accountNumber" style="width:11%">Account Number</th>
+              <th data-col="propertyId" style="width:8%">Property ID</th>
+              <th data-col="propertyName" style="width:16%">Property Name</th>
+              <th data-col="glAccountNumber" style="width:10%">GL Number</th>
+              <th data-col="glAccountName" style="width:14%">GL Name</th>
+              <th data-col="is_tracked" class="center" style="width:8%">IS TRACKED</th>
+              <th data-col="is_ubi" class="center" style="width:8%">IS UBI</th>
+            </tr>
+            <tr class="filters">
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+              <th><input placeholder="Filter..."></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      items: [],
+      sort: { col: '', dir: 1 },
+      filters: ['', '', '', '', '', '', '', '', '']
+    };
+
+    function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+    async function fetchJSON(url){
+      const r = await fetch(url, {credentials:'same-origin'});
+      if(!r.ok) throw new Error('http '+r.status);
+      return r.json();
+    }
+
+    function showToast(message, type){
+      const wrap=document.getElementById('toastWrap');
+      const el=document.createElement('div');
+      el.className='toast '+(type==='ok'?'ok':'err');
+      el.textContent=message;
+      wrap.appendChild(el);
+      setTimeout(()=>{
+        el.style.transition='opacity .3s';
+        el.style.opacity='0';
+        setTimeout(()=> wrap.removeChild(el), 300);
+      }, 2500);
+    }
+
+    function updateCounts() {
+      const total = state.items.length;
+      const tracked = state.items.filter(item => item.is_tracked).length;
+      const ubi = state.items.filter(item => item.is_ubi).length;
+      document.getElementById('accountCount').textContent = total;
+      document.getElementById('trackedCount').textContent = tracked;
+      document.getElementById('ubiCount').textContent = ubi;
+    }
+
+    function render(){
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML='';
+
+      let rows = [...state.items];
+
+      // Apply filters
+      const [fVid,fVnm,fAcct,fPid,fPnm,fGln,fGlnm,fTrack,fUbi] = state.filters.map(s=>String(s||'').toLowerCase());
+      rows = rows.filter(r =>
+        (!fVid || (r.vendorId||'').toLowerCase().includes(fVid)) &&
+        (!fVnm || (r.vendorName||'').toLowerCase().includes(fVnm)) &&
+        (!fAcct || (r.accountNumber||'').toLowerCase().includes(fAcct)) &&
+        (!fPid || (r.propertyId||'').toLowerCase().includes(fPid)) &&
+        (!fPnm || (r.propertyName||'').toLowerCase().includes(fPnm)) &&
+        (!fGln || (r.glAccountNumber||'').toLowerCase().includes(fGln)) &&
+        (!fGlnm || (r.glAccountName||'').toLowerCase().includes(fGlnm)) &&
+        (!fTrack || String(r.is_tracked?'yes':'no').includes(fTrack)) &&
+        (!fUbi || String(r.is_ubi?'yes':'no').includes(fUbi))
+      );
+
+      // Apply sorting
+      if(state.sort.col){
+        rows.sort((a,b)=>{
+          const av=String(a[state.sort.col]??'').toLowerCase();
+          const bv=String(b[state.sort.col]??'').toLowerCase();
+          if(av<bv) return -1*state.sort.dir;
+          if(av>bv) return 1*state.sort.dir;
+          return 0;
+        });
+      }
+
+      // Render rows
+      for(const r of rows){
+        const tr=document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(r.vendorId||'')}</td>
+          <td>${escapeHtml(r.vendorName||'')}</td>
+          <td>${escapeHtml(r.accountNumber||'')}</td>
+          <td>${escapeHtml(r.propertyId||'')}</td>
+          <td>${escapeHtml(r.propertyName||'')}</td>
+          <td>${escapeHtml(r.glAccountNumber||'')}</td>
+          <td>${escapeHtml(r.glAccountName||'')}</td>
+          <td class="center"></td>
+          <td class="center"></td>`;
+
+        const trackedCell = tr.children[7];
+        const ubiCell = tr.children[8];
+
+        // IS TRACKED toggle
+        const trackedLabel = document.createElement('label');
+        trackedLabel.className = 'toggle-switch';
+        const trackedInput = document.createElement('input');
+        trackedInput.type = 'checkbox';
+        trackedInput.checked = !!r.is_tracked;
+        trackedInput.onchange = async () => {
+          r.is_tracked = trackedInput.checked;
+          await saveAccountStatus(r, 'tracked');
+          updateCounts();
+        };
+        const trackedSlider = document.createElement('span');
+        trackedSlider.className = 'slider';
+        trackedLabel.appendChild(trackedInput);
+        trackedLabel.appendChild(trackedSlider);
+        trackedCell.appendChild(trackedLabel);
+
+        // IS UBI toggle
+        const ubiLabel = document.createElement('label');
+        ubiLabel.className = 'toggle-switch';
+        const ubiInput = document.createElement('input');
+        ubiInput.type = 'checkbox';
+        ubiInput.checked = !!r.is_ubi;
+        ubiInput.onchange = async () => {
+          r.is_ubi = ubiInput.checked;
+          await saveAccountStatus(r, 'ubi');
+          updateCounts();
+        };
+        const ubiSlider = document.createElement('span');
+        ubiSlider.className = 'slider';
+        ubiLabel.appendChild(ubiInput);
+        ubiLabel.appendChild(ubiSlider);
+        ubiCell.appendChild(ubiLabel);
+
+        tbody.appendChild(tr);
+      }
+
+      updateCounts();
+    }
+
+    async function saveAccountStatus(account, type) {
+      try {
+        const fd = new FormData();
+        fd.append('account_number', account.accountNumber || '');
+        fd.append('vendor_name', account.vendorName || '');
+        fd.append('property_name', account.propertyName || '');
+
+        let endpoint = '';
+        if (type === 'tracked') {
+          endpoint = account.is_tracked ? '/api/ubi/add-to-tracker' : '/api/ubi/remove-from-tracker';
+        } else if (type === 'ubi') {
+          endpoint = account.is_ubi ? '/api/ubi/add-to-ubi' : '/api/ubi/remove-from-ubi';
+        }
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to save status');
+        }
+
+        const typeLabel = type === 'tracked' ? 'TRACKED' : 'UBI';
+        const statusLabel = (type === 'tracked' ? account.is_tracked : account.is_ubi) ? 'added to' : 'removed from';
+        showToast(`Account ${statusLabel} ${typeLabel}`, 'ok');
+      } catch (e) {
+        console.error('Error saving account status:', e);
+        showToast('Error saving account status', 'err');
+        // Revert the change
+        if (type === 'tracked') {
+          account.is_tracked = !account.is_tracked;
+        } else {
+          account.is_ubi = !account.is_ubi;
+        }
+        render();
+      }
+    }
+
+    async function saveAll() {
+      try {
+        // Save all tracked status
+        for (const account of state.items) {
+          const fd = new FormData();
+          fd.append('account_number', account.accountNumber || '');
+          fd.append('vendor_name', account.vendorName || '');
+          fd.append('property_name', account.propertyName || '');
+
+          // Update tracked status
+          const trackedEndpoint = account.is_tracked ? '/api/ubi/add-to-tracker' : '/api/ubi/remove-from-tracker';
+          await fetch(trackedEndpoint, { method: 'POST', body: fd });
+
+          // Update UBI status
+          const ubiEndpoint = account.is_ubi ? '/api/ubi/add-to-ubi' : '/api/ubi/remove-from-ubi';
+          await fetch(ubiEndpoint, { method: 'POST', body: fd });
+        }
+
+        showToast('All account statuses saved successfully', 'ok');
+        await loadAccounts();
+      } catch (e) {
+        console.error('Error saving all:', e);
+        showToast('Error saving account statuses', 'err');
+      }
+    }
+
+    function bindSorting(){
+      document.querySelectorAll('#accountTable thead tr:first-child th[data-col]').forEach(th=>{
+        th.addEventListener('click', ()=>{
+          const col=th.getAttribute('data-col');
+          if(state.sort.col===col){
+            state.sort.dir*=-1;
+          } else {
+            state.sort.col=col;
+            state.sort.dir=1;
+          }
+          render();
+        });
+      });
+    }
+
+    function bindFilters(){
+      document.querySelectorAll('#accountTable thead tr.filters th input').forEach((inp,i)=>{
+        inp.addEventListener('input', ()=>{
+          state.filters[i]=inp.value;
+          render();
+        });
+      });
+    }
+
+    async function loadAccounts(){
+      try {
+        // Load accounts from accounts-to-track config
+        const accountsData = await fetchJSON('/api/config/accounts-to-track');
+        state.items = Array.isArray(accountsData.items) ? accountsData.items : [];
+
+        // Set default flags if not present
+        state.items.forEach(item => {
+          if (item.is_tracked === undefined) item.is_tracked = false;
+          if (item.is_ubi === undefined) item.is_ubi = false;
+        });
+
+        render();
+      } catch (e) {
+        console.error('Failed to load accounts:', e);
+        showToast('Error loading accounts', 'err');
+      }
+    }
+
+    document.getElementById('saveBtn').addEventListener('click', saveAll);
+    document.getElementById('refreshBtn').addEventListener('click', loadAccounts);
+
+    bindSorting();
+    bindFilters();
+    loadAccounts();
+
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

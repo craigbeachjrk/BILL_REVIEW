@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Manage Tracked Accounts</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.small{padding:4px 8px;font-size:11px}
+    .btn:disabled{opacity:0.5;cursor:not-allowed}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 20px}
+    h1{margin:0 0 16px 0;color:#fff}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:20px}
+    .card h2{margin:0 0 16px 0;font-size:18px}
+    .summary-row{display:flex;gap:16px;margin-bottom:20px}
+    .stat-box{background:#f8fafc;padding:16px;border-radius:8px;text-align:center;flex:1}
+    .stat-box .value{font-size:28px;font-weight:700;color:#0ea5e9}
+    .stat-box .label{font-size:12px;color:#64748b;margin-top:4px}
+    .stat-box.danger .value{color:#dc2626}
+    .stat-box.warning .value{color:#f59e0b}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}
+    th{background:#f8fafc;font-weight:600;position:sticky;top:0;z-index:10}
+    tr:hover{background:rgba(14,165,233,0.05)}
+    .pct-bar{width:100px;height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden}
+    .pct-fill{height:100%;border-radius:4px}
+    .pct-fill.danger{background:#dc2626}
+    .pct-fill.warning{background:#f59e0b}
+    .pct-fill.ok{background:#22c55e}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;z-index:60;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .tabs{display:flex;gap:8px;margin-bottom:16px}
+    .tab{padding:8px 16px;border-radius:8px;cursor:pointer;background:#f1f5f9;font-weight:600;font-size:13px}
+    .tab.active{background:#0ea5e9;color:#fff}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .checkbox-cell{width:40px}
+    input[type="checkbox"]{width:18px;height:18px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a> &gt; <a href="/workflow" style="color:#fff">WORKFLOW</a> &gt; Manage</div>
+    <div>
+      <span style="margin-right:12px">Admin: {{ user }}</span>
+      <a class="btn secondary" href="/workflow">Back to WORKFLOW</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>Manage Tracked Accounts</h1>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('vacant')">Vacant Accounts</div>
+      <div class="tab" onclick="switchTab('archived')">Archived</div>
+    </div>
+
+    <!-- VACANT ACCOUNTS TAB -->
+    <div id="vacantTab" class="tab-content active">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Accounts with High Vacant %</h2>
+          <div style="display:flex;gap:12px;align-items:center">
+            <label style="font-size:13px">Min Vacant %:</label>
+            <select id="vacantThreshold" onchange="loadVacantAccounts()" style="padding:6px 12px;border-radius:6px;border:1px solid #e5e7eb">
+              <option value="100">100% (All Vacant)</option>
+              <option value="80">80%+</option>
+              <option value="50" selected>50%+</option>
+            </select>
+            <button class="btn small" onclick="loadVacantAccounts()">Refresh</button>
+          </div>
+        </div>
+
+        <div class="summary-row">
+          <div class="stat-box danger">
+            <div class="value" id="vacantCount">-</div>
+            <div class="label">Flagged Accounts</div>
+          </div>
+          <div class="stat-box">
+            <div class="value" id="selectedCount">0</div>
+            <div class="label">Selected</div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <button class="btn danger" id="archiveBtn" onclick="archiveSelected()" disabled>Archive Selected</button>
+          <button class="btn small secondary" onclick="selectAll()">Select All</button>
+          <button class="btn small secondary" onclick="deselectAll()">Deselect All</button>
+        </div>
+
+        <div style="max-height:500px;overflow-y:auto">
+          <table>
+            <thead>
+              <tr>
+                <th class="checkbox-cell"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()"></th>
+                <th>Property</th>
+                <th>Vendor</th>
+                <th>Account #</th>
+                <th>Bills</th>
+                <th>Vacant Lines</th>
+                <th>House Lines</th>
+                <th>Vacant %</th>
+                <th>UBI</th>
+              </tr>
+            </thead>
+            <tbody id="vacantTableBody">
+              <tr><td colspan="9" class="loading">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARCHIVED TAB -->
+    <div id="archivedTab" class="tab-content">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Archived Accounts</h2>
+          <button class="btn small" onclick="loadArchivedAccounts()">Refresh</button>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <button class="btn" id="restoreBtn" onclick="restoreSelected()" disabled>Restore Selected</button>
+        </div>
+
+        <div style="max-height:500px;overflow-y:auto">
+          <table>
+            <thead>
+              <tr>
+                <th class="checkbox-cell"><input type="checkbox" id="selectAllArchivedCheckbox" onchange="toggleSelectAllArchived()"></th>
+                <th>Property</th>
+                <th>Vendor</th>
+                <th>Account #</th>
+                <th>Archived At</th>
+                <th>By</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody id="archivedTableBody">
+              <tr><td colspan="7" class="loading">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let vacantAccounts = [];
+    let archivedAccounts = [];
+    let selectedVacant = new Set();
+    let selectedArchived = new Set();
+
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[onclick*="${tab}"]`).classList.add('active');
+      document.getElementById(tab + 'Tab').classList.add('active');
+
+      if (tab === 'archived' && archivedAccounts.length === 0) {
+        loadArchivedAccounts();
+      }
+    }
+
+    async function loadVacantAccounts() {
+      const threshold = document.getElementById('vacantThreshold').value;
+      document.getElementById('vacantTableBody').innerHTML = '<tr><td colspan="9" class="loading">Loading...</td></tr>';
+
+      try {
+        const r = await fetch(`/api/workflow/vacant-accounts?min_vacant_pct=${threshold}`);
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.error || 'Failed to load');
+        }
+        const data = await r.json();
+        vacantAccounts = data.accounts || [];
+        selectedVacant.clear();
+        document.getElementById('vacantCount').textContent = vacantAccounts.length;
+        renderVacantTable();
+      } catch (e) {
+        document.getElementById('vacantTableBody').innerHTML = `<tr><td colspan="9" class="loading" style="color:#dc2626">${e.message}</td></tr>`;
+      }
+    }
+
+    function renderVacantTable() {
+      const tbody = document.getElementById('vacantTableBody');
+      if (vacantAccounts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="loading">No accounts found matching criteria</td></tr>';
+        return;
+      }
+
+      let html = '';
+      for (const a of vacantAccounts) {
+        const pctClass = a.vacant_pct >= 100 ? 'danger' : a.vacant_pct >= 80 ? 'warning' : 'ok';
+        const checked = selectedVacant.has(a.account_key) ? 'checked' : '';
+
+        html += `<tr>
+          <td class="checkbox-cell"><input type="checkbox" ${checked} onchange="toggleVacantSelection('${a.account_key}')"></td>
+          <td>${escapeHtml(a.property_name)}</td>
+          <td>${escapeHtml(a.vendor_name)}</td>
+          <td style="font-family:monospace">${escapeHtml(a.account_number)}</td>
+          <td>${a.total_bills}</td>
+          <td>${a.vacant_lines}</td>
+          <td>${a.house_lines}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="pct-bar"><div class="pct-fill ${pctClass}" style="width:${a.vacant_pct}%"></div></div>
+              <span style="font-weight:600">${a.vacant_pct}%</span>
+            </div>
+          </td>
+          <td>${a.is_ubi ? 'Yes' : 'No'}</td>
+        </tr>`;
+      }
+      tbody.innerHTML = html;
+      updateSelectedCount();
+    }
+
+    function toggleVacantSelection(key) {
+      if (selectedVacant.has(key)) {
+        selectedVacant.delete(key);
+      } else {
+        selectedVacant.add(key);
+      }
+      updateSelectedCount();
+    }
+
+    function selectAll() {
+      vacantAccounts.forEach(a => selectedVacant.add(a.account_key));
+      renderVacantTable();
+    }
+
+    function deselectAll() {
+      selectedVacant.clear();
+      renderVacantTable();
+    }
+
+    function toggleSelectAll() {
+      if (document.getElementById('selectAllCheckbox').checked) {
+        selectAll();
+      } else {
+        deselectAll();
+      }
+    }
+
+    function updateSelectedCount() {
+      document.getElementById('selectedCount').textContent = selectedVacant.size;
+      document.getElementById('archiveBtn').disabled = selectedVacant.size === 0;
+    }
+
+    async function archiveSelected() {
+      if (selectedVacant.size === 0) return;
+
+      if (!confirm(`Archive ${selectedVacant.size} account(s)? They will be removed from WORKFLOW tracking.`)) return;
+
+      try {
+        const r = await fetch('/api/workflow/accounts/archive', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            account_keys: Array.from(selectedVacant),
+            reason: 'vacant_account'
+          })
+        });
+
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.error || 'Failed to archive');
+        }
+
+        const data = await r.json();
+        showToast(`Archived ${data.archived} account(s)`, 'ok');
+        loadVacantAccounts();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    async function loadArchivedAccounts() {
+      document.getElementById('archivedTableBody').innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
+
+      try {
+        const r = await fetch('/api/workflow/accounts/archived');
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.error || 'Failed to load');
+        }
+        const data = await r.json();
+        archivedAccounts = data.accounts || [];
+        selectedArchived.clear();
+        renderArchivedTable();
+      } catch (e) {
+        document.getElementById('archivedTableBody').innerHTML = `<tr><td colspan="7" class="loading" style="color:#dc2626">${e.message}</td></tr>`;
+      }
+    }
+
+    function renderArchivedTable() {
+      const tbody = document.getElementById('archivedTableBody');
+      if (archivedAccounts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No archived accounts</td></tr>';
+        return;
+      }
+
+      let html = '';
+      for (const a of archivedAccounts) {
+        const checked = selectedArchived.has(a.account_key) ? 'checked' : '';
+        const archivedDate = a.archived_at ? new Date(a.archived_at).toLocaleDateString() : '-';
+
+        html += `<tr>
+          <td class="checkbox-cell"><input type="checkbox" ${checked} onchange="toggleArchivedSelection('${a.account_key}')"></td>
+          <td>${escapeHtml(a.property_name)}</td>
+          <td>${escapeHtml(a.vendor_name)}</td>
+          <td style="font-family:monospace">${escapeHtml(a.account_number)}</td>
+          <td>${archivedDate}</td>
+          <td>${escapeHtml(a.archived_by || '-')}</td>
+          <td>${escapeHtml(a.archive_reason || '-')}</td>
+        </tr>`;
+      }
+      tbody.innerHTML = html;
+      updateRestoreBtn();
+    }
+
+    function toggleArchivedSelection(key) {
+      if (selectedArchived.has(key)) {
+        selectedArchived.delete(key);
+      } else {
+        selectedArchived.add(key);
+      }
+      updateRestoreBtn();
+    }
+
+    function toggleSelectAllArchived() {
+      if (document.getElementById('selectAllArchivedCheckbox').checked) {
+        archivedAccounts.forEach(a => selectedArchived.add(a.account_key));
+      } else {
+        selectedArchived.clear();
+      }
+      renderArchivedTable();
+    }
+
+    function updateRestoreBtn() {
+      document.getElementById('restoreBtn').disabled = selectedArchived.size === 0;
+    }
+
+    async function restoreSelected() {
+      if (selectedArchived.size === 0) return;
+
+      if (!confirm(`Restore ${selectedArchived.size} account(s) to WORKFLOW tracking?`)) return;
+
+      try {
+        const r = await fetch('/api/workflow/accounts/restore', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({account_keys: Array.from(selectedArchived)})
+        });
+
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.error || 'Failed to restore');
+        }
+
+        const data = await r.json();
+        showToast(`Restored ${data.restored} account(s)`, 'ok');
+        loadArchivedAccounts();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    // Initial load
+    loadVacantAccounts();
+  </script>
+</body>
+</html>

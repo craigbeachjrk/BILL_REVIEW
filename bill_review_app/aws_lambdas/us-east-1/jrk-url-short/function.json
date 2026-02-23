@@ -1,0 +1,43 @@
+﻿{
+    "FunctionName":  "jrk-url-short",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:jrk-url-short",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/jrk-url-short-role",
+    "Handler":  "urlshort_index.handler",
+    "CodeSize":  1001,
+    "Description":  "",
+    "Timeout":  3,
+    "MemorySize":  128,
+    "LastModified":  "2025-09-22T20:14:24.000+0000",
+    "CodeSha256":  "Of/7pL6aBOlPbhFAC/Tm7IEVWNm8iKiDFnIqon8sfvE=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "TABLE_NAME":  "jrk-url-short"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "6610c7da-a6e8-4eee-8b5a-6de0a5c63a8d",
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:86ca4474369fee64939d2cf1cc596cb79bd2fda9dfc408b683e68b2072dde9c0"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/jrk-url-short"
+                      }
+}

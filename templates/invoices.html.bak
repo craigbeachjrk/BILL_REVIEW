@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Invoices · {{ date }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --chip:#e5e7eb; --ok:#16a34a33; --warn:#facc1533; --err:#ef444433; }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .wrap{max-width:980px;margin:60px auto;padding:0 20px}
+    .card{background:rgba(255,255,255,0.7);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.35);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 14px 0;font-size:22px}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}
+    tr:hover{background:rgba(2,132,199,0.08)}
+    .chip{display:inline-block;padding:4px 8px;border-radius:999px;background:var(--chip);font-size:12px}
+    .status-REVIEW{background:var(--err)}
+    .status-PARTIAL{background:var(--warn)}
+    .status-COMPLETE{background:var(--ok)}
+    a.btn{display:inline-block;margin-top:12px;padding:8px 12px;background:#0ea5e9;color:#fff;border-radius:10px;text-decoration:none}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="logout">
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div class="wrap">
+      <div class="card">
+      <div class="toolbar">
+        <h1>Invoices Parsed on {{ date }}</h1>
+        <div style="display:flex;gap:8px">
+          <button class="btn small" onclick="selectAll(true)" title="Select all rows">Select All</button>
+          <button class="btn small" onclick="selectAll(false)" title="Clear selection">Clear</button>
+          <button class="btn small" onclick="refreshStatuses()" title="Re-check statuses from DynamoDB and S3">Refresh Status</button>
+          <button class="btn small danger" onclick="deleteSelected()" title="Delete selected parsed invoices from S3">Delete</button>
+        </div>
+      </div>
+      <table>
+{{ ... }}
+          <tr>
+            <th></th>
+            <th>Vendor</th>
+            <th>Account</th>
+            <th>Parsed Date Time</th>
+            <th>Lines</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for inv in invoices %}
+            <tr data-pdf-id="{{ inv.pdf_id }}" onclick="if(event.target.type!=='checkbox'){ location.href='/review?date={{ inv.parsed_date }}&pdf_id={{ inv.pdf_id }}'; }" style="cursor:pointer">
+              <td><input type="checkbox" class="pick" value="{{ inv.pdf_id }}" /></td>
+              <td>{{ inv.vendor }}</td>
+              <td>{{ inv.account }}</td>
+              <td>{{ inv.parsed_dt_fmt or inv.parsed_dt or inv.parsed_date }}</td>
+              <td>{{ inv.count }}</td>
+              <td><span class="chip status-{{ inv.status }} status-chip">{{ inv.status }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <a class="btn" href="/">Back</a>
+    </div>
+  </div>
+  <script>
+    async function refreshStatuses(){
+      try{
+        const r = await fetch('/api/invoices_status?date={{ date }}');
+        const j = await r.json();
+        if (!r.ok) return;
+        const byId = Object.create(null);
+        (j.invoices||[]).forEach(x => { byId[x.pdf_id] = x.status; });
+        document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
+          const id = tr.getAttribute('data-pdf-id');
+          const st = byId[id];
+          if (!st) return;
+          const chip = tr.querySelector('.status-chip');
+          if (!chip) return;
+          chip.textContent = st;
+          chip.classList.remove('status-REVIEW','status-PARTIAL','status-COMPLETE');
+          chip.classList.add('status-' + st);
+        });
+      }catch(e){ /* swallow for now */ }
+    }
+
+    function selectAll(on){
+      document.querySelectorAll('.pick').forEach(c => c.checked = !!on);
+    }
+
+    async function deleteSelected(){
+      const picks = Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+      if (!picks.length){ alert('Select at least one row to delete.'); return; }
+      if (!confirm('Delete ' + picks.length + ' parsed invoice(s) from S3? This cannot be undone.')) return;
+      const fd = new FormData();
+      fd.append('date', '{{ date }}');
+      fd.append('pdf_ids', picks.join(','));
+      const r = await fetch('/api/delete_parsed', { method:'POST', body: fd });
+      const j = await r.json();
+      if (r.ok && j && j.ok){
+        // remove deleted rows from the table
+        const set = new Set(picks);
+        document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
+          if (set.has(tr.getAttribute('data-pdf-id'))){ tr.remove(); }
+        });
+      } else {
+        alert('Delete failed: ' + ((j && (j.error||JSON.stringify(j))) || 'Unknown error'));
+      }
+    }
+  </script>
+</body>
+</html>

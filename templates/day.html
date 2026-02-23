@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bill Review - {{ date }}</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; margin: 1rem 2rem; }
+    header { display: flex; align-items: center; justify-content: space-between; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 14px; }
+    th { background: #f1f5f9; text-align: left; }
+    input[type=text] { width: 100%; box-sizing: border-box; padding: 4px; }
+    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+    iframe { width: 100%; height: 600px; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .btn { padding: 0.5rem 0.8rem; background: #0ea5e9; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    .btn.secondary { background: #6b7280; }
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header>
+    <h3>Day: {{ date }}</h3>
+    <button class="btn secondary" onclick="history.back()">Back</button>
+    <button class="btn secondary" id="improveBtn">IMPROVE</button>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <form id="overrideForm">
+        <input type="hidden" name="date" value="{{ date }}" />
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Acct</th>
+              <th>Line Acct</th>
+              <th>Service Addr</th>
+              <th>GL#</th>
+              <th>GL Name</th>
+              <th>GL DESC_NEW</th>
+              <th>Enr Cons.</th>
+              <th>UOM</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr data-id="{{ r['__id__'] }}" data-pdf="{{ r.get('PDF_LINK','') }}">
+              <td>{{ r.get('Invoice Number','') }}</td>
+              <td>{{ r.get('Account Number','') }}</td>
+              <td>{{ r.get('Line Item Account Number','') }}</td>
+              <td>{{ r.get('Service Address','') }}</td>
+              <td><input type="text" name="EnrichedGLAccountNumber" value="{{ r.get('EnrichedGLAccountNumber','') }}" /></td>
+              <td><input type="text" name="EnrichedGLAccountName" value="{{ r.get('EnrichedGLAccountName','') }}" /></td>
+              <td><input type="text" name="GL DESC_NEW" value="{{ r.get('GL DESC_NEW','') }}" /></td>
+              <td><input type="text" name="ENRICHED CONSUMPTION" value="{{ r.get('ENRICHED CONSUMPTION','') }}" /></td>
+              <td><input type="text" name="ENRICHED UOM" value="{{ r.get('ENRICHED UOM','') }}" /></td>
+              <td>
+                <button class="btn" type="button" onclick="saveRow(this)">Save</button>
+                <button class="btn secondary" type="button" onclick="markReviewed(this)">Reviewed</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </form>
+      <br />
+      <button class="btn" onclick="submitReviewed()">Submit Reviewed</button>
+    </div>
+    <div>
+      <h4>PDF Preview</h4>
+      <iframe id="pdfFrame" src=""></iframe>
+    </div>
+  </div>
+
+  <script>
+    const rows = document.querySelectorAll('tbody tr');
+    const pdfFrame = document.getElementById('pdfFrame');
+
+    rows.forEach(tr => {
+      tr.addEventListener('click', () => {
+        const pdf = tr.getAttribute('data-pdf');
+        if (pdf) pdfFrame.src = '/pdf?u=' + encodeURIComponent(pdf) + '&cb=' + Date.now();
+      });
+    });
+
+    function rowToOverride(tr) {
+      const id = tr.getAttribute('data-id');
+      const inputs = tr.querySelectorAll('input');
+      const changes = {};
+      inputs.forEach(i => { changes[i.name] = i.value; });
+      return { id, changes };
+    }
+
+    async function saveRow(btn) {
+      const tr = btn.closest('tr');
+      const date = new URLSearchParams(window.location.search).get('date');
+      const payload = JSON.stringify([ rowToOverride(tr) ]);
+      const form = new FormData();
+      form.append('date', date);
+      form.append('payload', payload);
+      const resp = await fetch('/api/overrides', { method: 'POST', body: form });
+      const data = await resp.json();
+      alert(resp.ok ? 'Saved' : 'Error: ' + (data.error || 'unknown'));
+    }
+
+    async function markReviewed(btn) {
+      const tr = btn.closest('tr');
+      const id = tr.getAttribute('data-id');
+      const form = new FormData();
+      form.append('id', id);
+      form.append('status', 'Reviewed');
+      const resp = await fetch('/api/status', { method: 'POST', body: form });
+      if (resp.ok) alert('Marked Reviewed');
+    }
+
+    async function submitReviewed() {
+      const date = new URLSearchParams(window.location.search).get('date');
+      const ids = Array.from(document.querySelectorAll('tbody tr'))
+        .map(tr => tr.getAttribute('data-id')).join(',');
+      const form = new FormData();
+      form.append('date', date);
+      form.append('ids', ids);
+      const resp = await fetch('/api/submit', { method: 'POST', body: form });
+      const data = await resp.json();
+      alert('Submitted ' + (data.sent || 0) + ' rows');
+    }
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

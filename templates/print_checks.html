@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PRINT CHECKS &middot; Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.success{background:#059669}
+    .btn.danger{background:#dc2626}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .btn:disabled{opacity:0.5;cursor:not-allowed}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    .controls input[type="date"]{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* Vendor Groups */
+    .vendor-group{background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:16px;overflow:hidden}
+    .vendor-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;background:#f0f9ff;border-bottom:1px solid #bae6fd;cursor:pointer}
+    .vendor-header:hover{background:#e0f2fe}
+    .vendor-name{font-weight:600;font-size:16px;color:#0369a1}
+    .vendor-stats{display:flex;gap:16px;font-size:13px;color:#64748b}
+    .vendor-items{display:none;padding:12px}
+    .vendor-items.open{display:block}
+
+    /* Column Labels */
+    .column-labels{display:flex;align-items:center;padding:8px 16px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;border-bottom:1px solid #e5e7eb;margin-bottom:8px}
+    .col-property{flex:2;min-width:150px}
+    .col-account{flex:1.2;min-width:100px}
+    .col-date{flex:1;min-width:90px}
+    .col-service{flex:1;min-width:90px}
+    .col-amount{flex:0.8;min-width:80px;text-align:right}
+    .sortable{cursor:pointer;user-select:none}
+    .sortable:hover{color:#0369a1}
+    .sort-arrow{margin-left:4px;font-size:10px}
+
+    /* Invoice Rows */
+    .invoice-row{display:flex;align-items:center;padding:10px 16px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:6px;background:#fafafa}
+    .invoice-row:hover{background:#f0f9ff}
+    .invoice-checkbox{width:20px;height:20px;cursor:pointer;flex-shrink:0}
+    .invoice-info{flex:1;display:flex;align-items:center;margin-left:12px;font-size:13px}
+    .invoice-info .col-property{font-weight:600;color:#1e293b}
+    .invoice-info .col-account{color:#1e293b}
+    .invoice-info .col-date{color:#64748b}
+    .invoice-info .col-service{color:#64748b}
+    .invoice-info .col-amount{font-weight:600;color:#059669}
+
+    /* Vendor Actions */
+    .vendor-actions{padding:12px 16px;background:#f1f5f9;border-top:1px solid #e5e7eb;display:flex;gap:8px;align-items:center}
+    .select-all-label{display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;cursor:pointer}
+
+    /* My Slips Section */
+    .my-slips{margin-top:24px}
+    .my-slips h2{font-size:16px;margin:0 0 12px 0;color:#1e293b}
+    .slip-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px}
+    .slip-info{display:flex;gap:24px;align-items:center}
+    .slip-id{font-weight:600;color:#0369a1}
+    .slip-vendor{color:#64748b}
+    .slip-stats{font-size:13px;color:#64748b}
+    .slip-amount{font-weight:600;color:#059669}
+    .slip-actions{display:flex;gap:8px}
+    .slip-status{font-size:11px;padding:4px 8px;border-radius:4px;font-weight:600}
+    .slip-status.pending{background:#fef3c7;color:#d97706}
+    .slip-status.approved{background:#d1fae5;color:#059669}
+
+    /* Expand arrow */
+    .expand-arrow{transition:transform .2s;color:#94a3b8;margin-right:8px}
+    .expand-arrow.open{transform:rotate(90deg)}
+
+    .empty-state{text-align:center;padding:40px;color:#64748b}
+
+    /* Sticky selection bar */
+    .selection-bar{position:fixed;bottom:-80px;left:50%;transform:translateX(-50%);
+      background:rgba(30,64,175,.95);backdrop-filter:blur(12px);color:#fff;
+      padding:14px 28px;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.35);
+      display:flex;align-items:center;gap:20px;z-index:50;transition:bottom .25s ease;font-size:14px;white-space:nowrap}
+    .selection-bar.visible{bottom:24px}
+    .selection-bar .sel-count{font-weight:600;font-size:15px}
+    .selection-bar .sel-amount{font-weight:700;font-size:18px}
+
+    /* Error badge */
+    .error-badge{display:inline-block;background:#fef2f2;color:#dc2626;font-size:11px;padding:2px 6px;border-radius:4px;margin-left:6px;font-weight:600}
+    .slip-row.has-errors{border-left:3px solid #f59e0b}
+
+    /* Error Modal */
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9998;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:700px;width:90%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column}
+    .modal-header{padding:16px 24px;background:#fef3c7;border-bottom:1px solid #fcd34d;display:flex;justify-content:space-between;align-items:center}
+    .modal-header h2{margin:0;color:#92400e;font-size:18px}
+    .modal-body{padding:24px;overflow-y:auto;flex:1}
+    .modal-footer{padding:16px 24px;background:#f9fafb;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end}
+  </style>
+</head>
+<body>
+
+<header class="top">
+  <strong>PRINT CHECKS</strong>
+  <div class="logout">
+    <a href="/" class="btn secondary small">Home</a>
+    <form method="post" action="/logout"><button class="btn small" type="submit">Logout</button></form>
+  </div>
+</header>
+
+<div id="toast" class="toast"></div>
+
+<!-- PDF Error Modal -->
+<div id="errorModal" class="modal-overlay" onclick="if(event.target===this)closeErrorModal()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>PDF Generation Errors</h2>
+      <button class="btn small secondary" onclick="closeErrorModal()">Close</button>
+    </div>
+    <div class="modal-body" id="errorModalContent">
+      <!-- Error content will be inserted here -->
+    </div>
+    <div class="modal-footer">
+      <input type="hidden" id="errorModalSlipId" value="" />
+      <button class="btn secondary" onclick="closeErrorModal()">Close</button>
+      <button class="btn" onclick="regeneratePdf()">Regenerate PDF</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <h1>Print Check Slips</h1>
+    <p style="color:#64748b;margin-bottom:20px">Select posted invoices by vendor to create check slips for Treasury approval.</p>
+
+    <div class="controls">
+      <label>Posted From: <input type="date" id="startDate" /></label>
+      <label>Posted To: <input type="date" id="endDate" /></label>
+      <button class="btn" id="loadBtn">Load Invoices</button>
+      <button class="btn secondary" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="summary">
+      <div class="summary-item">
+        <div class="summary-label">Total Invoices</div>
+        <div class="summary-value" id="totalInvoices">0</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Vendors</div>
+        <div class="summary-value" id="vendorCount">0</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Total Amount</div>
+        <div class="summary-value" id="totalAmount">$0.00</div>
+      </div>
+    </div>
+
+
+    <div class="controls" id="filterControls" style="margin-bottom:12px;display:none">
+      <input type="text" id="filterVendor" placeholder="Filter by vendor..." style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;width:200px" />
+      <input type="text" id="filterProperty" placeholder="Filter by property..." style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;width:200px" />
+      <button class="btn small secondary" id="clearFiltersBtn">Clear</button>
+    </div>
+
+    <div id="vendorList">
+      <div class="loading">Click "Load Invoices" to view posted invoices</div>
+    </div>
+  </div>
+
+  <div class="card my-slips">
+    <h2>My Pending Check Slips</h2>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <label style="font-size:13px">From: <input type="date" id="slipDateFrom" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit" /></label>
+      <label style="font-size:13px">To: <input type="date" id="slipDateTo" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit" /></label>
+      <span style="font-size:12px;color:#64748b">Filter by check slip creation date</span>
+    </div>
+    <div id="mySlipsList">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<div id="selectionBar" class="selection-bar">
+  <span class="sel-count"><span id="selectedCount">0</span> invoice(s) selected</span>
+  <span class="sel-amount" id="selectedAmount">$0.00</span>
+</div>
+
+<script>
+  let vendorData = [];
+  let filteredVendorData = [];
+  let selectedInvoices = {};  // vendorKey -> Set of pdf_ids
+  let sortConfig = {};  // vendorKey -> {column, direction}
+
+  function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  function formatCurrency(val) {
+    return '$' + parseFloat(val || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  // Set default dates (last 7 days)
+  document.addEventListener('DOMContentLoaded', () => {
+    // Use LOCAL date formatting, not UTC (toISOString gives UTC which can be wrong timezone)
+    function formatLocalDate(d) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    const today = new Date();
+    // Default to 1 day - filters by POSTING date, not invoice date
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    document.getElementById('endDate').value = formatLocalDate(today);
+    document.getElementById('startDate').value = formatLocalDate(yesterday);
+
+    // Slip date filter defaults: last 7 days
+    const slipTo = new Date();
+    const slipFrom = new Date();
+    slipFrom.setDate(slipFrom.getDate() - 7);
+    document.getElementById('slipDateTo').value = formatLocalDate(slipTo);
+    document.getElementById('slipDateFrom').value = formatLocalDate(slipFrom);
+
+    document.getElementById('slipDateFrom').addEventListener('change', () => renderMySlips());
+    document.getElementById('slipDateTo').addEventListener('change', () => renderMySlips());
+
+    loadMySlips();
+    loadInvoices(false);  // Auto-load invoices on page load (use cache if available)
+  });
+
+  document.getElementById('loadBtn').addEventListener('click', () => loadInvoices(false));
+  document.getElementById('refreshBtn').addEventListener('click', () => {
+    loadInvoices(true);  // Force cache refresh
+    loadMySlips();
+  });
+
+  document.getElementById('filterVendor').addEventListener('input', applyFilters);
+  document.getElementById('filterProperty').addEventListener('input', applyFilters);
+  document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+    document.getElementById('filterVendor').value = '';
+    document.getElementById('filterProperty').value = '';
+    applyFilters();
+  });
+
+  function applyFilters() {
+    const vf = (document.getElementById('filterVendor').value || '').toLowerCase().trim();
+    const pf = (document.getElementById('filterProperty').value || '').toLowerCase().trim();
+
+    if (!vf && !pf) {
+      filteredVendorData = vendorData;
+    } else {
+      filteredVendorData = [];
+      vendorData.forEach(vendor => {
+        const vendorMatch = !vf || (vendor.vendor_name || '').toLowerCase().includes(vf) || (vendor.vendor_code || '').toLowerCase().includes(vf);
+        if (!vendorMatch) return;
+
+        if (!pf) {
+          filteredVendorData.push(vendor);
+        } else {
+          const matchingInvoices = (vendor.invoices || []).filter(inv =>
+            (inv.property_name || '').toLowerCase().includes(pf)
+          );
+          if (matchingInvoices.length > 0) {
+            filteredVendorData.push({
+              ...vendor,
+              invoices: matchingInvoices,
+              count: matchingInvoices.length,
+              total: matchingInvoices.reduce((s, inv) => s + parseFloat(inv.invoice_total || 0), 0)
+            });
+          }
+        }
+      });
+    }
+    renderVendors();
+  }
+
+  async function loadInvoices(forceRefresh = false) {
+    const start = document.getElementById('startDate').value;
+    const end = document.getElementById('endDate').value;
+
+    document.getElementById('vendorList').innerHTML = forceRefresh
+      ? '<div class="loading">Refreshing from S3 (this may take a moment)...</div>'
+      : '<div class="loading">Loading posted invoices...</div>';
+
+    try {
+      const refreshParam = forceRefresh ? '&refresh=1' : '';
+      const resp = await fetch(`/api/print-checks/posted-invoices?start=${start}&end=${end}${refreshParam}`);
+      if (!resp.ok) throw new Error('Failed to load invoices');
+
+      const data = await resp.json();
+      vendorData = data.vendors || [];
+      selectedInvoices = {};
+
+      document.getElementById('totalInvoices').textContent = data.total_invoices || 0;
+      document.getElementById('vendorCount').textContent = data.vendor_count || 0;
+      document.getElementById('totalAmount').textContent = formatCurrency(data.total_amount);
+
+      document.getElementById('filterControls').style.display = vendorData.length ? 'flex' : 'none';
+      applyFilters();
+      updateSelectionSummary();
+    } catch (e) {
+      showToast('Error loading invoices: ' + e.message, 'err');
+      document.getElementById('vendorList').innerHTML = '<div class="empty-state">Failed to load invoices</div>';
+    }
+  }
+
+  function renderVendors() {
+    const container = document.getElementById('vendorList');
+
+    if (!filteredVendorData.length) {
+      const msg = vendorData.length ? 'No vendors match the current filters.' : 'No posted invoices available. All invoices may already be in check slips.';
+      container.innerHTML = `<div class="empty-state">${msg}</div>`;
+      return;
+    }
+
+    let html = '';
+    filteredVendorData.forEach((vendor, vidx) => {
+      const vendorKey = `${vendor.vendor_id}|${vendor.vendor_name}`;
+      if (!selectedInvoices[vendorKey]) selectedInvoices[vendorKey] = new Set();
+
+      const vendorCode = vendor.vendor_code ? ` (${vendor.vendor_code})` : '';
+      html += `
+        <div class="vendor-group" data-vendor-key="${vendorKey}">
+          <div class="vendor-header" onclick="toggleVendor(${vidx})">
+            <div>
+              <span class="expand-arrow" id="arrow-${vidx}">&#9654;</span>
+              <span class="vendor-name">${escapeHtml(vendor.vendor_name || 'Unknown Vendor')}${escapeHtml(vendorCode)}</span>
+            </div>
+            <div class="vendor-stats">
+              <span>${vendor.count} invoices</span>
+              <span>${formatCurrency(vendor.total)}</span>
+            </div>
+          </div>
+          <div class="vendor-items" id="vendor-items-${vidx}">
+            <div class="column-labels">
+              <div style="width:20px"></div>
+              <div class="col-property sortable" onclick="sortVendor('${vendorKey}', 'property_name')">Property${getSortArrow(vendorKey, 'property_name')}</div>
+              <div class="col-account sortable" onclick="sortVendor('${vendorKey}', 'account_number')">Account ID${getSortArrow(vendorKey, 'account_number')}</div>
+              <div class="col-date sortable" onclick="sortVendor('${vendorKey}', 'invoice_date')">Bill Date${getSortArrow(vendorKey, 'invoice_date')}</div>
+              <div class="col-service sortable" onclick="sortVendor('${vendorKey}', 'posted_at')">Posted Date${getSortArrow(vendorKey, 'posted_at')}</div>
+              <div class="col-service">Service End</div>
+              <div class="col-amount sortable" onclick="sortVendor('${vendorKey}', 'invoice_total')">Amount${getSortArrow(vendorKey, 'invoice_total')}</div>
+            </div>
+      `;
+
+      // Get sorted invoices for this vendor
+      const sortedInvoices = getSortedInvoices(vendor, vendorKey);
+      sortedInvoices.forEach((inv, iidx) => {
+        const isChecked = selectedInvoices[vendorKey].has(inv.pdf_id);
+        const postedDate = inv.posted_at ? inv.posted_at.substring(0, 10) : '-';
+        html += `
+          <div class="invoice-row" data-pdf-id="${inv.pdf_id}">
+            <input type="checkbox" class="invoice-checkbox" data-vendor="${vendorKey}" data-pdf-id="${inv.pdf_id}"
+                   ${isChecked ? 'checked' : ''} onchange="toggleInvoice('${vendorKey}', '${inv.pdf_id}')" />
+            <div class="invoice-info">
+              <div class="col-property">${escapeHtml(inv.property_name || 'Unknown')}</div>
+              <div class="col-account">${escapeHtml(inv.account_number || '-')}</div>
+              <div class="col-date">${escapeHtml(inv.invoice_date || '-')}</div>
+              <div class="col-service">${escapeHtml(postedDate)}</div>
+              <div class="col-service">${escapeHtml(inv.service_end || '-')}</div>
+              <div class="col-amount">${formatCurrency(inv.invoice_total)}</div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += `
+          </div>
+          <div class="vendor-actions">
+            <label class="select-all-label">
+              <input type="checkbox" onchange="selectAllVendor('${vendorKey}', this.checked)" />
+              Select All
+            </label>
+            <div style="flex:1"></div>
+            <button class="btn success" onclick="createCheckSlip('${vendorKey}')">Create Check Slip</button>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+  }
+
+  function toggleVendor(idx) {
+    const items = document.getElementById(`vendor-items-${idx}`);
+    const arrow = document.getElementById(`arrow-${idx}`);
+    items.classList.toggle('open');
+    arrow.classList.toggle('open');
+  }
+
+  function toggleInvoice(vendorKey, pdfId) {
+    if (!selectedInvoices[vendorKey]) selectedInvoices[vendorKey] = new Set();
+    if (selectedInvoices[vendorKey].has(pdfId)) {
+      selectedInvoices[vendorKey].delete(pdfId);
+    } else {
+      selectedInvoices[vendorKey].add(pdfId);
+    }
+    updateSelectionSummary();
+  }
+
+  function selectAllVendor(vendorKey, checked) {
+    const vendor = filteredVendorData.find(v => `${v.vendor_id}|${v.vendor_name}` === vendorKey);
+    if (!vendor) return;
+
+    if (!selectedInvoices[vendorKey]) selectedInvoices[vendorKey] = new Set();
+
+    if (checked) {
+      vendor.invoices.forEach(inv => selectedInvoices[vendorKey].add(inv.pdf_id));
+    } else {
+      selectedInvoices[vendorKey].clear();
+    }
+
+    // Update checkboxes
+    document.querySelectorAll(`input[data-vendor="${vendorKey}"]`).forEach(cb => {
+      cb.checked = checked;
+    });
+    updateSelectionSummary();
+  }
+
+  async function createCheckSlip(vendorKey) {
+    const selected = selectedInvoices[vendorKey];
+    if (!selected || selected.size === 0) {
+      showToast('Please select at least one invoice', 'err');
+      return;
+    }
+
+    const vendor = vendorData.find(v => `${v.vendor_id}|${v.vendor_name}` === vendorKey);
+    if (!vendor) return;
+
+    // Use sorted order so PDF matches the displayed order
+    const sortedInvoices = getSortedInvoices(vendor, vendorKey);
+    const invoices = sortedInvoices.filter(inv => selected.has(inv.pdf_id));
+
+    try {
+      // Get user's local date to avoid timezone mismatch with server
+      const today = new Date();
+      const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+      const resp = await fetch('/api/print-checks/create-slip', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          vendor_id: vendor.vendor_id,
+          vendor_name: vendor.vendor_name,
+          vendor_code: vendor.vendor_code || '',
+          created_date: localDate,  // Pass local date to server
+          invoices: invoices.map(inv => ({
+            pdf_id: inv.pdf_id,
+            s3_key: inv.s3_key,
+            property_id: inv.property_id,
+            property_name: inv.property_name,
+            account_number: inv.account_number,
+            invoice_date: inv.invoice_date,
+            invoice_total: inv.invoice_total
+          }))
+        })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Failed to create check slip');
+      }
+
+      const result = await resp.json();
+      showToast(`Check slip ${result.check_slip_id} created with ${result.invoice_count} invoices`, 'ok');
+
+      // Refresh data (cache was invalidated server-side)
+      loadInvoices(true);
+      loadMySlips();
+
+    } catch (e) {
+      showToast('Error: ' + e.message, 'err');
+    }
+  }
+
+  let allSlips = [];
+
+  async function loadMySlips() {
+    try {
+      const resp = await fetch('/api/print-checks/my-slips?status=PENDING');
+      if (!resp.ok) throw new Error('Failed to load slips');
+
+      const data = await resp.json();
+      allSlips = data.slips || [];
+      renderMySlips();
+
+    } catch (e) {
+      document.getElementById('mySlipsList').innerHTML = '<div class="empty-state">Failed to load slips</div>';
+    }
+  }
+
+  function renderMySlips() {
+    const container = document.getElementById('mySlipsList');
+    const fromVal = document.getElementById('slipDateFrom').value;
+    const toVal = document.getElementById('slipDateTo').value;
+
+    const slips = allSlips.filter(slip => {
+      const cd = (slip.created_date || '').substring(0, 10);
+      if (!cd) return true;
+      if (fromVal && cd < fromVal) return false;
+      if (toVal && cd > toVal) return false;
+      return true;
+    });
+
+    if (!slips.length) {
+      container.innerHTML = '<div class="empty-state">No check slips in selected date range</div>';
+      return;
+    }
+
+    let html = `<div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+      <button class="btn small" id="printSelectedSlipsBtn" onclick="bulkPrintSlips()" disabled>Print Selected</button>
+      <span id="slipSelCount" style="font-size:12px;color:#64748b"></span>
+    </div>`;
+
+    slips.forEach(slip => {
+      const hasErrors = slip.pdf_errors && slip.pdf_errors.length > 0;
+      const errorBadge = hasErrors ? `<span class="error-badge" title="${slip.pdf_errors.length} PDF(s) failed">⚠ ${slip.pdf_errors.length}</span>` : '';
+
+      html += `
+        <div class="slip-row ${hasErrors ? 'has-errors' : ''}">
+          <div class="slip-info" style="gap:12px">
+            <input type="checkbox" class="slip-checkbox" data-slip-id="${slip.check_slip_id}" onchange="updateSlipSelection()" style="width:18px;height:18px;cursor:pointer" />
+            <span class="slip-id">${escapeHtml(slip.check_slip_id)}</span>
+            <span class="slip-vendor">${escapeHtml(slip.vendor_name)}</span>
+            <span class="slip-stats">${slip.invoice_count} invoices ${errorBadge}</span>
+            <span class="slip-amount">${formatCurrency(slip.total_amount)}</span>
+            <span style="font-size:11px;color:#94a3b8">${escapeHtml((slip.created_date || '').substring(0, 10))}</span>
+            <span class="slip-status ${slip.status.toLowerCase()}">${slip.status}</span>
+          </div>
+          <div class="slip-actions">
+            <button class="btn small" onclick="downloadPdf('${slip.check_slip_id}')">PDF</button>
+            ${hasErrors ? `<button class="btn small" style="background:#f59e0b" onclick="showPdfErrors('${slip.check_slip_id}')">Errors</button>` : ''}
+            <button class="btn danger small" onclick="deleteSlip('${slip.check_slip_id}')">Delete</button>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+  }
+
+  function updateSlipSelection() {
+    const checked = document.querySelectorAll('.slip-checkbox:checked');
+    const btn = document.getElementById('printSelectedSlipsBtn');
+    const countEl = document.getElementById('slipSelCount');
+    if (btn) btn.disabled = checked.length === 0;
+    if (countEl) countEl.textContent = checked.length ? `${checked.length} selected` : '';
+  }
+
+  function bulkPrintSlips() {
+    const checked = document.querySelectorAll('.slip-checkbox:checked');
+    if (!checked.length) { showToast('Select at least one check slip', 'err'); return; }
+    const ids = Array.from(checked).map(cb => cb.dataset.slipId).join(',');
+    window.open(`/api/print-checks/bulk-pdf?ids=${encodeURIComponent(ids)}`, '_blank');
+  }
+
+  async function downloadPdf(slipId) {
+    // Open PDF in new tab
+    window.open(`/api/print-checks/slip/${slipId}/pdf`, '_blank');
+
+    // After a brief delay, check for any errors that occurred during generation
+    setTimeout(async () => {
+      try {
+        const resp = await fetch(`/api/print-checks/slip/${slipId}/pdf-status`);
+        if (!resp.ok) return;
+
+        const status = await resp.json();
+        if (status.has_errors) {
+          // Show warning toast
+          showToast(`Warning: ${status.failed_pdfs} of ${status.total_invoices} invoice PDF(s) could not be included`, 'err');
+
+          // Refresh the slips list to show error badge
+          loadMySlips();
+
+          // Ask if they want to see details
+          if (confirm(`${status.failed_pdfs} invoice PDF(s) failed to include in the check slip.\n\nWould you like to see the error details?`)) {
+            showPdfErrors(slipId);
+          }
+        }
+      } catch (e) {
+        console.error('Error checking PDF status:', e);
+      }
+    }, 2000);  // Wait 2 seconds for PDF generation to complete
+  }
+
+  async function showPdfErrors(slipId) {
+    try {
+      const resp = await fetch(`/api/print-checks/slip/${slipId}/pdf-status`);
+      if (!resp.ok) throw new Error('Failed to get PDF status');
+
+      const status = await resp.json();
+      if (!status.pdf_errors || status.pdf_errors.length === 0) {
+        showToast('No PDF errors found', 'ok');
+        return;
+      }
+
+      let errorHtml = `
+        <div style="max-height:400px;overflow-y:auto">
+          <p><strong>${status.failed_pdfs} of ${status.total_invoices}</strong> invoice PDFs could not be included:</p>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="background:#f3f4f6">
+                <th style="padding:8px;text-align:left;border-bottom:1px solid #e5e7eb">Property</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid #e5e7eb">Account</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid #e5e7eb">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      status.pdf_errors.forEach(err => {
+        errorHtml += `
+          <tr>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb">${escapeHtml(err.property)}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb">${escapeHtml(err.account)}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb;color:#b91c1c;font-size:12px">${escapeHtml(err.error)}</td>
+          </tr>
+        `;
+      });
+
+      errorHtml += `
+            </tbody>
+          </table>
+          <div style="margin-top:16px;padding:12px;background:#fef3c7;border-radius:8px;font-size:12px">
+            <strong>To fix:</strong> The source PDF files may be missing or inaccessible. Check that the original invoices were uploaded correctly. You can regenerate the PDF after fixing the source files.
+          </div>
+        </div>
+      `;
+
+      // Show in modal
+      document.getElementById('errorModalContent').innerHTML = errorHtml;
+      document.getElementById('errorModalSlipId').value = slipId;
+      document.getElementById('errorModal').classList.add('show');
+
+    } catch (e) {
+      showToast('Error loading PDF status: ' + e.message, 'err');
+    }
+  }
+
+  function closeErrorModal() {
+    document.getElementById('errorModal').classList.remove('show');
+  }
+
+  async function regeneratePdf() {
+    const slipId = document.getElementById('errorModalSlipId').value;
+    closeErrorModal();
+    showToast('Regenerating PDF...', 'ok');
+    await downloadPdf(slipId);
+  }
+
+  async function deleteSlip(slipId) {
+    if (!confirm('Delete this check slip? Invoices will be released back to the pool.')) return;
+
+    try {
+      const resp = await fetch(`/api/print-checks/slip/${slipId}`, {method: 'DELETE'});
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Failed to delete');
+      }
+
+      const result = await resp.json();
+
+      // Auto-expand date range to include released invoices' posting dates
+      if (result.earliest_date) {
+        const startInput = document.getElementById('startDate');
+        if (startInput.value > result.earliest_date) {
+          startInput.value = result.earliest_date;
+        }
+      }
+
+      const count = result.released_count || 0;
+      showToast(`Check slip deleted — ${count} invoice(s) released back to pool`, 'ok');
+      loadInvoices(true);  // Force refresh since invoices returned to pool
+      loadMySlips();
+
+    } catch (e) {
+      showToast('Error: ' + e.message, 'err');
+    }
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function updateSelectionSummary() {
+    let totalSelected = 0;
+    let totalAmount = 0;
+    // Build a fast lookup: pdf_id -> invoice_total
+    const invoiceLookup = {};
+    vendorData.forEach(vendor => {
+      (vendor.invoices || []).forEach(inv => {
+        invoiceLookup[inv.pdf_id] = parseFloat(inv.invoice_total || 0);
+      });
+    });
+    for (const vendorKey in selectedInvoices) {
+      const selected = selectedInvoices[vendorKey];
+      if (!selected) continue;
+      selected.forEach(pdfId => {
+        totalSelected++;
+        totalAmount += (invoiceLookup[pdfId] || 0);
+      });
+    }
+    const bar = document.getElementById('selectionBar');
+    if (totalSelected > 0) {
+      bar.classList.add('visible');
+      document.getElementById('selectedCount').textContent = totalSelected;
+      document.getElementById('selectedAmount').textContent = formatCurrency(totalAmount);
+    } else {
+      bar.classList.remove('visible');
+    }
+  }
+
+  // Sorting functions
+  function getSortArrow(vendorKey, column) {
+    const config = sortConfig[vendorKey];
+    if (!config || config.column !== column) return '<span class="sort-arrow"></span>';
+    return config.direction === 'asc' ? '<span class="sort-arrow">▲</span>' : '<span class="sort-arrow">▼</span>';
+  }
+
+  function getSortedInvoices(vendor, vendorKey) {
+    const invoices = [...(vendor.invoices || [])];
+    const config = sortConfig[vendorKey];
+    if (!config) return invoices;
+
+    const { column, direction } = config;
+    const mult = direction === 'asc' ? 1 : -1;
+
+    invoices.sort((a, b) => {
+      let valA = a[column] || '';
+      let valB = b[column] || '';
+
+      // Handle numeric columns
+      if (column === 'invoice_total') {
+        valA = parseFloat(valA) || 0;
+        valB = parseFloat(valB) || 0;
+        return (valA - valB) * mult;
+      }
+
+      // Handle date columns
+      if (column === 'invoice_date' || column === 'posted_at') {
+        valA = valA ? new Date(valA).getTime() : 0;
+        valB = valB ? new Date(valB).getTime() : 0;
+        return (valA - valB) * mult;
+      }
+
+      // String comparison
+      return String(valA).localeCompare(String(valB)) * mult;
+    });
+
+    return invoices;
+  }
+
+  function sortVendor(vendorKey, column) {
+    // Toggle direction if clicking same column, otherwise default to ascending
+    const current = sortConfig[vendorKey];
+    if (current && current.column === column) {
+      sortConfig[vendorKey] = { column, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+    } else {
+      sortConfig[vendorKey] = { column, direction: 'asc' };
+    }
+    renderVendors();
+    // Re-open the vendor that was just sorted
+    const vidx = vendorData.findIndex(v => `${v.vendor_id}|${v.vendor_name}` === vendorKey);
+    if (vidx >= 0) {
+      document.getElementById(`vendor-items-${vidx}`).classList.add('open');
+      document.getElementById(`arrow-${vidx}`).classList.add('open');
+    }
+  }
+</script>
+
+</body>
+</html>

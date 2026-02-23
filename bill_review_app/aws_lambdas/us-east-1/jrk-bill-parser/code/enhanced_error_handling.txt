@@ -1,0 +1,34 @@
+# Enhanced call_gemini_rest with error capture
+def call_gemini_rest(api_key: str, pdf_bytes: bytes, prompt: str, pdf_key: str = "") -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={api_key}"
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"inline_data": {"mime_type": "application/pdf", "data": base64.b64encode(pdf_bytes).decode("ascii")}},
+                    {"text": prompt},
+                ],
+            }
+        ]
+    }
+    headers = {"Content-Type": "application/json"}
+    r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=90)
+    if r.status_code != 200:
+        # Log error to DynamoDB
+        error_code = extract_gemini_error_code(r.text)
+        log_parser_error(ddb, ERRORS_TABLE, pdf_key, 'gemini_api_error', {
+            'status_code': r.status_code,
+            'gemini_error_code': error_code,
+            'message': r.text[:500],
+            'model': MODEL_NAME
+        })
+        raise RuntimeError(f"Gemini REST error {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    # Extract text
+    candidates = data.get("candidates") or []
+    if not candidates:
+        return ""
+    parts = (((candidates[0] or {}).get("content") or {}).get("parts") or [])
+    text = "".join([p.get("text", "") for p in parts if isinstance(p, dict)])
+    return text.strip()

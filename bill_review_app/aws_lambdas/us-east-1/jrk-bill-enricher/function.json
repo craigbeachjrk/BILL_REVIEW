@@ -1,0 +1,57 @@
+﻿{
+    "FunctionName":  "jrk-bill-enricher",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-enricher",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/jrk-bill-enricher-role",
+    "Handler":  "lambda_bill_enricher.lambda_handler",
+    "CodeSize":  9188,
+    "Description":  "",
+    "Timeout":  300,
+    "MemorySize":  1024,
+    "LastModified":  "2025-10-23T20:41:56.000+0000",
+    "CodeSha256":  "8ShelAiiVBpbfBQ2YuulcXutkh8G4zJ4R4O0q/AdMmw=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "DIM_VENDOR_PREFIX":  "Bill_Parser_Enrichment/exports/dim_vendor/",
+                                          "ENRICH_PREFIX":  "Bill_Parser_Enrichment/exports/",
+                                          "SHORTENER_URL":  "https://pyzvqq4itbockzty2jaimeyd7m0dwtxe.lambda-url.us-east-1.on.aws/",
+                                          "BUCKET":  "jrk-analytics-billing",
+                                          "DIM_PROPERTY_PREFIX":  "Bill_Parser_Enrichment/exports/dim_property/",
+                                          "ENRICH_MODEL":  "gemini-1.5-flash",
+                                          "MATCHER_SECRET_NAME":  "gemini/matcher-keys",
+                                          "INPUT_PREFIX":  "Bill_Parser_3_Parsed_Outputs/",
+                                          "OUTPUT_PREFIX":  "Bill_Parser_4_Enriched_Outputs/"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "2475a2e2-0f86-4a0a-96af-0114ecc2033a",
+    "Layers":  [
+                   {
+                       "Arn":  "arn:aws:lambda:us-east-1:789814232318:layer:jrk-gemini-layer:2",
+                       "CodeSize":  21926292
+                   }
+               ],
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:644f999c44288c3dd580a0b58d0576fe347ce4d089106e2c52ed35b626e0fb3c"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/jrk-bill-enricher"
+                      }
+}

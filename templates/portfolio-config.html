@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Portfolio Config · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#ef4444}
+    .btn.success{background:#10b981}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .upload-zone{border:2px dashed #cbd5e1;border-radius:12px;padding:40px;text-align:center;background:#f8fafc;cursor:pointer;transition:all .2s}
+    .upload-zone:hover{border-color:#0ea5e9;background:#f0f9ff}
+    .upload-zone.dragover{border-color:#10b981;background:#ecfdf5}
+    .upload-zone input{display:none}
+    .upload-icon{font-size:48px;margin-bottom:12px}
+    .upload-text{font-size:14px;color:#64748b}
+    .upload-text strong{color:#0f172a}
+    .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+    .summary-card{background:#fff;border-radius:12px;padding:20px;text-align:center}
+    .summary-value{font-size:32px;font-weight:700;color:#0ea5e9}
+    .summary-label{font-size:12px;color:#64748b;text-transform:uppercase;margin-top:4px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0;z-index:5;cursor:pointer}
+    th:hover{background:#e5e7eb}
+    tr:hover{background:#f9fafb}
+    .am-group{background:#e0f2fe;font-weight:600}
+    .am-group td{padding:8px 12px;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#0369a1}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600}
+    .badge.region{background:#dbeafe;color:#1e40af}
+    .badge.fund{background:#fef3c7;color:#92400e}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    .search-box{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;min-width:250px}
+    .table-wrapper{max-height:600px;overflow-y:auto;border-radius:12px}
+    .meta-info{font-size:12px;color:#64748b;margin-top:16px}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · Portfolio Config</a></div>
+    <div class="logout">
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>Portfolio Configuration</h1>
+    <p style="color:rgba(255,255,255,0.8);margin-bottom:24px">
+      Upload the Portfolio Checklist Excel to map properties to Asset Managers for billback reports.
+    </p>
+
+    <div class="card">
+      <h2 style="margin:0 0 16px 0;font-size:16px">Upload Portfolio Excel</h2>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls" />
+        <div class="upload-icon">📊</div>
+        <div class="upload-text">
+          <strong>Click to upload</strong> or drag and drop<br>
+          Excel file (.xlsx, .xls)
+        </div>
+      </div>
+      <div style="margin-top:16px;font-size:12px;color:#64748b">
+        <strong>Expected columns:</strong> Code, Asset Manager, Analyst, Property, Region, Fund, Units
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <input type="text" class="search-box" id="searchBox" placeholder="Search properties..." oninput="filterTable()">
+        <select id="filterAM" onchange="filterTable()" style="padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb">
+          <option value="">All Asset Managers</option>
+        </select>
+        <div style="flex:1"></div>
+        <button class="btn" onclick="loadPortfolio()">Refresh</button>
+        <button class="btn danger" onclick="clearPortfolio()">Clear All</button>
+      </div>
+
+      <div class="summary-grid" id="summaryGrid">
+        <div class="summary-card">
+          <div class="summary-value" id="totalProps">-</div>
+          <div class="summary-label">Properties</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-value" id="totalAMs">-</div>
+          <div class="summary-label">Asset Managers</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-value" id="totalUnits">-</div>
+          <div class="summary-label">Total Units</div>
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table id="portfolioTable">
+          <thead>
+            <tr>
+              <th onclick="sortTable('property_code')">Code</th>
+              <th onclick="sortTable('property_name')">Property Name</th>
+              <th onclick="sortTable('asset_manager')">Asset Manager</th>
+              <th onclick="sortTable('analyst')">Analyst</th>
+              <th onclick="sortTable('region')">Region</th>
+              <th onclick="sortTable('fund')">Fund</th>
+              <th onclick="sortTable('units')">Units</th>
+            </tr>
+          </thead>
+          <tbody id="portfolioBody">
+            <tr><td colspan="7" style="text-align:center;padding:40px;color:#64748b">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="meta-info" id="metaInfo"></div>
+    </div>
+  </div>
+
+  <script>
+    let portfolioData = [];
+    let sortColumn = 'asset_manager';
+    let sortDirection = 'asc';
+
+    function showToast(msg, type = 'ok') {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show ' + type;
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // Upload zone handlers
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+
+    uploadZone.addEventListener('click', () => fileInput.click());
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.classList.add('dragover');
+    });
+    uploadZone.addEventListener('dragleave', () => {
+      uploadZone.classList.remove('dragover');
+    });
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) uploadFile(file);
+    });
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) uploadFile(file);
+    });
+
+    async function uploadFile(file) {
+      showToast('Uploading ' + file.name + '...', 'ok');
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const response = await fetch('/api/portfolio/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Upload failed');
+        }
+
+        showToast(`Upload complete: ${data.added} added, ${data.updated} updated`, 'ok');
+        loadPortfolio();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    async function loadPortfolio() {
+      try {
+        const response = await fetch('/api/portfolio');
+        const data = await response.json();
+
+        portfolioData = data.properties || [];
+
+        // Update summary
+        document.getElementById('totalProps').textContent = data.total_properties || 0;
+        document.getElementById('totalAMs').textContent = Object.keys(data.by_asset_manager || {}).length;
+
+        let totalUnits = 0;
+        Object.values(data.by_asset_manager || {}).forEach(am => {
+          totalUnits += am.total_units || 0;
+        });
+        document.getElementById('totalUnits').textContent = totalUnits.toLocaleString();
+
+        // Populate AM filter
+        const amFilter = document.getElementById('filterAM');
+        const currentAM = amFilter.value;
+        amFilter.innerHTML = '<option value="">All Asset Managers</option>';
+        Object.keys(data.by_asset_manager || {}).sort().forEach(am => {
+          amFilter.innerHTML += `<option value="${am}">${am} (${data.by_asset_manager[am].count})</option>`;
+        });
+        amFilter.value = currentAM;
+
+        // Update meta info
+        if (data.updated_at) {
+          document.getElementById('metaInfo').textContent = `Last updated: ${new Date(data.updated_at).toLocaleString()} by ${data.updated_by || 'unknown'}`;
+        } else {
+          document.getElementById('metaInfo').textContent = 'No data uploaded yet';
+        }
+
+        renderTable();
+      } catch (e) {
+        showToast('Error loading portfolio: ' + e.message, 'err');
+      }
+    }
+
+    function filterTable() {
+      renderTable();
+    }
+
+    function sortTable(column) {
+      if (sortColumn === column) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortColumn = column;
+        sortDirection = 'asc';
+      }
+      renderTable();
+    }
+
+    function renderTable() {
+      const searchTerm = document.getElementById('searchBox').value.toLowerCase();
+      const amFilter = document.getElementById('filterAM').value;
+
+      // Filter
+      let filtered = portfolioData.filter(p => {
+        if (amFilter && p.asset_manager !== amFilter) return false;
+        if (searchTerm) {
+          const searchStr = [p.property_code, p.property_name, p.asset_manager, p.analyst, p.region, p.fund].join(' ').toLowerCase();
+          if (!searchStr.includes(searchTerm)) return false;
+        }
+        return true;
+      });
+
+      // Sort
+      filtered.sort((a, b) => {
+        let aVal = a[sortColumn] || '';
+        let bVal = b[sortColumn] || '';
+        if (sortColumn === 'units') {
+          aVal = parseInt(aVal) || 0;
+          bVal = parseInt(bVal) || 0;
+        } else {
+          aVal = String(aVal).toLowerCase();
+          bVal = String(bVal).toLowerCase();
+        }
+        if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      // Render with AM grouping if sorted by AM
+      const tbody = document.getElementById('portfolioBody');
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#64748b">No properties found</td></tr>';
+        return;
+      }
+
+      let html = '';
+      let lastAM = null;
+
+      filtered.forEach(p => {
+        // Add AM group header if sorting by AM
+        if (sortColumn === 'asset_manager' && p.asset_manager !== lastAM) {
+          lastAM = p.asset_manager;
+          html += `<tr class="am-group"><td colspan="7">${p.asset_manager || 'Unassigned'}</td></tr>`;
+        }
+
+        html += `<tr>
+          <td>${p.property_code || ''}</td>
+          <td>${p.property_name || ''}</td>
+          <td>${p.asset_manager || ''}</td>
+          <td>${p.analyst || ''}</td>
+          <td>${p.region ? `<span class="badge region">${p.region}</span>` : ''}</td>
+          <td>${p.fund ? `<span class="badge fund">${p.fund}</span>` : ''}</td>
+          <td style="text-align:right">${p.units ? p.units.toLocaleString() : ''}</td>
+        </tr>`;
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    async function clearPortfolio() {
+      if (!confirm('Are you sure you want to clear all portfolio data? This cannot be undone.')) return;
+
+      try {
+        const response = await fetch('/api/portfolio/clear', { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) throw new Error(data.error);
+
+        showToast('Portfolio data cleared', 'ok');
+        loadPortfolio();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    // Load on page load
+    loadPortfolio();
+  </script>
+</body>
+</html>

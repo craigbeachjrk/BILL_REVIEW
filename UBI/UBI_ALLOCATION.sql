@@ -1,0 +1,1334 @@
+CREATE OR REPLACE PROCEDURE UBI.UBI_ALLOCATION_QUERY(
+      p_property_code         VARCHAR   DEFAULT NULL,
+      p_property_name         VARCHAR   DEFAULT NULL,
+      p_master_bill_date      VARCHAR     DEFAULT NULL,
+      p_dim_lease_date        DATE     DEFAULT NULL,
+      p_balance_due_date      DATE     DEFAULT NULL,
+      p_billbackperiodstart   DATE     DEFAULT NULL,
+      p_billbackperiodend     DATE     DEFAULT NULL,
+      p_manual_meter_date     TIMESTAMP DEFAULT NULL,
+      p_posted_date           DATE     DEFAULT NULL,
+      p_post_month            DATE     DEFAULT NULL,
+      p_due_date              DATE     DEFAULT NULL,
+      p_memo                  VARCHAR   DEFAULT NULL
+)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+$$
+BEGIN 
+
+
+    INSERT INTO LAITMAN.UBI.TRANSACTIONS
+        WITH PROPERTY_FILTER AS (
+        SELECT *
+        FROM UBI."_IS_UBI_PROPERTY"
+        WHERE "UBI_Prop" = 'Include'
+          AND (:p_property_code IS NULL OR "Property_Code"  = :p_property_code)
+          AND (:p_property_name IS NULL OR "Property_Name"  = :p_property_name)
+    ),
+
+    MASTER_BILLS AS (
+        SELECT *
+        FROM LAITMAN.UBI."_Master_Bills"
+        WHERE "RunDate" = :p_master_bill_date
+    ),
+
+    DIM_LEASE AS (
+        SELECT *
+        FROM LAITMAN.UBI.DIM_LEASE
+        WHERE RUNDATE = :p_dim_lease_date
+    ),
+
+    PROPERTY_LOOKUP AS (
+        SELECT PROPERTY_ID, LOOKUP_CODE, PROPERTY_NAME
+        FROM DIM_LEASE
+        GROUP BY PROPERTY_ID, LOOKUP_CODE, PROPERTY_NAME
+    ),
+
+    FLAT_RATE_BY_ROOM_ASSIGNMENTS AS (
+        SELECT * FROM UBI.FLAT_RATE_BY_ROOM
+    ),
+
+    ALLOCATION_ASSIGNMENTS AS (
+        SELECT *
+        FROM UBI.Method_Assignment_Latest
+        WHERE "Billback_Method_Num" IN ('4','5','6','7','8','8.1','9','9.1','12','15','16')
+          AND "AR_CODE" NOT IN ('UTSDP - Utility Sec Dep')
+    ),
+
+    SECDP_ASSIGNMENTS AS (
+        SELECT *
+        FROM UBI.Method_Assignment_Latest
+        WHERE "AR_CODE" IN ('UBISU - UBI SETUP')
+          AND "Billback_Method_Num" IN ('4','13')
+    ),
+
+    DQ_ASSIGNMENTS AS (
+        SELECT *
+        FROM UBI.Method_Assignment_Latest
+        WHERE "AR_CODE" IN ('ULATE - UTILITY LATE FEE')
+          AND "Billback_Method_Num" IN ('11','11.1','11.2','11.3')
+    ),
+
+    BALANCE_DUE AS (
+        SELECT *
+        FROM UBI.BALANCE_DUE
+        WHERE RUNDATE = :p_balance_due_date
+    ),
+
+    /*──────────────────────────────*/
+    /*  BASE TRANSACTIONS           */
+    /*──────────────────────────────*/
+    BASE_TRANSACTIONS AS (
+        SELECT
+            ECML.LOOKUP_CODE,
+            ECML.PROPERTY_ID,
+            ECML.PROPERTY_NAME,
+            RR.UNIT_SPACE_ID,
+            RR.BUILDING_NAME,
+            RR.UNIT_NUMBER,
+            RR.UNIT_TYPE,
+            :p_billbackperiodstart  AS BillbackPeriodStart,
+            :p_billbackperiodend    AS BillbackPeriodEnd,
+            DL.LEASE_ID                                 AS FIRST_RENT_ROLL_LEASE_ID,
+            DL.LEASE_ID                                 AS SECOND_RENT_ROLL_LEASE_ID,
+            DL.PROCESS_AS_SODA                          AS PROCESS_AS_SODA,
+            DATEDIFF('day', DL.MOVE_IN_DATE, DL.LEASE_START_DATE) AS DaysBetweenMoveInAndLeaseStart,
+            CASE
+                WHEN DATEDIFF('day', DL.MOVE_IN_DATE, DL.LEASE_START_DATE) > 40 THEN 'Y'
+                ELSE 'N'
+            END                                         AS Inferred_Renewal,
+            DL.CUSTOMER_NAME_FIRST                      AS firstName,
+            DL.CUSTOMER_NAME_LAST                       AS lastName,
+            DL.MOVE_IN_DATE                             AS moveInDate,
+            DL.LEASE_START_DATE                         AS startDate,
+            DL.LEASE_END_DATE                           AS endDate,
+            DL.LEASE_START_DATE                         AS leaseStartDate,
+            DL.LEASE_END_DATE                           AS leaseEndDate,
+            DL.NOTICE_DATE                              AS noticeDate,
+            DL.LEASE_SUB_STATUS                         AS leaseSubStatus,
+            IH.IS_HUD,
+            IE.IS_EMPLOYEE,
+            ICL.IS_COMMERCIAL,
+            COALESCE(RR.SQFT, UC.SQUARE_FEET)           AS SQFT,
+            CASE
+                WHEN DL.LEASE_START_DATE IS NULL THEN NULL
+                ELSE COALESCE(RR.SQFT, UC.SQUARE_FEET)
+            END                                         AS OCCUPIED_SQFT,
+            COALESCE(OBLL.COUNT_OF_OCCUPANTS, 0)        AS COUNT_OF_OCCUPANTS,
+            COALESCE(TRY_TO_NUMBER(ORA.Occupancy_Ratio_Industry), 0) AS OCCUPANCY_RATIO_INDUSTRY,
+            COALESCE(TRY_TO_NUMBER(ORA.Occupancy_Ratio_JRK), 0)      AS OCCUPANCY_RATIO_JRK,
+            UC.BEDROOM_COUNT,
+            UC.BATHROOM_COUNT,
+            CASE
+                WHEN COALESCE(OBLL.COUNT_OF_OCCUPANTS,0) > 0 THEN 1
+                ELSE 0
+            END                                         AS IS_OCCUPIED,
+            CASE
+                WHEN DL.MOVE_IN_DATE > :p_billbackperiodend THEN 'Y'
+                ELSE 'N'
+            END                                         AS MOVED_IN_AFTER_UBI_PERIOD
+        FROM PROPERTY_FILTER IUP
+        JOIN LAITMAN.UBI.ENTRATA_CORE_MIGRATED_LATEST ECML
+              ON IUP."Property_Code" = ECML.LOOKUP_CODE
+        JOIN LAITMAN.UBI.RENT_ROLL_LATEST RR
+              ON RR.PROPERTY_ID = ECML.PROPERTY_ID
+        LEFT JOIN LAITMAN.UBI.UNIT_CHARACTERISTICS_LATEST UC
+              ON UC.PROPERTY_ID   = RR.PROPERTY_ID
+             AND UC.BUILDING_NAME = RR.BUILDING_NAME
+             AND UC.UNIT_NUMBER   = RR.UNIT_NUMBER
+        LEFT JOIN DIM_LEASE DL
+              ON DL.PROPERTY_ID       = RR.PROPERTY_ID
+             AND DL.BUILDING_NAME     = RR.BUILDING_NAME
+             AND DL.UNIT_NUMBER_CACHE = RR.UNIT_NUMBER
+        LEFT JOIN LAITMAN.UBI.IS_HUD_LATEST IH  ON IH.LEASE_ID = DL.LEASE_ID
+        LEFT JOIN LAITMAN.UBI.IS_EMPLOYEE_LATEST IE ON IE.LEASE_ID = DL.LEASE_ID
+        LEFT JOIN LAITMAN.UBI.OCCUPANTS_BY_LEASE_LATEST OBLL ON OBLL.LEASE_ID = DL.LEASE_ID
+        LEFT JOIN LAITMAN.UBI.IS_COMMERCIAL_LATEST ICL ON ICL.LEASE_ID = DL.LEASE_ID
+        LEFT JOIN LAITMAN.UBI.Occupancy_Ratio ORA ON ORA.Occupants = OBLL.COUNT_OF_OCCUPANTS
+    ),
+
+    LATE_MOVE_INS AS (
+    SELECT
+        BT.LOOKUP_CODE,
+        BT.PROPERTY_ID,
+        BT.PROPERTY_NAME,
+        BT.UNIT_SPACE_ID,
+        BT.BUILDING_NAME,
+        BT.UNIT_NUMBER,
+        BT.UNIT_TYPE,
+        BT.PROCESS_AS_SODA,
+        BT.BillbackPeriodStart,
+        BT.BillbackPeriodEnd,
+        BT.DaysBetweenMoveInAndLeaseStart,
+        BT.Inferred_Renewal,
+        BT.FIRST_RENT_ROLL_LEASE_ID,
+        BT.SECOND_RENT_ROLL_LEASE_ID,
+        BT.moveInDate,
+        BT.startDate,
+        BT.leaseStartDate,
+        BT.leaseEndDate,
+        BT.endDate,
+        BT.noticeDate,
+        BT.leaseSubStatus,
+        BT.firstName,
+        BT.lastName,
+        BT.IS_HUD,
+        BT.IS_EMPLOYEE,
+        BT.IS_COMMERCIAL,
+        BT.SQFT,
+
+        CASE WHEN BT.MOVED_IN_AFTER_UBI_PERIOD = 'Y' THEN 0 ELSE BT.OCCUPIED_SQFT END   AS OCCUPIED_SQFT,
+        CASE WHEN BT.MOVED_IN_AFTER_UBI_PERIOD = 'Y' THEN 0 ELSE BT.COUNT_OF_OCCUPANTS END AS COUNT_OF_OCCUPANTS,
+        CASE WHEN BT.MOVED_IN_AFTER_UBI_PERIOD = 'Y' THEN 0 ELSE BT.OCCUPANCY_RATIO_INDUSTRY END AS OCCUPANCY_RATIO_INDUSTRY,
+        CASE WHEN BT.MOVED_IN_AFTER_UBI_PERIOD = 'Y' THEN 0 ELSE BT.OCCUPANCY_RATIO_JRK END AS OCCUPANCY_RATIO_JRK,
+        CASE WHEN BT.MOVED_IN_AFTER_UBI_PERIOD = 'Y' THEN 0 ELSE BT.IS_OCCUPIED END  AS IS_OCCUPIED,
+
+        BT.BEDROOM_COUNT,
+        BT.BATHROOM_COUNT,
+        BT.MOVED_IN_AFTER_UBI_PERIOD,
+
+        /* Move-in flag */
+        CASE
+            WHEN BT.leaseStartDate >= BT.BillbackPeriodStart
+             AND BT.leaseStartDate <= BT.BillbackPeriodEnd
+             AND Inferred_Renewal = 'N'
+            THEN 'Y'
+            ELSE 'N'
+        END AS MOVE_IN_FLAG,
+
+        /* Security-deposit flag */
+        CASE
+            WHEN BT.leaseStartDate >= DATEADD('month', -1, BT.BillbackPeriodStart)
+             AND BT.leaseStartDate <= BT.BillbackPeriodEnd
+             AND Inferred_Renewal = 'N'
+            THEN 'Y'
+            ELSE 'N'
+        END AS SECURITY_DEPOSIT_FLAG,
+
+        CASE WHEN BT.UNIT_SPACE_ID IS NOT NULL THEN 1 ELSE 0 END AS COUNT_OF_UNITS
+    FROM BASE_TRANSACTIONS BT
+)
+    --SELECT * FROM LATE_MOVE_INS;
+    ,
+    
+    PRORATING_LOGIC AS (
+        SELECT
+            LMI.*,
+    
+            CASE
+                WHEN LMI.MOVE_IN_FLAG = 'Y'
+                THEN DATEDIFF('day',
+                              LMI.leaseStartDate,
+                              DATEADD('day', 1, LMI.BillbackPeriodEnd))
+                ELSE DATEDIFF('day',
+                              LMI.BillbackPeriodStart,
+                              DATEADD('day', 1, LMI.BillbackPeriodEnd))
+            END AS DAYS_IN_UNIT,
+    
+            DATEDIFF('day',
+                     LMI.BillbackPeriodStart,
+                     DATEADD('day', 1, LMI.BillbackPeriodEnd))  AS DAYS_IN_PERIOD
+        FROM LATE_MOVE_INS LMI
+    )
+    --SELECT * FROM PRORATING_LOGIC;
+    ,
+
+ADJUST_ATTRIBUTE_FORM AS (
+    SELECT
+        PD.LOOKUP_CODE,
+        PD.PROPERTY_ID,
+        PD.PROPERTY_NAME,
+        PD.BUILDING_NAME,
+        PD.UNIT_NUMBER,
+        PD.DaysBetweenMoveInAndLeaseStart,
+        PD.Inferred_Renewal,
+        PD.FIRST_RENT_ROLL_LEASE_ID,
+        PD.firstName,
+        PD.lastName,
+        PD.leaseSubStatus,
+        PD.IS_HUD,
+        PD.IS_EMPLOYEE,
+        PD.IS_COMMERCIAL,
+
+        /* pre-adjustment snapshots */
+        PD.SQFT                     AS PRE_ADJUSTMENT_SQFT,
+        PD.OCCUPIED_SQFT            AS PRE_ADJUSTMENT_OCCUPIED_SQFT,
+        PD.COUNT_OF_OCCUPANTS       AS PRE_ADJUSTMENT_COUNT_OF_OCCUPANTS,
+        PD.OCCUPANCY_RATIO_INDUSTRY AS PRE_ADJUSTMENT_OCCUPANCY_RATIO_INDUSTRY,
+        PD.OCCUPANCY_RATIO_JRK      AS PRE_ADJUSTMENT_OCCUPANCY_RATIO_JRK,
+        PD.IS_OCCUPIED              AS PRE_ADJUSTMENT_IS_OCCUPIED,
+        PD.BEDROOM_COUNT            AS PRE_ADJUSTMENT_BEDROOM_COUNT,
+        PD.BATHROOM_COUNT           AS PRE_ADJUSTMENT_BATHROOM_COUNT,
+        PD.COUNT_OF_UNITS           AS PRE_ADJUSTMENT_COUNT_OF_UNITS,
+        PD.DAYS_IN_UNIT             AS PRE_ADJUSTMENT_DAYS_IN_UNIT,
+        PD.DAYS_IN_PERIOD           AS PRE_ADJUSTMENT_DAYS_IN_PERIOD
+    FROM PRORATING_LOGIC PD
+    LEFT JOIN Laitman.UBI.ENTRATA_CORE_MIGRATED_LATEST ECML
+           ON PD.LOOKUP_CODE = ECML.LOOKUP_CODE
+    WHERE MOVED_IN_AFTER_UBI_PERIOD = 'N'
+)
+-- SELECT * FROM ADJUST_ATTRIBUTE_FORM;
+,
+
+ADJUST_ATTRIBUTE_APPLY AS (
+    SELECT
+        PL.LOOKUP_CODE,
+        PL.PROPERTY_ID,
+        PL.PROPERTY_NAME,
+        PL.UNIT_SPACE_ID,
+        PL.BUILDING_NAME,
+        PL.UNIT_NUMBER,
+        PL.UNIT_TYPE,
+        PL.PROCESS_AS_SODA,
+        PL.BillbackPeriodStart,
+        PL.BillbackPeriodEnd,
+        PL.DaysBetweenMoveInAndLeaseStart,
+        PL.Inferred_Renewal,
+        PL.FIRST_RENT_ROLL_LEASE_ID,
+        PL.SECOND_RENT_ROLL_LEASE_ID,
+        PL.moveInDate,
+        PL.startDate,
+        PL.leaseStartDate,
+        PL.leaseEndDate,
+        PL.endDate,
+        PL.noticeDate,
+        PL.firstName,
+        PL.lastName,
+        PL.leaseSubStatus,
+        PL.IS_HUD,
+        PL.IS_EMPLOYEE,
+        PL.IS_COMMERCIAL,
+
+        COALESCE(AAL.POST_ADJUSTMENT_SQFT,                  PL.SQFT)  AS SQFT,
+        COALESCE(AAL.POST_ADJUSTMENT_OCCUPIED_SQFT,         PL.OCCUPIED_SQFT) AS OCCUPIED_SQFT,
+        COALESCE(AAL.POST_ADJUSTMENT_COUNT_OF_OCCUPANTS,    PL.COUNT_OF_OCCUPANTS) AS COUNT_OF_OCCUPANTS,
+        COALESCE(AAL.POST_ADJUSTMENT_OCCUPANCY_RATIO_INDUSTRY, PL.OCCUPANCY_RATIO_INDUSTRY) AS OCCUPANCY_RATIO_INDUSTRY,
+        COALESCE(AAL.POST_ADJUSTMENT_OCCUPANCY_RATIO_JRK,   PL.OCCUPANCY_RATIO_JRK) AS OCCUPANCY_RATIO_JRK,
+        COALESCE(AAL.POST_ADJUSTMENT_IS_OCCUPIED,           PL.IS_OCCUPIED) AS IS_OCCUPIED,
+        COALESCE(AAL.POST_ADJUSTMENT_BEDROOM_COUNT,         PL.BEDROOM_COUNT) AS BEDROOM_COUNT,
+        COALESCE(AAL.POST_ADJUSTMENT_BATHROOM_COUNT,        PL.BATHROOM_COUNT) AS BATHROOM_COUNT,
+
+        PL.MOVED_IN_AFTER_UBI_PERIOD,
+        PL.MOVE_IN_FLAG,
+        PL.SECURITY_DEPOSIT_FLAG,
+        COALESCE(AAL.POST_ADJUSTMENT_COUNT_OF_UNITS,        PL.COUNT_OF_UNITS) AS COUNT_OF_UNITS,
+        COALESCE(AAL.POST_ADJUSTMENT_DAYS_IN_UNIT,          PL.DAYS_IN_UNIT)  AS DAYS_IN_UNIT,
+        PL.DAYS_IN_PERIOD
+    FROM PRORATING_LOGIC PL
+    LEFT JOIN UBI.ADJUST_ATTRIBUTES_LATEST AAL
+           ON AAL.PROPERTY_ID             = PL.PROPERTY_ID
+          AND AAL.FIRST_RENT_ROLL_LEASE_ID = PL.FIRST_RENT_ROLL_LEASE_ID
+)
+-- SELECT * FROM ADJUST_ATTRIBUTE_APPLY;
+,
+
+PRORATING_DIVISION AS (
+SELECT
+    PL.*,
+    /* prorate factor = days-in-unit ÷ days-in-period */
+    (PL.DAYS_IN_UNIT / PL.DAYS_IN_PERIOD) AS PRORATION_PERCENT
+FROM ADJUST_ATTRIBUTE_APPLY PL
+)
+-- SELECT * FROM PRORATING_DIVISION;
+,
+
+PRORATION_MULTIPLICATION as
+(
+SELECT
+    PD.*,
+    SQFT                    * PRORATION_PERCENT AS PRORATED_SQFT,
+    OCCUPIED_SQFT           * PRORATION_PERCENT AS PRORATED_OCCUPIED_SQFT,
+    COUNT_OF_OCCUPANTS      * PRORATION_PERCENT AS PRORATED_COUNT_OF_OCCUPANTS,
+    OCCUPANCY_RATIO_INDUSTRY* PRORATION_PERCENT AS PRORATED_OCCUPANCY_RATIO_INDUSTRY,
+    OCCUPANCY_RATIO_JRK     * PRORATION_PERCENT AS PRORATED_OCCUPANCY_RATIO_JRK,
+    IS_OCCUPIED             * PRORATION_PERCENT AS PRORATED_IS_OCCUPIED,
+    BEDROOM_COUNT           * PRORATION_PERCENT AS PRORATED_BEDROOM_COUNT,
+COUNT_OF_UNITS          * PRORATION_PERCENT AS PRORATED_COUNT_OF_UNITS
+FROM PRORATING_DIVISION PD)
+--SELECT * FROM PRORATION_MULTIPLICATION;
+,
+
+AGGREGATES as ( SELECT
+PROPERTY_ID, 
+SUM(SQFT) as TOTAL_SQFT, 
+SUM(OCCUPIED_SQFT) as TOTAL_OCCUPIED_SQFT, 
+SUM(COUNT_OF_OCCUPANTS) as TOTAL_OCCUPANTS, 
+SUM(OCCUPANCY_RATIO_INDUSTRY) as TOTAL_OCCUPANCY_RATIO_INDUSTRY, 
+SUM(OCCUPANCY_RATIO_JRK) as TOTAL_OCCUPANCY_RATIO_JRK, 
+SUM(BEDROOM_COUNT) as TOTAL_BEDROOMS, 
+SUM(COUNT_OF_UNITS) as TOTAL_UNITS, 
+SUM(IS_OCCUPIED) AS TOTAL_OCCUPIED_UNITS,
+
+SUM(PRORATED_SQFT) as TOTAL_SQFT_PRORATED, 
+SUM(PRORATED_OCCUPIED_SQFT) as TOTAL_OCCUPIED_SQFT_PRORATED, 
+SUM(PRORATED_COUNT_OF_OCCUPANTS) as TOTAL_OCCUPANTS_PRORATED, 
+SUM(PRORATED_OCCUPANCY_RATIO_INDUSTRY) as TOTAL_OCCUPANCY_RATIO_INDUSTRY_PRORATED, 
+SUM(PRORATED_OCCUPANCY_RATIO_JRK) as TOTAL_OCCUPANCY_RATIO_JRK_PRORATED, 
+SUM(PRORATED_BEDROOM_COUNT) as TOTAL_BEDROOMS_PRORATED, 
+SUM(PRORATED_COUNT_OF_UNITS) as TOTAL_UNITS_PRORATED, 
+SUM(PRORATED_IS_OCCUPIED) AS TOTAL_OCCUPIED_UNITS_PRORATED
+
+FROM PRORATION_MULTIPLICATION GROUP BY PROPERTY_ID)
+-- SELECT * FROM AGGREGATES;
+,
+
+RATIO_CALCULATIONS AS (
+    SELECT
+        BT.*,
+        AG.TOTAL_SQFT,
+        AG.TOTAL_OCCUPIED_SQFT,
+        AG.TOTAL_OCCUPANTS,
+        AG.TOTAL_OCCUPANCY_RATIO_INDUSTRY,
+        AG.TOTAL_OCCUPANCY_RATIO_JRK,
+        AG.TOTAL_BEDROOMS,
+        AG.TOTAL_UNITS,
+        AG.TOTAL_OCCUPIED_UNITS,
+        AG.TOTAL_SQFT_PRORATED,
+        AG.TOTAL_OCCUPIED_SQFT_PRORATED,
+        AG.TOTAL_OCCUPANTS_PRORATED,
+        AG.TOTAL_OCCUPANCY_RATIO_INDUSTRY_PRORATED,
+        AG.TOTAL_OCCUPANCY_RATIO_JRK_PRORATED,
+        AG.TOTAL_BEDROOMS_PRORATED,
+        AG.TOTAL_UNITS_PRORATED,
+        AG.TOTAL_OCCUPIED_UNITS_PRORATED,
+
+        /* raw ratios */
+        COALESCE(BT.OCCUPIED_SQFT              / AG.TOTAL_SQFT,                        0) AS TOTAL_SQFT_RATIO,
+        COALESCE(BT.OCCUPIED_SQFT              / AG.TOTAL_OCCUPIED_SQFT,               0) AS OCCUPIED_SQFT_RATIO,
+        COALESCE(BT.COUNT_OF_OCCUPANTS         / AG.TOTAL_OCCUPANTS,                   0) AS TOTAL_OCCUPANTS_RATIO,
+        COALESCE(BT.OCCUPANCY_RATIO_INDUSTRY   / AG.TOTAL_OCCUPANCY_RATIO_INDUSTRY,    0) AS OCCUPANCY_RATIO_INDUSTRY_RATIO,
+        COALESCE(BT.OCCUPANCY_RATIO_JRK        / AG.TOTAL_OCCUPANCY_RATIO_JRK,         0) AS OCCUPANCY_RATIO_JRK_RATIO,
+        COALESCE(BT.BEDROOM_COUNT              / AG.TOTAL_BEDROOMS,                    0) AS BEDROOM_RATIO,
+        COALESCE(BT.IS_OCCUPIED / AG.TOTAL_UNITS,        0) AS TOTAL_UNIT_RATIO,
+        COALESCE(BT.IS_OCCUPIED / AG.TOTAL_OCCUPIED_UNITS,0) AS OCCUPIED_UNIT_RATIO,
+
+        /* prorated ratios */
+        COALESCE(BT.PRORATED_OCCUPIED_SQFT              / AG.TOTAL_SQFT_PRORATED,                        0) AS TOTAL_SQFT_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_OCCUPIED_SQFT              / AG.TOTAL_OCCUPIED_SQFT_PRORATED,               0) AS OCCUPIED_SQFT_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_COUNT_OF_OCCUPANTS         / AG.TOTAL_OCCUPANTS_PRORATED,                   0) AS TOTAL_OCCUPANTS_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_OCCUPANCY_RATIO_INDUSTRY   / AG.TOTAL_OCCUPANCY_RATIO_INDUSTRY_PRORATED,    0) AS OCCUPANCY_RATIO_INDUSTRY_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_OCCUPANCY_RATIO_JRK        / AG.TOTAL_OCCUPANCY_RATIO_JRK_PRORATED,         0) AS OCCUPANCY_RATIO_JRK_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_BEDROOM_COUNT              / AG.TOTAL_BEDROOMS_PRORATED,                    0) AS BEDROOM_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_IS_OCCUPIED / AG.TOTAL_UNITS_PRORATED,0) AS TOTAL_UNIT_RATIO_PRORATED,
+        COALESCE(BT.PRORATED_IS_OCCUPIED / AG.TOTAL_OCCUPIED_UNITS_PRORATED,0) AS OCCUPIED_UNIT_RATIO_PRORATED
+
+    FROM PRORATION_MULTIPLICATION BT
+    LEFT JOIN AGGREGATES AG
+           ON AG.PROPERTY_ID = BT.PROPERTY_ID
+)
+-- SELECT * FROM RATIO_CALCULATIONS;
+,
+
+RENEWAL as (SELECT 
+RC.*
+,(OCCUPIED_SQFT_RATIO+TOTAL_OCCUPANTS_RATIO)/2 as SQFT_OCCUPANTS_RATIO
+,(TOTAL_SQFT_RATIO+TOTAL_OCCUPANTS_RATIO)/2 as TOTAL_SQFT_OCCUPANTS_RATIO
+,(OCCUPIED_SQFT_RATIO_PRORATED+TOTAL_OCCUPANTS_RATIO_PRORATED)/2 as SQFT_OCCUPANTS_RATIO_PRORATED
+,(TOTAL_SQFT_RATIO_PRORATED+TOTAL_OCCUPANTS_RATIO_PRORATED)/2 as TOTAL_SQFT_OCCUPANTS_RATIO_PRORATED
+FROM RATIO_CALCULATIONS RC
+)
+--SELECT * FROM RENEWAL;
+,
+
+PRORATION AS (
+    SELECT
+        RN.*,
+
+        CASE
+            WHEN Inferred_Renewal = 'Y' AND leaseSubStatus = 'Month To Month'
+                 THEN DATEADD('day', -365, RN.leaseStartDate)
+            WHEN Inferred_Renewal = 'Y' AND leaseSubStatus <> 'Month To Month'
+                 THEN DATEADD('day', -95,  RN.leaseStartDate)
+            ELSE RN.leaseStartDate
+        END AS EFFECTIVE_LEASE_START_DATE
+    FROM RENEWAL RN
+)
+-- SELECT * FROM PRORATION;
+,
+
+SLIPPAGE_METRICS as (SELECT
+P.LOOKUP_CODE,
+SUM(TOTAL_SQFT_RATIO) as TOTAL_SQFT_RATIO_COVERAGE,
+1 - SUM(TOTAL_SQFT_RATIO) as TOTAL_SQFT_SLIPPAGE,
+SUM(OCCUPIED_SQFT_RATIO) as OCCUPIED_SQFT_RATIO_COVERAGE,
+SUM(TOTAL_OCCUPANTS_RATIO) as TOTAL_OCCUPANTS_RATIO_COVERAGE,
+1 - SUM(TOTAL_OCCUPANTS_RATIO) as TOTAL_OCCUPANTS_SLIPPAGE,
+SUM(OCCUPANCY_RATIO_INDUSTRY_RATIO) as OCCUPANCY_RATIO_INDUSTRY_RATIO_COVERAGE,
+1 - SUM(OCCUPANCY_RATIO_INDUSTRY_RATIO) as OCCUPANCY_RATIO_INDUSTRY_SLIPPAGE,
+SUM(OCCUPANCY_RATIO_JRK_RATIO) as OCCUPANCY_RATIO_JRK_RATIO_COVERAGE,
+1 - SUM(OCCUPANCY_RATIO_JRK_RATIO) as OCCUPANCY_RATIO_JRK_SLIPPAGE,
+SUM(BEDROOM_RATIO) as BEDROOM_RATIO_COVERAGE,
+1 - SUM(BEDROOM_RATIO) as BEDROOM_SLIPPAGE,
+SUM(TOTAL_UNIT_RATIO) as TOTAL_UNIT_RATIO_COVERAGE,
+1 - SUM(TOTAL_UNIT_RATIO) as TOTAL_UNIT_SLIPPAGE,
+SUM(OCCUPIED_UNIT_RATIO) as OCCUPIED_UNIT_RATIO_COVERAGE,
+1 - SUM(OCCUPIED_UNIT_RATIO) as OCCUPIED_UNIT_SLIPPAGE,
+SUM(SQFT_OCCUPANTS_RATIO) as SQFT_OCCUPANTS_RATIO_COVERAGE,
+1 - SUM(SQFT_OCCUPANTS_RATIO) as SQFT_OCCUPANTS_SLIPPAGE,
+SUM(TOTAL_SQFT_OCCUPANTS_RATIO) as TOTAL_SQFT_OCCUPANTS_RATIO_COVERAGE,
+1 - SUM(TOTAL_SQFT_OCCUPANTS_RATIO) as TOTAL_SQFT_OCCUPANTS_SLIPPAGE,
+
+SUM(TOTAL_SQFT_RATIO_PRORATED) as TOTAL_SQFT_RATIO_COVERAGE_PRORATED,
+1 - SUM(TOTAL_SQFT_RATIO_PRORATED) as TOTAL_SQFT_SLIPPAGE_PRORATED,
+SUM(OCCUPIED_SQFT_RATIO_PRORATED) as OCCUPIED_SQFT_RATIO_COVERAGE_PRORATED,
+SUM(TOTAL_OCCUPANTS_RATIO_PRORATED) as TOTAL_OCCUPANTS_RATIO_COVERAGE_PRORATED,
+1 - SUM(TOTAL_OCCUPANTS_RATIO_PRORATED) as TOTAL_OCCUPANTS_SLIPPAGE_PRORATED,
+SUM(OCCUPANCY_RATIO_INDUSTRY_RATIO_PRORATED) as OCCUPANCY_RATIO_INDUSTRY_RATIO_COVERAGE_PRORATED,
+1 - SUM(OCCUPANCY_RATIO_INDUSTRY_RATIO_PRORATED) as OCCUPANCY_RATIO_INDUSTRY_SLIPPAGE_PRORATED,
+SUM(OCCUPANCY_RATIO_JRK_RATIO_PRORATED) as OCCUPANCY_RATIO_JRK_RATIO_COVERAGE_PRORATED,
+1 - SUM(OCCUPANCY_RATIO_JRK_RATIO_PRORATED) as OCCUPANCY_RATIO_JRK_SLIPPAGE_PRORATED,
+SUM(BEDROOM_RATIO_PRORATED) as BEDROOM_RATIO_COVERAGE_PRORATED,
+1 - SUM(BEDROOM_RATIO_PRORATED) as BEDROOM_SLIPPAGE_PRORATED,
+SUM(TOTAL_UNIT_RATIO_PRORATED) as TOTAL_UNIT_RATIO_COVERAGE_PRORATED,
+1 - SUM(TOTAL_UNIT_RATIO_PRORATED) as TOTAL_UNIT_SLIPPAGE_PRORATED,
+SUM(OCCUPIED_UNIT_RATIO_PRORATED) as OCCUPIED_UNIT_RATIO_COVERAGE_PRORATED,
+1 - SUM(OCCUPIED_UNIT_RATIO_PRORATED) as OCCUPIED_UNIT_SLIPPAGE_PRORATED,
+SUM(SQFT_OCCUPANTS_RATIO_PRORATED) as SQFT_OCCUPANTS_RATIO_COVERAGE_PRORATED,
+1 - SUM(SQFT_OCCUPANTS_RATIO_PRORATED) as SQFT_OCCUPANTS_SLIPPAGE_PRORATED,
+SUM(TOTAL_SQFT_OCCUPANTS_RATIO_PRORATED) as TOTAL_SQFT_OCCUPANTS_RATIO_COVERAGE_PRORATED,
+1 - SUM(TOTAL_SQFT_OCCUPANTS_RATIO_PRORATED) as TOTAL_SQFT_OCCUPANTS_SLIPPAGE_PRORATED
+FROM PRORATION P
+GROUP BY P.LOOKUP_CODE)
+-- SELECT * FROM SLIPPAGE_METRICS;
+,
+
+TOTAL_ASSIGNMENTS AS (
+    SELECT
+        P.*,
+        MA."AR_CODE_ID" as AR_CODE_ID,
+        MA."AR_CODE" as AR_CODE,
+        MA."Billback_Method_Num" as Billback_Method_Num,
+        MA."Method_Name" as Method_Name,
+        MA."Method_Note" as Method_Note,
+        MA."Selection_Note" as Selection_Note,
+        MA."Effective_Start_Date" as Effective_Start_Date,
+        MA."Effective_End_Date" as Effective_End_Date,
+        MA."Applies" as Applies,
+        MA."CAD_Applied" as CAD_Applied,
+        MA."Prorate_Applied" as Prorate_Applied,
+        MA."Delinquency_Applied" as Delinquency_Applied,
+        MA."Max Cap Percent" as Max_Cap_Percent,
+        MA."CAD_Percent" as CAD_Percent,
+                COALESCE(
+            FRBRA."BILLBACK_AMOUNT", 
+            TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MA."Flat_Rate_Amount" AS VARCHAR), '$', ''), '%', ''), 18, 2)
+        ) AS Flat_Rate_Amount,
+
+        CASE
+            WHEN P.EFFECTIVE_LEASE_START_DATE >= MA."Effective_Start_Date"
+             AND P.EFFECTIVE_LEASE_START_DATE <  MA."Effective_End_Date"
+            THEN 'Y'
+            ELSE 'N'
+        END AS EFFECTIVE_METHOD
+
+    FROM PRORATION P
+    LEFT JOIN ALLOCATION_ASSIGNMENTS MA
+           ON MA.PROPERTY_ID = P.PROPERTY_ID
+    LEFT JOIN FLAT_RATE_BY_ROOM_ASSIGNMENTS FRBRA
+           ON FRBRA."PROPERTY_ID"   = P.PROPERTY_ID
+          AND FRBRA."AR_CODE"       = MA.AR_CODE
+          AND FRBRA."BEDROOM_COUNT" = P.BEDROOM_COUNT
+    WHERE P.MOVED_IN_AFTER_UBI_PERIOD = 'N'
+      AND P.IS_OCCUPIED              = 1
+)
+-- SELECT * FROM TOTAL_ASSIGNMENTS;
+,
+
+FLAT_AND_ALLOCATION AS (
+SELECT
+    TA.*,
+    MB."AR_Code_Mapping" as AR_Code_Mapping,
+
+    /* friendly utility names */
+    CASE
+        WHEN TA.Applies = 'Occupants' THEN 'Occupants'
+        WHEN TA.Applies = 'SqFt' THEN 'SqFt'
+        WHEN TA.Applies = 'Unit' THEN 'Unit'
+        ELSE MB."Utility_Name"
+    END AS "Utility_Name",
+
+    TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2) AS Utility_Amount,
+
+    /* CAD % as NUMBER(18,3); default 0 */
+    (COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) AS CAD_Amount,
+    TA.Flat_Rate_Amount                                                  AS FLAT_RATE_BILLBACK,
+
+    ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) * TA.TOTAL_OCCUPANTS_RATIO_PRORATED          AS OCCUPANT_BILLBACK,
+    ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) * TA.OCCUPANCY_RATIO_INDUSTRY_RATIO_PRORATED AS OCCUPANCY_RATIO_INDUSTRY_BILLBACK,
+    ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) * TA.OCCUPANCY_RATIO_JRK_RATIO_PRORATED      AS OCCUPANCY_RATIO_JRK_BILLBACK,
+    ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) * TA.OCCUPIED_SQFT_RATIO_PRORATED            AS OCCUPIED_SQFT_BILLBACK,
+    ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) * TA.BEDROOM_RATIO_PRORATED                  AS BEDROOM_BILLBACK,
+        ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2)) * TA.TOTAL_UNIT_RATIO_PRORATED                AS TOTAL_UNITS_BILLBACK,
+
+    /* choose the right basis for the uncapped billback */
+    CASE
+        WHEN TA.Method_Name = 'Flat'  AND TA.Prorate_Applied = 'True'
+             THEN TA.Flat_Rate_Amount * TA.PRORATION_PERCENT
+
+        WHEN TA.Method_Name = 'Flat'  AND TA.Prorate_Applied = 'False'
+             THEN TA.Flat_Rate_Amount
+
+        WHEN TA.Method_Name = 'Occupant'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.TOTAL_OCCUPANTS_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Ratio Occupant (Industry)'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.OCCUPANCY_RATIO_INDUSTRY_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Ratio Occupant (JRK)'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.OCCUPANCY_RATIO_JRK_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Occupied Square Footage'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.OCCUPIED_SQFT_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Total Square Footage'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.TOTAL_SQFT_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Occupied SqFt-Occupants'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.SQFT_OCCUPANTS_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Total SqFt-Occupants'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.TOTAL_SQFT_OCCUPANTS_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Occupied Bedrooms'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.BEDROOM_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Bedrooms'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.BEDROOM_RATIO_PRORATED
+
+        WHEN TA.Method_Name = 'Occupied Units'
+             THEN ((1 - COALESCE(TRY_TO_DECIMAL(CAD_Percent, 18, 3), 0)) * TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(MB."Utility_Amount" AS VARCHAR), '$', ''), ',', ''), 38, 2))
+                  * TA.OCCUPIED_UNIT_RATIO_PRORATED
+        ELSE NULL
+    END AS BILLBACK_AMOUNT_UNCAPPED
+
+FROM TOTAL_ASSIGNMENTS TA
+LEFT JOIN MASTER_BILLS MB
+       ON MB."Property_ID"     = TA.LOOKUP_CODE
+      AND MB."AR_Code_Mapping" = TA.AR_CODE
+WHERE TA.EFFECTIVE_METHOD = 'Y'
+)
+-- SELECT * FROM FLAT_AND_ALLOCATION;
+,
+
+CAPPING_LOGIC AS (
+    -- SELECT
+    --     *,
+    --     CASE
+    --         /* cap at flat-rate if it’s a positive number and lower than the uncapped amount */
+    --         WHEN BILLBACK_AMOUNT_UNCAPPED > COALESCE(Flat_Rate_Amount, 0)
+    --          AND COALESCE(Flat_Rate_Amount, 0) > 0
+    --         THEN COALESCE(Flat_Rate_Amount, 0)
+    --         ELSE BILLBACK_AMOUNT_UNCAPPED
+    --     END AS BILLBACK_AMOUNT
+    -- FROM FLAT_AND_ALLOCATION
+
+    SELECT
+        *,
+        CASE
+            /* cap at flat-rate if it’s a positive number and lower than the uncapped amount */
+            WHEN BILLBACK_AMOUNT_UNCAPPED > Flat_Rate_Amount
+             AND Flat_Rate_Amount >= 0
+            THEN COALESCE(Flat_Rate_Amount, 0)
+            ELSE BILLBACK_AMOUNT_UNCAPPED
+        END AS BILLBACK_AMOUNT
+    FROM FLAT_AND_ALLOCATION
+)
+-- SELECT * FROM CAPPING_LOGIC;
+,
+
+MOVE_IN_SEC_DEP_LIST as ( SELECT
+ FAA.LOOKUP_CODE
+,FAA.PROPERTY_ID
+,FAA.SECOND_RENT_ROLL_LEASE_ID as LEASE_ID
+,FAA.BUILDING_NAME
+,FAA.UNIT_NUMBER
+,FAA.BillbackPeriodStart
+,FAA.BillbackPeriodEnd
+,FAA.moveInDate
+,FAA.leaseStartDate
+,FAA.leaseEndDate
+,FAA.firstName
+,FAA.lastName
+,FAA.BEDROOM_COUNT
+,FAA.MOVE_IN_FLAG
+,FAA.SECURITY_DEPOSIT_FLAG
+FROM FLAT_AND_ALLOCATION FAA
+WHERE 1=1
+AND (MOVE_IN_FLAG = 'Y' OR SECURITY_DEPOSIT_FLAG = 'Y')
+GROUP BY FAA.LOOKUP_CODE,FAA.PROPERTY_ID,FAA.PROPERTY_ID,FAA.SECOND_RENT_ROLL_LEASE_ID,FAA.BUILDING_NAME,FAA.UNIT_NUMBER,FAA.BillbackPeriodStart,FAA.BillbackPeriodEnd,FAA.moveInDate,FAA.leaseStartDate,FAA.leaseEndDate,FAA.firstName,FAA.lastName,FAA.MOVE_IN_FLAG,FAA.BEDROOM_COUNT
+,FAA.SECURITY_DEPOSIT_FLAG)
+--SELECT * FROM MOVE_IN_SEC_DEP_LIST;
+,
+
+SECURITY_DEPOSIT as (
+SELECT MISDL.*
+,'230833' AS AR_CODE_ID
+,SD.Charge_Code as AR_CODE
+,'Security Deposit' as "Utility_Name"
+,SD.SECDP_Start_Date as Effective_Start_Date
+,SD.SECDP_End_Date as Effective_End_Date
+-- ,TO_DECIMAL(SD.Amount,6) as BILLBACK_AMOUNT
+,TRY_TO_DECIMAL(REPLACE(SD.Amount, '$', ''), 18, 3) as BILLBACK_AMOUNT
+FROM MOVE_IN_SEC_DEP_LIST MISDL
+JOIN UBI.SECURITY_DEPOSIT SD 
+on SD.Property_Code=MISDL.LOOKUP_CODE 
+AND SD.Bedroom_Count=MISDL.BEDROOM_COUNT
+WHERE MISDL.SECURITY_DEPOSIT_FLAG = 'Y')
+--SELECT * FROM SECURITY_DEPOSIT;
+,
+
+SETUP_FEE AS (SELECT
+MISDL.*
+,SA."AR_CODE_ID"
+,SA."AR_CODE"
+,'UBI Setup Fee' as "Utility_Name"
+,SA."Effective_Start_Date"
+,SA."Effective_End_Date"
+,TRY_TO_DECIMAL(REPLACE(SA."Flat_Rate_Amount", '$', ''), 18, 3) as BILLBACK_AMOUNT
+FROM MOVE_IN_SEC_DEP_LIST MISDL
+LEFT JOIN SECDP_Assignments SA on SA."LOOKUP_CODE"=MISDL.LOOKUP_CODE
+WHERE MISDL.MOVE_IN_FLAG = 'Y')
+--SELECT * FROM SETUP_FEE;
+,
+
+BALANCE_DUE_CALCULATION AS (
+    SELECT
+        DA.PROPERTY_ID,
+        BD.LOOKUP_CODE,
+        DA.PROPERTY_NAME,
+        BD.LEASE_ID,
+        BD.CUSTOMER_NAME_FIRST AS firstName,
+        BD.CUSTOMER_NAME_LAST  AS lastName,
+        :p_billbackperiodstart  AS BillbackPeriodStart,
+        :p_billbackperiodend AS BillbackPeriodEnd,
+        DA.AR_CODE_ID,
+        DA.AR_CODE,
+        DA."Billback_Method_Num",
+        DA."Method_Name",
+
+        /* flat-rate late-fee % → NUMBER(18,3) (NULL → 0) */
+        COALESCE(TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(DA."Flat_Rate_Amount" AS VARCHAR), '$', ''), '%', ''), 18, 3), 0) AS DQ_Rate,
+
+        BD.CURRENT_MONTH_BALANCE_DUE,
+        BD.BALANCE_DUE,
+
+        /* billback amount by late-fee method */
+        CASE
+            WHEN DA."Billback_Method_Num" = '11' AND BALANCE_DUE > 0
+                 THEN COALESCE(BD.BALANCE_DUE, 0) * COALESCE(TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(DA."Flat_Rate_Amount" AS VARCHAR), '$', ''), '%', ''), 18, 3), 0)
+
+            WHEN DA."Billback_Method_Num" = '11.1' AND BALANCE_DUE > 0 AND BALANCE_DUE > DQ_Rate
+                 THEN COALESCE(TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(DA."Flat_Rate_Amount" AS VARCHAR), '$', ''), '%', ''), 18, 3), 0)
+
+            WHEN DA."Billback_Method_Num" = '11.2' AND CURRENT_MONTH_BALANCE_DUE > 0
+                 THEN COALESCE(CURRENT_MONTH_BALANCE_DUE, 0) * COALESCE(TRY_TO_DECIMAL(REPLACE(REPLACE(CAST(DA."Flat_Rate_Amount" AS VARCHAR), '$', ''), '%', ''), 18, 3), 0)
+
+            WHEN DA."Billback_Method_Num" = '11.3' AND CURRENT_MONTH_BALANCE_DUE > 0 AND CURRENT_MONTH_BALANCE_DUE > DQ_RATE
+                 THEN COALESCE(DQ_RATE, 0)
+
+            ELSE 0
+        END AS BILLBACK_AMOUNT,
+
+        DA."Effective_Start_Date",
+        DA."Effective_End_Date"
+    FROM BALANCE_DUE BD
+    JOIN PROPERTY_FILTER IUP
+         ON BD.LOOKUP_CODE = IUP."Property_Code"
+    JOIN DQ_ASSIGNMENTS DA
+         ON DA.LOOKUP_CODE = BD.LOOKUP_CODE
+)
+-- SELECT * FROM BALANCE_DUE_CALCULATION;
+,
+
+METERED AS (
+    SELECT
+        M.LOOKUP_CODE,
+        M.PROPERTY_ID,
+        DL.LEASE_ID,
+        NULL AS BUILDING_NAME,
+        M."Unit_Number"                                  AS UNIT_NUMBER,
+        :p_billbackperiodstart  AS BillbackPeriodStart,
+        :p_billbackperiodend AS BillbackPeriodEnd,
+        DL.MOVE_IN_DATE                                AS moveInDate,
+        DL.LEASE_START_DATE                            AS leaseStartDate,
+        DL.LEASE_END_DATE                              AS leaseEndDate,
+        DL.CUSTOMER_NAME_FIRST                         AS firstName,
+        DL.CUSTOMER_NAME_LAST                          AS lastName,
+        NULL AS BEDROOM_COUNT,
+        NULL AS MOVE_IN_FLAG,
+        NULL AS SECURITY_DEPOSIT_FLAG,
+        M.AR_CODE_ID,
+        M.AR_CODE,
+        M."Utility_Name",
+        NULL AS Effective_Start_Date,
+        NULL AS Effective_End_Date,
+        M.BILLBACK_AMOUNT,
+        NULL AS CURRENT_MONTH_BALANCE_DUE,
+        NULL AS BALANCE_DUE,
+        M.BEG_METER,
+        M.END_METER,
+        M.RATE,
+        DL.LEASE_STATUS_TYPE AS LEASE_STATUS_TYPE
+    FROM Laitman.UBI."_MANUAL_METER" M
+    INNER JOIN DIM_LEASE DL
+           ON M.PROPERTY_ID  = DL.PROPERTY_ID
+          AND M."Unit_Number"  = DL.UNIT_NUMBER_CACHE
+    WHERE M.UPDATE_DATETIME = :p_manual_meter_date
+)
+--SELECT * FROM METERED;
+,
+
+METERED2 AS (
+SELECT
+    DL.LOOKUP_CODE,
+    DL.PROPERTY_ID,
+    DL.LEASE_ID,
+    DL.BUILDING_NAME,
+    PMA.UNIT_NUMBER,
+    PMA.BillbackPeriodStart,
+    PMA.BillbackPeriodEnd,
+    DL.MOVE_IN_DATE          AS moveInDate,
+    DL.LEASE_START_DATE      AS leaseStartDate,
+    DL.LEASE_END_DATE        AS leaseEndDate,
+    DL.CUSTOMER_NAME_FIRST   AS firstName,
+    DL.CUSTOMER_NAME_LAST    AS lastName,
+    TRY_TO_DECIMAL(NULLIF(PMA.BEDROOM_COUNT, ''), 38, 0)        AS BEDROOM_COUNT,
+
+    PMA.MOVE_IN_FLAG,
+    PMA.SECURITY_DEPOSIT_FLAG,
+    PMA.AR_CODE_ID,
+    PMA.AR_CODE,
+    PMA.Utility_Name as "Utility_Name",
+    PMA.Effective_Start_Date,
+    PMA.Effective_End_Date,
+
+    /* numeric columns safely converted */
+    PMA.BILLBACK_AMOUNT,
+    TRY_TO_DECIMAL(NULLIF(PMA.CURRENT_MONTH_BALANCE_DUE, ''), 18, 2) AS CURRENT_MONTH_BALANCE_DUE,
+    TRY_TO_DECIMAL(NULLIF(PMA.BALANCE_DUE, ''),               18, 2) AS BALANCE_DUE,
+    PMA.BEG_METER,
+    PMA.END_METER,
+    PMA.RATE,
+    DL.LEASE_STATUS_TYPE
+FROM METERREADS.PROD_METERREADS PMA
+JOIN DIM_LEASE DL
+      ON PMA.PROPERTY_NAME = DL.PROPERTY_NAME
+     AND PMA.UNIT_NUMBER   = DL.UNIT_NUMBER_CACHE
+WHERE PMA.BILLBACK_AMOUNT > 0
+)
+--SELECT * FROM METERED2;
+,
+
+ADJUST_OUTPUTS_FORM AS (
+
+-- ---------- Flat/Allocation rows ----------
+SELECT
+    AA.LOOKUP_CODE,
+    AA.PROPERTY_ID,
+    AA.PROPERTY_NAME,
+    AA.BUILDING_NAME,
+    AA.UNIT_NUMBER,
+    AA.FIRST_RENT_ROLL_LEASE_ID,
+    AA.firstName,
+    AA.lastName,
+    AA.leaseSubStatus,
+    AA.IS_HUD,
+    AA.IS_EMPLOYEE,
+    AA.IS_COMMERCIAL,
+    TO_VARCHAR(AA.moveInDate)   AS moveInDate,
+    TO_VARCHAR(AA.leaseStartDate) AS leaseStartDate,
+    TO_VARCHAR(AA.leaseEndDate)   AS leaseEndDate,
+    AA.AR_CODE_ID,
+    AA.AR_CODE,
+    AA."Utility_Name" as "Utility_Name",
+    AA.METHOD_NAME,
+    AA.Flat_Rate_Amount          AS METHOD_VALUE
+FROM FLAT_AND_ALLOCATION AA
+LEFT JOIN Laitman.UBI.ENTRATA_CORE_MIGRATED_LATEST ECML
+       ON AA.LOOKUP_CODE = ECML.LOOKUP_CODE
+WHERE AA.FIRST_RENT_ROLL_LEASE_ID IS NOT NULL
+  AND AA.EFFECTIVE_METHOD = 'Y'
+GROUP BY
+    AA.LOOKUP_CODE, AA.PROPERTY_ID, AA.PROPERTY_NAME, AA.BUILDING_NAME,
+    AA.UNIT_NUMBER, AA.FIRST_RENT_ROLL_LEASE_ID, AA.firstName, AA.lastName,
+    AA.leaseSubStatus, AA.IS_HUD, AA.IS_EMPLOYEE, AA.IS_COMMERCIAL,
+    AA.AR_CODE_ID, AA.AR_CODE, AA.METHOD_NAME, AA.Flat_Rate_Amount,
+    AA.moveInDate, AA.leaseStartDate, AA.leaseEndDate, AA."Utility_Name"
+
+UNION ALL
+
+---------- Manual-meter rows ----------
+SELECT
+    M.LOOKUP_CODE,
+    M.PROPERTY_ID,
+    PL.PROPERTY_NAME,
+    BUILDING_NAME,
+    UNIT_NUMBER,
+    LEASE_ID                      AS FIRST_RENT_ROLL_LEASE_ID,
+    firstName,
+    lastName,
+    NULL                          AS leaseSubStatus,
+    NULL                          AS IS_HUD,
+    NULL                          AS IS_EMPLOYEE,
+    NULL                          AS IS_COMMERCIAL,
+    TO_VARCHAR(moveInDate)        AS moveInDate,
+    TO_VARCHAR(leaseStartDate)    AS leaseStartDate,
+    TO_VARCHAR(leaseEndDate)      AS leaseEndDate,
+    AR_CODE_ID,
+    AR_CODE,
+    "Utility_Name",
+    'Submeter'                    AS METHOD_NAME,
+    BILLBACK_AMOUNT               AS METHOD_VALUE
+FROM METERED M
+LEFT JOIN PROPERTY_LOOKUP PL
+       ON PL.PROPERTY_ID = M.PROPERTY_ID
+
+UNION ALL
+
+-- ---------- Prod-meter reads rows ----------
+SELECT
+    M.LOOKUP_CODE,
+    M.PROPERTY_ID,
+    PL.PROPERTY_NAME,
+    BUILDING_NAME,
+    UNIT_NUMBER,
+    LEASE_ID                      AS FIRST_RENT_ROLL_LEASE_ID,
+    firstName,
+    lastName,
+    NULL                          AS leaseSubStatus,
+    NULL                          AS IS_HUD,
+    NULL                          AS IS_EMPLOYEE,
+    NULL                          AS IS_COMMERCIAL,
+    TO_VARCHAR(moveInDate)        AS moveInDate,
+    TO_VARCHAR(leaseStartDate)    AS leaseStartDate,
+    TO_VARCHAR(leaseEndDate)      AS leaseEndDate,
+    AR_CODE_ID,
+    AR_CODE,
+    "Utility_Name",
+    'Submeter'                    AS METHOD_NAME,
+    BILLBACK_AMOUNT               AS METHOD_VALUE
+FROM METERED2 M
+LEFT JOIN PROPERTY_LOOKUP PL
+       ON PL.PROPERTY_ID = M.PROPERTY_ID
+
+)
+-- SELECT * FROM ADJUST_OUTPUTS_FORM;
+,
+
+ALLOCATION_DETAIL AS (SELECT
+FAA.LOOKUP_CODE
+,FAA.PROPERTY_ID
+,FAA.FIRST_RENT_ROLL_LEASE_ID as LEASE_ID
+,FAA.BUILDING_NAME
+,FAA.UNIT_NUMBER
+,FAA.BillbackPeriodStart
+,FAA.BillbackPeriodEnd
+,FAA.moveInDate
+,FAA.leaseStartDate
+,FAA.leaseEndDate
+,FAA.firstName
+,FAA.lastName
+,FAA.BEDROOM_COUNT
+,FAA.MOVE_IN_FLAG
+,FAA.SECURITY_DEPOSIT_FLAG
+,FAA.AR_CODE_ID
+,FAA.AR_CODE
+,FAA."Utility_Name"
+,FAA.Effective_Start_Date
+,FAA.Effective_End_Date
+,ROUND(COALESCE(FAA.BILLBACK_AMOUNT,0),2) as BILLBACK_AMOUNT
+,0 as CURRENT_MONTH_BALANCE_DUE
+,0 as BALANCE_DUE
+FROM CAPPING_LOGIC FAA
+
+UNION ALL
+
+SELECT
+*
+,0 as CURRENT_MONTH_BALANCE_DUE
+,0 as BALANCE_DUE
+FROM SETUP_FEE
+
+UNION ALL
+
+SELECT 
+*
+,0 as CURRENT_MONTH_BALANCE_DUE
+,0 as BALANCE_DUE
+FROM SECURITY_DEPOSIT
+
+UNION ALL
+
+SELECT
+BDC.LOOKUP_CODE,
+BDC.PROPERTY_ID,
+BDC.LEASE_ID,
+NULL AS BUILDING_NAME,
+NULL AS UNIT_NUMBER,
+BDC.BillbackPeriodStart,
+BDC.BillbackPeriodEnd,
+NULL AS moveInDate,
+NULL AS leaseStartDate,
+NULL AS leaseEndDate,
+BDC.firstName,
+BDC.lastName,
+NULL as BEDROOM_COUNT,
+NULL as MOVE_IN_FLAG,
+NULL as SECURITY_DEPOSIT_FLAG,
+BDC.AR_CODE_ID,
+BDC.AR_CODE,
+'Late Fee' as "Utility_Name",
+BDC."Effective_Start_Date",
+BDC."Effective_End_Date",
+ROUND(COALESCE(BDC.BILLBACK_AMOUNT,0),2) AS BILLBACK_AMOUNT,
+ROUND(COALESCE(BDC.CURRENT_MONTH_BALANCE_DUE,0), 2) as CURRENT_MONTH_BALANCE_DUE,
+ROUND(COALESCE(BDC.BALANCE_DUE,0), 2) as BALANCE_DUE
+FROM BALANCE_DUE_CALCULATION BDC)
+-- SELECT * FROM  ALLOCATION_DETAIL AD;
+,
+
+ADJUSTMENTS_DOLLAR_NO_REALLOCATION as (
+SELECT 
+ AD.LOOKUP_CODE
+,AD.PROPERTY_ID
+,AD.LEASE_ID
+,AD.BUILDING_NAME
+,AD.UNIT_NUMBER
+,AD.BillbackPeriodStart
+,AD.BillbackPeriodEnd
+,AD.moveInDate
+,AD.leaseStartDate
+,AD.leaseEndDate
+,AD.firstName
+,AD.lastName
+,AD.BEDROOM_COUNT
+,AD.MOVE_IN_FLAG
+,AD.SECURITY_DEPOSIT_FLAG
+,AD.AR_CODE_ID
+,AD.AR_CODE
+,AD."Utility_Name"
+,AD.Effective_Start_Date
+,AD.Effective_End_Date
+,AD.BILLBACK_AMOUNT as BILLBACK_AMOUNT_ORIGINAL
+,AD.CURRENT_MONTH_BALANCE_DUE
+,AD.BALANCE_DUE
+,ADNR.ADJUSTMENT_AMOUNT
+,CASE 
+WHEN BILLBACK_AMOUNT+ADJUSTMENT_AMOUNT < 0 
+THEN 0
+ELSE BILLBACK_AMOUNT+ADJUSTMENT_AMOUNT
+END as BILLBACK_AMOUNT_NET
+FROM ALLOCATION_DETAIL AD
+JOIN Laitman.UBI.ADJUST_OUTPUTS_LATEST ADNR 
+on 1=1
+AND ADNR.FIRST_RENT_ROLL_LEASE_ID=AD.LEASE_ID
+AND ADNR."Utility_Name"=AD."Utility_Name"
+WHERE 1=1
+AND BILLBACK_AMOUNT is NOT NULL
+AND ADJ_ID = 3)
+-- SELECT * FROM  ADJUSTMENTS_DOLLAR_NO_REALLOCATION;
+
+,
+
+ADJUSTMENTS_PERCENT_NO_REALLOCATION AS (
+
+SELECT
+    AD.LOOKUP_CODE,
+    AD.PROPERTY_ID,
+    AD.LEASE_ID,
+    AD.BUILDING_NAME,
+    AD.UNIT_NUMBER,
+    AD.BillbackPeriodStart,
+    AD.BillbackPeriodEnd,
+    AD.moveInDate,
+    AD.leaseStartDate,
+    AD.leaseEndDate,
+    AD.firstName,
+    AD.lastName,
+    AD.BEDROOM_COUNT,
+    AD.MOVE_IN_FLAG,
+    AD.SECURITY_DEPOSIT_FLAG,
+    AD.AR_CODE_ID,
+    AD.AR_CODE,
+    AD."Utility_Name",
+    AD.Effective_Start_Date,
+    AD.Effective_End_Date,
+
+    /* original amount before adjustment */
+    AD.BILLBACK_AMOUNT                               AS BILLBACK_AMOUNT_ORIGINAL,
+    AD.CURRENT_MONTH_BALANCE_DUE,
+    AD.BALANCE_DUE,
+
+    /* percent factor × original */
+    ADNR.ADJUSTMENT_AMOUNT * AD.BILLBACK_AMOUNT      AS ADJUSTMENT_AMOUNT,
+
+    /* new billback = original × factor, but never negative */
+    CASE
+        WHEN AD.BILLBACK_AMOUNT
+             * ADNR.ADJUSTMENT_AMOUNT < 0
+        THEN 0
+        ELSE AD.BILLBACK_AMOUNT
+             * ADNR.ADJUSTMENT_AMOUNT
+    END                                              AS BILLBACK_AMOUNT_NET
+
+FROM ALLOCATION_DETAIL AD
+JOIN Laitman.UBI.ADJUST_OUTPUTS_LATEST ADNR
+      ON CAST(ADNR.FIRST_RENT_ROLL_LEASE_ID as string) = CAST(AD.LEASE_ID as string)
+     AND ADNR."Utility_Name"            = AD."Utility_Name"
+WHERE 1=1
+AND ADNR.ADJ_ID = '4'       -- percent adjustments, no reallocation
+)
+-- SELECT * FROM  ADJUSTMENTS_PERCENT_NO_REALLOCATION;
+,
+
+ADJUSTMENTS_DOLLAR_REALLOCATION AS (
+
+SELECT
+    AD.LOOKUP_CODE,
+    AD.PROPERTY_ID,
+    AD.LEASE_ID,
+    AD.BUILDING_NAME,
+    AD.UNIT_NUMBER,
+    AD.BillbackPeriodStart,
+    AD.BillbackPeriodEnd,
+    AD.moveInDate,
+    AD.leaseStartDate,
+    AD.leaseEndDate,
+    AD.firstName,
+    AD.lastName,
+    AD.BEDROOM_COUNT,
+    AD.MOVE_IN_FLAG,
+    AD.SECURITY_DEPOSIT_FLAG,
+    AD.AR_CODE_ID,
+    AD.AR_CODE,
+    AD."Utility_Name",
+    AD.Effective_Start_Date,
+    AD.Effective_End_Date,
+
+    /* before adjustment */
+    AD.BILLBACK_AMOUNT                      AS BILLBACK_AMOUNT_ORIGINAL,
+    AD.CURRENT_MONTH_BALANCE_DUE,
+    AD.BALANCE_DUE,
+
+    /* fixed-dollar adjustment amount */
+    ADNR.ADJUSTMENT_AMOUNT,
+
+    /* net result, floored at zero */
+    CASE
+        WHEN AD.BILLBACK_AMOUNT + ADNR.ADJUSTMENT_AMOUNT < 0
+        THEN 0
+        ELSE AD.BILLBACK_AMOUNT + ADNR.ADJUSTMENT_AMOUNT
+    END                                     AS BILLBACK_AMOUNT_NET
+
+FROM ALLOCATION_DETAIL AD
+JOIN Laitman.UBI.ADJUST_OUTPUTS_LATEST ADNR
+      ON ADNR.FIRST_RENT_ROLL_LEASE_ID = AD.LEASE_ID
+     AND ADNR."Utility_Name"            = AD."Utility_Name"
+WHERE AD.BILLBACK_AMOUNT IS NOT NULL
+  AND ADNR.ADJ_ID = 1      -- dollar adjustments with reallocation
+)
+-- SELECT * FROM  ADJUSTMENTS_DOLLAR_REALLOCATION;
+,
+
+ADJUSTMENTS_PERCENT_REALLOCATION AS (
+SELECT
+    AD.LOOKUP_CODE,
+    AD.PROPERTY_ID,
+    AD.LEASE_ID,
+    AD.BUILDING_NAME,
+    AD.UNIT_NUMBER,
+    AD.BillbackPeriodStart,
+    AD.BillbackPeriodEnd,
+    AD.moveInDate,
+    AD.leaseStartDate,
+    AD.leaseEndDate,
+    AD.firstName,
+    AD.lastName,
+    AD.BEDROOM_COUNT,
+    AD.MOVE_IN_FLAG,
+    AD.SECURITY_DEPOSIT_FLAG,
+    AD.AR_CODE_ID,
+    AD.AR_CODE,
+    AD."Utility_Name",
+    AD.Effective_Start_Date,
+    AD.Effective_End_Date,
+
+    /* original (pre-adjustment) amount */
+    AD.BILLBACK_AMOUNT                            AS BILLBACK_AMOUNT_ORIGINAL,
+    AD.CURRENT_MONTH_BALANCE_DUE,
+    AD.BALANCE_DUE,
+
+    /* percent adjustment value */
+    ADNR.ADJUSTMENT_AMOUNT * AD.BILLBACK_AMOUNT   AS ADJUSTMENT_AMOUNT,
+
+    /* net billback after adjustment, never negative */
+    CASE
+        WHEN (ADNR.ADJUSTMENT_AMOUNT * AD.BILLBACK_AMOUNT) < 0
+        THEN 0
+        ELSE (ADNR.ADJUSTMENT_AMOUNT * AD.BILLBACK_AMOUNT)
+    END AS BILLBACK_AMOUNT_NET
+
+FROM ALLOCATION_DETAIL AD
+JOIN Laitman.UBI.ADJUST_OUTPUTS_LATEST ADNR
+      ON ADNR.FIRST_RENT_ROLL_LEASE_ID = AD.LEASE_ID
+     AND ADNR."Utility_Name"            = AD."Utility_Name"
+WHERE AD.BILLBACK_AMOUNT IS NOT NULL
+  AND ADNR.ADJ_ID = 2
+)
+-- SELECT * FROM  ADJUSTMENTS_PERCENT_REALLOCATION;
+,
+
+ALL_ADJUSTMENT_SUMMARY AS (
+
+    SELECT *
+    FROM ADJUSTMENTS_DOLLAR_REALLOCATION
+
+    UNION ALL
+
+    SELECT *
+    FROM ADJUSTMENTS_PERCENT_REALLOCATION
+
+    UNION ALL
+
+    SELECT *
+    FROM ADJUSTMENTS_DOLLAR_NO_REALLOCATION
+
+    UNION ALL
+
+    SELECT *
+    FROM ADJUSTMENTS_PERCENT_NO_REALLOCATION
+)
+-- SELECT * FROM  ALL_ADJUSTMENT_SUMMARY;
+,
+
+LEASE_LOOKUP AS (
+    SELECT
+        LEASE_ID,
+        LEASE_STATUS_TYPE
+    FROM Laitman.UBI.DIM_LEASE
+    WHERE RUNDATE = (SELECT MAX(RUNDATE) FROM Laitman.UBI.DIM_LEASE)
+)
+-- SELECT * FROM  LEASE_LOOKUP;
+,
+
+ALLOCATION_DETAIL_BILLBACK AS (
+
+    /* ---------- Allocation-detail rows ---------- */
+    SELECT
+    AD.LOOKUP_CODE,
+    AD.PROPERTY_ID,
+    AD.LEASE_ID,
+    AD.BUILDING_NAME,
+    AD.UNIT_NUMBER,
+    AD.BillbackPeriodStart,
+    AD.BillbackPeriodEnd,
+    AD.moveInDate,
+    AD.leaseStartDate,
+    AD.leaseEndDate,
+    AD.firstName,
+    AD.lastName,
+    AD.BEDROOM_COUNT,
+    AD.MOVE_IN_FLAG,
+    AD.SECURITY_DEPOSIT_FLAG,
+    AD.AR_CODE_ID,
+    AD.AR_CODE,
+    AD."Utility_Name",
+    AD.Effective_Start_Date,
+    AD.Effective_End_Date,
+    AD.BILLBACK_AMOUNT,
+    AD.CURRENT_MONTH_BALANCE_DUE,
+    AD.BALANCE_DUE,
+    /* numeric columns → NULL::NUMBER to match meter tables */
+    CAST(NULL AS NUMBER(18,6)) AS BEG_METER,
+    CAST(NULL AS NUMBER(18,6)) AS END_METER,
+    CAST(NULL AS NUMBER(18,6)) AS RATE,
+    LL.LEASE_STATUS_TYPE
+    FROM ALLOCATION_DETAIL AD
+    LEFT JOIN LEASE_LOOKUP LL
+           ON AD.LEASE_ID = LL.LEASE_ID
+
+    UNION ALL
+
+    -- /* ---------- Manual-meter rows ---------- */
+    SELECT *
+    FROM METERED
+
+    UNION ALL
+
+    /* ---------- Prod-meter reads rows ---------- */
+    SELECT *
+    FROM METERED2
+)
+--SELECT * FROM  ALLOCATION_DETAIL_BILLBACK;
+,
+
+
+    /* --- FINAL SELECT -------------------------------------------*/
+    FINAL_BILLBACK AS (
+        SELECT
+            ADB.LOOKUP_CODE,
+            ADB.PROPERTY_ID,
+            ADB.LEASE_ID,
+            ADB.BUILDING_NAME,
+            ADB.UNIT_NUMBER,
+            ADB.BillbackPeriodStart,
+            ADB.BillbackPeriodEnd,
+            ADB.moveInDate,
+            ADB.leaseStartDate,
+            ADB.leaseEndDate,
+            ADB.firstName,
+            ADB.lastName,
+            ADB.BEDROOM_COUNT,
+            ADB.MOVE_IN_FLAG,
+            ADB.SECURITY_DEPOSIT_FLAG,
+            ADB.AR_CODE_ID,
+            ADB.AR_CODE,
+            ADB."Utility_Name",
+            ADB.Effective_Start_Date,
+            ADB.Effective_End_Date,
+            COALESCE(AAS.BILLBACK_AMOUNT_NET, ADB.BILLBACK_AMOUNT) AS BILLBACK_AMOUNT,
+            ADB.CURRENT_MONTH_BALANCE_DUE,
+            ADB.BALANCE_DUE,
+            ADB.BEG_METER,
+            ADB.END_METER,
+            ADB.RATE,
+
+            ADB.LEASE_STATUS_TYPE,
+            :p_posted_date::DATE AS POSTED_DATE,
+            :p_post_month::DATE AS POST_MONTH,
+            :p_memo             AS MEMO,
+            :p_due_date::DATE   AS DUE_DATE,
+            CURRENT_TIMESTAMP() AS RUNDATETIME
+        FROM ALLOCATION_DETAIL_BILLBACK ADB
+        LEFT JOIN ALL_ADJUSTMENT_SUMMARY AAS
+               ON  AAS.PROPERTY_ID  = ADB.PROPERTY_ID
+              AND AAS.LEASE_ID     = ADB.LEASE_ID
+              AND AAS.AR_CODE_ID   = ADB.AR_CODE_ID
+              AND AAS."Utility_Name" = ADB."Utility_Name"
+        WHERE COALESCE(AAS.BILLBACK_AMOUNT_NET, ADB.BILLBACK_AMOUNT) > 0
+           OR ADB.BALANCE_DUE > 0
+    )
+
+    /*───────────────────────────────────────────────────────────────*/
+    /*  END OF CTE CHAIN – produce result                           */
+    /*───────────────────────────────────────────────────────────────*/
+    SELECT *
+    FROM FINAL_BILLBACK
+    WHERE BILLBACK_AMOUNT IS NOT NULL
+      AND BILLBACK_AMOUNT > 0
+          AND (:p_property_code IS NULL OR LOOKUP_CODE = :p_property_code);
+    RETURN 'Completed';
+END;
+$$;

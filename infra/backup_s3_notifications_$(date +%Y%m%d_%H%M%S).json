@@ -1,0 +1,67 @@
+{
+    "LambdaFunctionConfigurations": [
+        {
+            "Id": "InvokeBillParserOnPendingUploads",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser",
+            "Events": [
+                "s3:ObjectCreated:*"
+            ],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {
+                            "Name": "Prefix",
+                            "Value": "Bill_Parser_1_Pending_Parsing/"
+                        },
+                        {
+                            "Name": "Suffix",
+                            "Value": ".pdf"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "InvokeBillEnricherOnStage3",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-enricher",
+            "Events": [
+                "s3:ObjectCreated:*"
+            ],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {
+                            "Name": "Prefix",
+                            "Value": "Bill_Parser_3_Parsed_Outputs/"
+                        },
+                        {
+                            "Name": "Suffix",
+                            "Value": ".jsonl"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "ReworkPdfCreate",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser-rework",
+            "Events": [
+                "s3:ObjectCreated:*"
+            ],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {
+                            "Name": "Prefix",
+                            "Value": "Bill_Parser_Rework_Input/"
+                        },
+                        {
+                            "Name": "Suffix",
+                            "Value": ".pdf"
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+}

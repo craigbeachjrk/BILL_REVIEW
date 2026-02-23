@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TRACK</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); --earth1:#efe9dd; }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .wrap{width:min(1600px, calc(100vw - 48px));margin:60px auto;padding:0}
+    .legend{display:flex;gap:10px;align-items:center;justify-content:flex-start;margin-bottom:10px;flex-wrap:wrap;color:#fff}
+    .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+    .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+    .dot.UPCOMING{background:#cbd5e1}
+    .dot.MISSING{background:#fecaca}
+    .dot.PENDING{background:#fde68a}
+    .dot.POSTED{background:#86efac}
+    .dot.BILLED-BACK{background:#16a34a}
+    /* Drawer (Adidas-style) */
+    .toolbar{display:flex;justify-content:flex-end;margin:8px 0}
+    .drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:40}
+    .drawer{position:fixed;top:0;right:-420px;width:420px;max-width:92vw;height:100vh;background:#fff;color:#0f172a;box-shadow:-8px 0 24px rgba(2,6,23,.25);transition:right .25s ease;z-index:41;display:flex;flex-direction:column}
+    .drawer.open{right:0}
+    .drawer-mask.open{opacity:1;pointer-events:auto}
+    .drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
+    .drawer .body{padding:0 0 80px 0;overflow:auto}
+    .drawer .sect{border-bottom:1px solid #eef2f7}
+    .drawer .sect > button{width:100%;text-align:left;padding:14px 18px;background:#fff;border:none;border-bottom:1px solid #eef2f7;font-weight:700;letter-spacing:.02em;cursor:pointer}
+    .drawer .sect .content{display:none;padding:12px 18px}
+    .drawer .sect.open .content{display:block}
+    .drawer .chiplist{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto}
+    .drawer .search{padding:0 18px 12px}
+    .drawer .search input{width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px}
+    .drawer .actions{position:sticky;bottom:0;background:#fff;padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;align-items:center;justify-content:space-between}
+    .btn.secondary{background:#64748b;color:#fff}
+    .tableWrap{border:1px solid #e5e7eb;border-radius:12px;overflow-x:hidden;background:#fff}
+    table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;background:#fff;border-radius:12px;overflow:visible}
+    table, th, td{box-sizing:border-box}
+    th,td{padding:6px 8px;border-bottom:1px solid #eee;vertical-align:middle;font-size:12px;text-align:center}
+    th{position:sticky;top:0;background:var(--earth1);z-index:3}
+    /* Sticky left meta columns (dynamic offsets via CSS vars) */
+    .c0{position:sticky;left:var(--l0,0px);z-index:2;background:#fff}
+    .c1{position:sticky;left:var(--l1,110px);z-index:2;background:#fff}
+    .c2{position:sticky;left:var(--l2,300px);z-index:2;background:#fff}
+    .c3{position:sticky;left:var(--l3,390px);z-index:2;background:#fff}
+    .c4{position:sticky;left:var(--l4,480px);z-index:2;background:#fff}
+    .c5{position:sticky;left:var(--l5,600px);z-index:2;background:#fff}
+    .c6{position:sticky;left:var(--l6,740px);z-index:2;background:#fff}
+    .c7{position:sticky;left:var(--l7,840px);z-index:2;background:#fff}
+    /* Column widths - now resizable */
+    .w-ap{width:var(--w-ap, 110px)}
+    .w-vendor{width:var(--w-vendor, 190px)}
+    .w-acct{width:var(--w-acct, 120px)}
+    .w-pid{width:var(--w-pid, 90px)}
+    .w-pname{width:var(--w-pname, 120px)}
+    .w-gl{width:var(--w-gl, 140px)}
+    .w-exp{width:var(--w-exp, 100px)}
+    .w-days{width:var(--w-days, 50px);text-align:center}
+    /* Resize handle */
+    th{position:relative}
+    th.resizable::after{content:'';position:absolute;right:0;top:0;bottom:0;width:4px;background:transparent;cursor:col-resize;z-index:5}
+    th.resizable:hover::after{background:rgba(59,130,246,0.3)}
+    th.resizing::after{background:rgba(59,130,246,0.6)!important}
+    .month{width:var(--mW,60px);text-align:center;padding:0}
+    thead th.month{padding:0}
+    /* Cells */
+    td.month{padding:0;overflow:visible}
+    td.month .inner{display:flex;align-items:center;justify-content:center;height:32px;width:100%; position:relative;overflow:visible}
+    .label{font-weight:600;font-size:clamp(7px, 1.5vw, 10px);display:inline-block;padding:0;line-height:1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .tooltip{position:absolute;left:50%;top:100%;transform:translate(-50%, 8px);background:#111827;color:#fff;padding:6px 8px;border-radius:8px;font-size:11px;white-space:nowrap;width:max-content;max-width:none;line-height:1.25;display:none;z-index:9999;pointer-events:none; box-shadow:0 6px 18px rgba(0,0,0,.3)}
+    .tooltip.up{top:auto;bottom:100%;transform:translate(-50%, -8px)}
+    td.month:hover .tooltip{display:block}
+    td.month.UPCOMING{background:#cbd5e1}
+    td.month.MISSING{background:#fecaca}
+    td.month.PENDING{background:#fde68a}
+    td.month.POSTED{background:#86efac}
+    td.month.BILLED-BACK{background:#16a34a;color:#fff}
+    /* Responsive tweaks */
+    @media (max-width: 1200px){ .label{font-size:10px} }
+    @media (max-width: 1000px){ .label{font-size:9px} }
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <button class="btn secondary" onclick="history.back()">Back</button>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <h1 style="margin:0 0 10px 0">TRACK</h1>
+    <div class="legend">
+      <span class="chip"><span class="dot UPCOMING"></span> UPCOMING</span>
+      <span class="chip"><span class="dot MISSING"></span> MISSING</span>
+      <span class="chip"><span class="dot PENDING"></span> PENDING</span>
+      <span class="chip"><span class="dot POSTED"></span> POSTED</span>
+      <span class="chip"><span class="dot BILLED-BACK"></span> BILLED BACK</span>
+    </div>
+    <div class="toolbar"><button id="refreshBtn" class="btn secondary" style="margin-right:8px">Refresh</button><button id="openDrawer" class="btn">Filter & Sort</button></div>
+    <div class="drawer-mask" id="drawerMask"></div>
+    <aside class="drawer" id="drawer">
+      <header>
+        <div style="font-weight:800">Filter & Sort</div>
+        <div>
+          <button id="clearFilters" class="btn secondary" type="button">Clear All</button>
+          <button id="closeDrawer" class="btn" type="button">✕</button>
+        </div>
+      </header>
+      <div class="body">
+        <div class="sect open" data-sect="sort">
+          <button type="button">Sort By</button>
+          <div class="content">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <label><input type="radio" name="sortKey" value="apName"> AP Team</label>
+              <label><input type="radio" name="sortKey" value="vendorName"> Vendor</label>
+              <label><input type="radio" name="sortKey" value="accountNumber"> Account #</label>
+              <label><input type="radio" name="sortKey" value="propertyId"> Property ID</label>
+              <label><input type="radio" name="sortKey" value="propertyName"> Property Name</label>
+              <label><input type="radio" name="sortKey" value="glAccountName"> GL Account Name</label>
+              <label><input type="radio" name="sortKey" value="daysBetweenBills"> Days</label>
+              <div>
+                <label style="margin-right:8px"><input type="radio" name="sortDir" value="asc" checked> A → Z</label>
+                <label><input type="radio" name="sortDir" value="desc"> Z → A</label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="sect" data-sect="search">
+          <button type="button">Search</button>
+          <div class="content">
+            <div class="search"><input type="text" id="q" placeholder="Search AP, Vendor, GL, Property, Account or Property ID" /></div>
+          </div>
+        </div>
+        <div class="sect" data-sect="ap">
+          <button type="button">AP Team</button>
+          <div class="content">
+            <div class="search"><input type="text" id="qAp" placeholder="Find AP"/></div>
+            <div class="chiplist" id="listAp"></div>
+          </div>
+        </div>
+        <div class="sect" data-sect="vendor">
+          <button type="button">Vendor</button>
+          <div class="content">
+            <div class="search"><input type="text" id="qVendor" placeholder="Find vendor"/></div>
+            <div class="chiplist" id="listVendor"></div>
+          </div>
+        </div>
+        <div class="sect" data-sect="gl">
+          <button type="button">GL Account Name</button>
+          <div class="content">
+            <div class="search"><input type="text" id="qGL" placeholder="Find GL"/></div>
+            <div class="chiplist" id="listGL"></div>
+          </div>
+        </div>
+        <div class="sect" data-sect="prop">
+          <button type="button">Property</button>
+          <div class="content">
+            <div class="search"><input type="text" id="qProp" placeholder="Find property"/></div>
+            <div class="chiplist" id="listProp"></div>
+          </div>
+        </div>
+        <div class="sect" data-sect="status">
+          <button type="button">Status</button>
+          <div class="content" id="listStatus" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+        </div>
+      </div>
+      <div class="actions">
+        <div id="appliedCount" style="font-size:12px;color:#6b7280"></div>
+        <div>
+          <button id="applyFilters" class="btn" type="button">Apply</button>
+        </div>
+      </div>
+    </aside>
+    <div class="tableWrap">
+      <table id="trackTbl">
+        <thead>
+          <tr>
+            <th class="w-ap c0 sort resizable" data-key="apName" data-col="ap">AP Team Member</th>
+            <th class="w-vendor c1 sort resizable" data-key="vendorName" data-col="vendor">Vendor</th>
+            <th class="w-acct c2 sort resizable" data-key="accountNumber" data-col="acct">Account #</th>
+            <th class="w-pid c3 sort resizable" data-key="propertyId" data-col="pid">Property ID</th>
+            <th class="w-pname c4 sort resizable" data-key="propertyName" data-col="pname">Property Name</th>
+            <th class="w-gl c5 sort resizable" data-key="glAccountName" data-col="gl">GL Account Name</th>
+            <th class="w-exp c6 sort resizable" data-key="expectedBillDate" data-col="exp">Expected Bill Date</th>
+            <th class="w-days c7 sort resizable" data-key="daysBetweenBills" data-col="days">Days</th>
+            <th id="mthHdr" colspan="13" style="text-align:center">Months</th>
+          </tr>
+          <tr>
+            <th class="c0"></th>
+            <th class="c1"></th>
+            <th class="c2"></th>
+            <th class="c3"></th>
+            <th class="c4"></th>
+            <th class="c5"></th>
+            <th class="c6"></th>
+            <th class="c7"></th>
+            <th class="month" id="mh0"></th>
+            <th class="month" id="mh1"></th>
+            <th class="month" id="mh2"></th>
+            <th class="month" id="mh3"></th>
+            <th class="month" id="mh4"></th>
+            <th class="month" id="mh5"></th>
+            <th class="month" id="mh6"></th>
+            <th class="month" id="mh7"></th>
+            <th class="month" id="mh8"></th>
+            <th class="month" id="mh9"></th>
+            <th class="month" id="mh10"></th>
+            <th class="month" id="mh11"></th>
+            <th class="month" id="mh12"></th>
+          </tr>
+        </thead>
+        <tbody id="tb"></tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+    async function fetchJSON(u){ const r = await fetch(u, {credentials:'same-origin'}); if(!r.ok) throw new Error('http '+r.status); return r.json(); }
+    function esc(s){ return String(s||''); }
+    function fmtDate(s){
+      if(!s) return '';
+      const str = String(s).trim();
+      // if already MM/DD/YYYY
+      if(/^[0-1]?\d\/[0-3]?\d\/\d{4}$/.test(str)) return str;
+      // YYYY-MM-DD or YYYY/MM/DD
+      let m = str.match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})$/);
+      if(m){ return `${m[2]}/${m[3]}/${m[1]}`; }
+      // Try Date parse as fallback
+      const d = new Date(str);
+      if(!isNaN(d)){
+        const mm = String(d.getMonth()+1).padStart(2,'0');
+        const dd = String(d.getDate()).padStart(2,'0');
+        const yyyy = d.getFullYear();
+        return `${mm}/${dd}/${yyyy}`;
+      }
+      return str;
+    }
+    function buildTooltip(t){ if(!t) return ''; const d = [ ['Bill Date', t.billDate], ['Bill Period Start', t.billPeriodStart], ['Bill Period End', t.billPeriodEnd], ['Due Date', t.dueDate] ]; return '<div class="tooltip">'+ d.filter(x=>x[1]).map(x=>`${x[0]}: ${esc(x[1])}`).join(' | ') +'</div>'; }
+
+    // Sorting state and helpers
+    let currentData = [];
+    let sortState = { key:null, dir:1 };
+    let filters = { q:'', ap:[], vendor:[], gl:[], prop:[], statuses:[] };
+
+    // Load filters from localStorage on startup
+    function loadFiltersFromCache(){
+      try{
+        const cached = localStorage.getItem('trackPageFilters');
+        if(cached){
+          const parsed = JSON.parse(cached);
+          filters = { ...filters, ...parsed };
+        }
+      }catch(_){}
+    }
+
+    // Save filters to localStorage
+    function saveFiltersToCache(){
+      try{
+        localStorage.setItem('trackPageFilters', JSON.stringify(filters));
+      }catch(_){}
+    }
+    function applySort(rows){
+      if(!sortState.key) return rows;
+      const key = sortState.key; const dir = sortState.dir;
+      const isNum = (key==='daysBetweenBills' || key==='propertyId');
+      return [...rows].sort((a,b)=>{
+        const av = a?.[key]; const bv = b?.[key];
+        if(isNum){ return ((Number(av)||0)-(Number(bv)||0))*dir; }
+        const as = String(av??'').toLowerCase(); const bs = String(bv??'').toLowerCase();
+        if(as<bs) return -1*dir; if(as>bs) return 1*dir; return 0;
+      });
+    }
+    function bindSorters(){
+      document.querySelectorAll('#trackTbl thead .sort').forEach(th=>{
+        th.style.cursor='pointer';
+        th.addEventListener('click',()=>{
+          const k = th.getAttribute('data-key');
+          if(sortState.key===k){ sortState.dir = -sortState.dir; }
+          else { sortState.key=k; sortState.dir=1; }
+          renderRows();
+        });
+      });
+    }
+
+    function renderHeaderMonths(months){
+      months.forEach((m,i)=>{
+        const h = document.getElementById('mh'+i);
+        if(h){ h.setAttribute('data-full', m); h.textContent = m; h.title = m; }
+      });
+      adjustHeaderMonthLabels();
+    }
+    function adjustHeaderMonthLabels(){
+      const tbl = document.getElementById('trackTbl'); if(!tbl) return;
+      const cs = getComputedStyle(tbl);
+      const mW = parseFloat((cs.getPropertyValue('--mW')||'60').toString());
+      const useShort = !isNaN(mW) && mW < 48;
+      document.querySelectorAll('#trackTbl thead th.month').forEach(th=>{
+        const full = th.getAttribute('data-full') || th.textContent || '';
+        const txt = useShort ? (full.slice(0,1) || '') : full;
+        th.textContent = txt; th.title = full;
+      });
+    }
+    function uniqueSorted(arr){ return Array.from(new Set(arr.filter(Boolean))).sort((a,b)=>String(a).localeCompare(String(b))); }
+    function populateFilterOptions(){
+      const aps = uniqueSorted(currentData.map(r=>r.apName));
+      const vds = uniqueSorted(currentData.map(r=>r.vendorName));
+      const gls = uniqueSorted(currentData.map(r=>r.glAccountName));
+      const pns = uniqueSorted(currentData.map(r=>r.propertyName));
+      const mk = (id, arr)=>{ const host=document.getElementById(id); host.innerHTML = arr.map(v=>`<label><input type="checkbox" value="${esc(v)}"/> ${esc(v)}</label>`).join(''); };
+      mk('listAp', aps); mk('listVendor', vds); mk('listGL', gls); mk('listProp', pns);
+      const stHost = document.getElementById('listStatus');
+      const statuses = ['UPCOMING','MISSING','PENDING','POSTED','BILLED-BACK'];
+      stHost.innerHTML = statuses.map(s=>`<label><input type="checkbox" class="st" value="${s}"/> ${s.replace('-',' ')}</label>`).join('');
+      // Load from localStorage first, apply to UI, then let URL override if params present
+      loadFiltersFromCache();
+      applyFiltersToUI();
+      applyFiltersFromUrl();
+    }
+    function getCheckedValues(host){ return Array.from(host.querySelectorAll('input[type="checkbox"]:checked')).map(c=>c.value); }
+    function applyFiltersToUI(){
+      // Apply current filters object to UI checkboxes (used after loading from localStorage or URL)
+      document.getElementById('q').value = filters.q;
+      const restoreChecks = (hostId, vals)=>{ const host=document.getElementById(hostId); vals.forEach(v=>{ const cb=Array.from(host.querySelectorAll('input[type="checkbox"]')).find(i=>i.value===v); if(cb) cb.checked=true; }); };
+      restoreChecks('listAp', filters.ap); restoreChecks('listVendor', filters.vendor); restoreChecks('listGL', filters.gl); restoreChecks('listProp', filters.prop);
+      document.querySelectorAll('#listStatus .st').forEach(cb=>{ cb.checked = filters.statuses.includes(cb.value); });
+    }
+    function applyFiltersFromUrl(){
+      const p = new URLSearchParams(location.search);
+      // Only override filters if URL params are present
+      if(p.has('q')) filters.q = p.get('q');
+      if(p.has('ap')) filters.ap = p.get('ap').split(',').filter(Boolean);
+      if(p.has('vendor')) filters.vendor = p.get('vendor').split(',').filter(Boolean);
+      if(p.has('gl')) filters.gl = p.get('gl').split(',').filter(Boolean);
+      if(p.has('prop')) filters.prop = p.get('prop').split(',').filter(Boolean);
+      if(p.has('st')) filters.statuses = p.get('st').split(',').filter(Boolean);
+      applyFiltersToUI();
+    }
+    function syncUrl(){
+      const p = new URLSearchParams();
+      if(filters.q) p.set('q', filters.q);
+      if(filters.ap.length) p.set('ap', filters.ap.join(','));
+      if(filters.vendor.length) p.set('vendor', filters.vendor.join(','));
+      if(filters.gl.length) p.set('gl', filters.gl.join(','));
+      if(filters.prop.length) p.set('prop', filters.prop.join(','));
+      if(filters.statuses.length) p.set('st', filters.statuses.join(','));
+      const url = location.pathname + (p.toString()? ('?'+p.toString()):'');
+      history.replaceState(null,'',url);
+    }
+    function applyFilters(rows){
+      const q = (filters.q||'').toLowerCase();
+      const selAp = new Set(filters.ap); const selV = new Set(filters.vendor); const selGL = new Set(filters.gl); const selP = new Set(filters.prop);
+      const selSt = new Set(filters.statuses);
+      return rows.filter(r=>{
+        if(q){ const bag = [r.apName,r.vendorName,r.glAccountName,r.propertyName,r.accountNumber,r.propertyId].join(' ').toLowerCase(); if(!bag.includes(q)) return false; }
+        if(selAp.size && !selAp.has(r.apName)) return false;
+        if(selV.size && !selV.has(r.vendorName)) return false;
+        if(selGL.size && !selGL.has(r.glAccountName)) return false;
+        if(selP.size && !selP.has(r.propertyName)) return false;
+        if(selSt.size){ if(!r.months.some(c=> selSt.has(String(c.status||'').replace(/\s+/g,'-')) )) return false; }
+        return true;
+      });
+    }
+    function renderRows(){
+      const tb = document.getElementById('tb');
+      const rows = applySort(applyFilters(currentData));
+
+      // PERFORMANCE: Build entire HTML string first, then set innerHTML ONCE
+      let html = '';
+      for(const r of rows){
+        html += '<tr>';
+        html += `<td class="c0">${esc(r.apName)}</td>`;
+        html += `<td class="c1">${esc(r.vendorName)}</td>`;
+        html += `<td class="c2">${esc(r.accountNumber)}</td>`;
+        html += `<td class="c3">${esc(r.propertyId)}</td>`;
+        html += `<td class="c4">${esc(r.propertyName)}</td>`;
+        html += `<td class="c5">${esc(r.glAccountName||'')}</td>`;
+        html += `<td class="c6">${esc(fmtDate(r.expectedBillDate||''))}</td>`;
+        html += `<td class="c7" style="text-align:center">${esc(r.daysBetweenBills)}</td>`;
+
+        for(const c of r.months){
+          const statusCls = String(c.status||'').replace(/\s+/g,'-');
+          html += `<td class="month ${statusCls}"><div class="inner">`;
+          html += `<div class="label">${esc(fmtDate(c.label))}</div>`;
+          if(c.tooltip){
+            html += `<div class="tooltip">Bill Date: ${esc(fmtDate(c.tooltip.billDate))} | Bill Period Start: ${esc(fmtDate(c.tooltip.billPeriodStart))} | Bill Period End: ${esc(fmtDate(c.tooltip.billPeriodEnd))} | Due Date: ${esc(fmtDate(c.tooltip.dueDate))}</div>`;
+          }
+          html += '</div></td>';
+        }
+        html += '</tr>';
+      }
+
+      tb.innerHTML = html;  // Single DOM write
+      layoutMonths();
+      adjustHeaderMonthLabels();
+      // REMOVED: adjustMonthLabelSizes() - use CSS instead
+
+      // Ensure last row tooltips render upward
+      try{
+        const last = tb.querySelector('tr:last-child');
+        if (last) last.querySelectorAll('.tooltip').forEach(t=> t.classList.add('up'));
+      }catch(_){}
+    }
+    function layoutMonths(){
+      const tbl = document.getElementById('trackTbl'); if(!tbl) return;
+      const wrap = document.querySelector('.tableWrap'); if(!wrap) return;
+      // compute dynamic sticky offsets and total left width
+      const leftSelectors = ['.c0','.c1','.c2','.c3','.c4','.c5','.c6','.c7'];
+      let leftTotal = 0; let acc = 0; let i=0;
+      for(const sel of leftSelectors){
+        const th = tbl.querySelector('thead tr:nth-child(2) '+sel);
+        if(th){
+          tbl.style.setProperty('--l'+i, acc + 'px');
+          const w = th.getBoundingClientRect().width;
+          acc += w;
+          leftTotal += w;
+        }
+        i++;
+      }
+      const avail = Math.max(0, wrap.clientWidth - leftTotal - 2);
+      // distribute across 13 months; clamp between 36 and 72
+      const monthsCount = 13;
+      const safety = 6; // px to avoid rounding spillover
+      let mW = Math.floor((avail - safety) / monthsCount);
+      mW = Math.max(36, Math.min(72, mW || 60));
+      // if still overflowing because of rounding, nudge down
+      if ((mW * monthsCount) > (avail - 1)) { mW = Math.max(36, mW - 1); }
+      tbl.style.setProperty('--mW', mW + 'px');
+    }
+    // REMOVED: adjustMonthLabelSizes() - using CSS clamp() instead for performance
+    let _rszT=null; window.addEventListener('resize', ()=>{ clearTimeout(_rszT); _rszT=setTimeout(()=>{ layoutMonths(); adjustHeaderMonthLabels(); }, 80); });
+    function render(data){
+      currentData = data.rows || [];
+      renderHeaderMonths(data.months||[]);
+      populateFilterOptions();
+      bindSorters();
+      renderRows();
+      // Drawer wiring
+      const mask = document.getElementById('drawerMask');
+      const drawer = document.getElementById('drawer');
+      const open = ()=>{ drawer.classList.add('open'); mask.classList.add('open'); };
+      const close = ()=>{ drawer.classList.remove('open'); mask.classList.remove('open'); };
+      document.getElementById('openDrawer').addEventListener('click', open);
+      document.getElementById('closeDrawer').addEventListener('click', close);
+      mask.addEventListener('click', close);
+      // Collapse/expand with event delegation (resilient to timing)
+      drawer.addEventListener('click', (ev)=>{
+        const btn = ev.target.closest('.sect > button');
+        if(btn && drawer.contains(btn)){
+          btn.parentElement.classList.toggle('open');
+        }
+      });
+      // Search inside lists
+      const attachListFilter = (inputId, hostId)=>{
+        const inp = document.getElementById(inputId); const host = document.getElementById(hostId);
+        inp.addEventListener('input', ()=>{
+          const q = inp.value.toLowerCase();
+          host.querySelectorAll('label').forEach(l=>{ const t = l.textContent.toLowerCase(); l.style.display = t.includes(q) ? '' : 'none'; });
+        });
+      };
+      attachListFilter('qAp','listAp'); attachListFilter('qVendor','listVendor'); attachListFilter('qGL','listGL'); attachListFilter('qProp','listProp');
+      // Sort radio
+      drawer.querySelectorAll('input[name="sortKey"]').forEach(r=> r.addEventListener('change', ()=>{ sortState.key = r.value; }));
+      drawer.querySelectorAll('input[name="sortDir"]').forEach(r=> r.addEventListener('change', ()=>{ sortState.dir = (r.value==='asc'?1:-1); }));
+      // Clear & Apply
+      const updateAppliedCount = ()=>{
+        const cnt = (filters.q?1:0) + filters.ap.length + filters.vendor.length + filters.gl.length + filters.prop.length + filters.statuses.length;
+        document.getElementById('appliedCount').textContent = cnt? `${cnt} filter(s) selected` : '';
+      };
+      document.getElementById('clearFilters').addEventListener('click', ()=>{
+        filters={q:'',ap:[],vendor:[],gl:[],prop:[],statuses:[]};
+        document.getElementById('q').value='';
+        drawer.querySelectorAll('.chiplist input[type="checkbox"]').forEach(cb=> cb.checked=false);
+        drawer.querySelectorAll('#listStatus input[type="checkbox"]').forEach(cb=> cb.checked=false);
+        saveFiltersToCache(); // Clear cache
+        // keep sort selection as-is
+        syncUrl(); renderRows(); updateAppliedCount();
+      });
+      document.getElementById('applyFilters').addEventListener('click', ()=>{
+        filters.q = document.getElementById('q').value.trim();
+        filters.ap = getCheckedValues(document.getElementById('listAp'));
+        filters.vendor = getCheckedValues(document.getElementById('listVendor'));
+        filters.gl = getCheckedValues(document.getElementById('listGL'));
+        filters.prop = getCheckedValues(document.getElementById('listProp'));
+        filters.statuses = getCheckedValues(document.getElementById('listStatus'));
+        saveFiltersToCache(); // Cache filters in localStorage
+        syncUrl(); renderRows(); updateAppliedCount(); close();
+      });
+      updateAppliedCount();
+    }
+    function loadData(refresh=false){
+      const url = refresh ? '/api/track?refresh=1' : '/api/track';
+      fetchJSON(url).then(render).catch(()=>{ alert('Failed to load track'); });
+    }
+    document.getElementById('refreshBtn').addEventListener('click', ()=> loadData(true));
+
+    // Column resizing functionality
+    (function(){
+      const tbl = document.getElementById('trackTbl');
+      const colWidths = {}; // Store widths keyed by data-col attribute
+
+      // Load saved column widths from localStorage
+      function loadColumnWidths(){
+        try{
+          const saved = localStorage.getItem('trackColumnWidths');
+          if(saved){
+            const widths = JSON.parse(saved);
+            Object.keys(widths).forEach(col => {
+              colWidths[col] = widths[col];
+              tbl.style.setProperty('--w-'+col, widths[col]+'px');
+            });
+          }
+        }catch(_){}
+      }
+
+      // Save column widths to localStorage
+      function saveColumnWidths(){
+        try{
+          localStorage.setItem('trackColumnWidths', JSON.stringify(colWidths));
+        }catch(_){}
+      }
+
+      // Initialize resize handlers
+      let resizing = null;
+      let startX = 0;
+      let startWidth = 0;
+
+      document.querySelectorAll('#trackTbl thead th.resizable').forEach(th => {
+        th.addEventListener('mousedown', (e) => {
+          const rect = th.getBoundingClientRect();
+          const isOnEdge = (e.clientX >= rect.right - 8);
+
+          if(isOnEdge){
+            e.preventDefault();
+            resizing = th;
+            startX = e.clientX;
+            startWidth = rect.width;
+            th.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+          }
+        });
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if(resizing){
+          const delta = e.clientX - startX;
+          const newWidth = Math.max(40, startWidth + delta);
+          const col = resizing.getAttribute('data-col');
+          if(col){
+            colWidths[col] = newWidth;
+            tbl.style.setProperty('--w-'+col, newWidth+'px');
+            layoutMonths(); // Recalculate sticky offsets
+          }
+        }
+      });
+
+      document.addEventListener('mouseup', () => {
+        if(resizing){
+          resizing.classList.remove('resizing');
+          resizing = null;
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          saveColumnWidths();
+        }
+      });
+
+      loadColumnWidths();
+    })();
+
+    loadData(false);
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

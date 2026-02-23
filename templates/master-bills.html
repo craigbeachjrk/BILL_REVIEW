@@ -1,0 +1,1961 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UBI Master Bills · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .btn.success{background:#10b981}
+    .btn.danger{background:#ef4444}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    select,input[type="date"]{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:auto}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0;z-index:100}
+    th.sortable{cursor:pointer;user-select:none}
+    th.sortable:hover{background:#e5e7eb}
+    th .sort-indicator{margin-left:4px;font-size:10px;color:#94a3b8}
+    tr:hover{background:#f9fafb}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.draft{background:#fef3c7;color:#92400e}
+    .badge.overridden{background:#fee2e2;color:#991b1b}
+    .badge.duplicate{background:#fef3c7;color:#b45309;animation:pulse 1.5s infinite}
+    .badge.manual{background:#ede9fe;color:#7c3aed}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:800px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto;max-height:80vh;overflow-y:auto}
+    .modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .line-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:12px}
+    .line-item:last-child{border-bottom:none}
+    .line-item:hover{background:#f9fafb}
+    /* Completion Tracker Styles */
+    .tracker-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px;margin-bottom:20px}
+    .tracker-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .tracker-header h2{margin:0;font-size:16px}
+    .overall-progress{display:flex;align-items:center;gap:16px}
+    .progress-ring{width:80px;height:80px}
+    .progress-text{font-size:24px;font-weight:700}
+    .progress-bar{height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-top:4px}
+    .progress-fill{height:100%;border-radius:4px;transition:width .3s}
+    .progress-green{background:#10b981}
+    .progress-yellow{background:#f59e0b}
+    .progress-red{background:#ef4444}
+    .property-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-height:500px;overflow-y:auto}
+    .property-card{background:#fff;border-radius:10px;padding:12px;border:1px solid #e5e7eb;cursor:pointer;transition:all .2s}
+    .property-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1);transform:translateY(-1px)}
+    .property-card.complete{border-color:#10b981;background:#f0fdf4}
+    .property-card.partial{border-color:#f59e0b;background:#fffbeb}
+    .property-card.missing{border-color:#ef4444;background:#fef2f2}
+    .property-name{font-weight:600;font-size:13px;margin-bottom:4px}
+    .property-stats{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#64748b}
+    .account-list{margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb;display:none}
+    .account-list.show{display:block}
+    .account-item{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px}
+    .account-item.has-bill{color:#10b981}
+    .account-item.posted-unassigned{color:#3b82f6}
+    .account-item.no-bill{color:#ef4444}
+    .check-icon{color:#10b981}
+    .posted-icon{color:#3b82f6}
+    .x-icon{color:#ef4444}
+    /* Account grouping in modal */
+    .account-group{margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+    .account-group-header{background:#f9fafb;padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:13px}
+    .account-group-header:hover{background:#f3f4f6}
+    .account-group-lines{display:none;padding:0}
+    .account-group-lines.show{display:block}
+    .expand-icon{transition:transform .2s}
+    .expand-icon.rotated{transform:rotate(180deg)}
+    .style-card{border:2px solid #e5e7eb;border-radius:12px;padding:16px;text-align:center;transition:all .2s}
+    .style-card:hover{border-color:#0ea5e9;background:#f0f9ff}
+    .style-card.selected{border-color:#059669;background:#ecfdf5;box-shadow:0 0 0 3px rgba(5,150,105,0.2)}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · UBI Master Bills</a></div>
+    <div class="logout">
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>UBI Master Bills</h1>
+
+    <!-- Completion Tracker Section -->
+    <div class="tracker-card">
+      <div class="tracker-header">
+        <h2>UBI Completion Tracker</h2>
+        <div style="display:flex;gap:12px;align-items:center">
+          <label style="font-size:13px">Period:</label>
+          <select id="trackerPeriod" onchange="loadCompletionTracker()" style="padding:6px 10px;border-radius:6px;border:1px solid #e5e7eb;font-size:13px">
+            <option value="">-- Select Period --</option>
+          </select>
+          <button class="btn small" onclick="loadCompletionTracker()">Refresh</button>
+        </div>
+      </div>
+      <div id="trackerContent">
+        <div class="loading" style="padding:20px;text-align:center;color:#64748b">Select a period to view completion status</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <button class="btn success" onclick="generateMasterBills()">Refresh Data</button>
+        <button class="btn" onclick="openReportModal()" style="background:#059669">Generate Report</button>
+        <button class="btn" onclick="openUploadModal()" style="background:#8b5cf6">Upload Manual Data</button>
+        <a href="/api/master-bills/manual-template" class="btn secondary small" style="margin-left:4px" title="Download CSV template for manual uploads">Template CSV</a>
+        <button class="btn small" onclick="exportMasterBillsCSV()" style="background:#0284c7;margin-left:4px" title="Download current view as CSV">Export CSV</button>
+        <button class="btn small" id="reclassifyBtn" onclick="openReclassifyModal()" style="background:#f59e0b;margin-left:4px;display:none" title="Reclassify selected rows (charge code and/or utility type)">Reclassify</button>
+        <span id="lastRefreshed" style="font-size:11px;color:#64748b;margin-left:8px"></span>
+        <div style="flex:1"></div>
+        <label>Filter by Period:</label>
+        <select id="filterStartPeriod">
+          <option value="">Start Month</option>
+        </select>
+        <span>to</span>
+        <select id="filterEndPeriod">
+          <option value="">End Month</option>
+        </select>
+        <button class="btn" onclick="applyDateFilter()">Apply Filter</button>
+        <button class="btn secondary" onclick="clearFilter()">Clear</button>
+      </div>
+      <div class="controls" style="margin-top:-8px">
+        <label style="font-weight:600;color:#64748b">Filters:</label>
+        <select id="filterProperty" onchange="applyFilters()" style="min-width:180px">
+          <option value="">All Properties</option>
+        </select>
+        <select id="filterChargeCode" onchange="applyFilters()" style="min-width:180px">
+          <option value="">All Charge Codes</option>
+        </select>
+        <select id="filterUtility" onchange="applyFilters()" style="min-width:140px">
+          <option value="">All Utilities</option>
+        </select>
+        <button class="btn secondary" onclick="clearAllFilters()" style="padding:6px 12px;font-size:12px">Clear Filters</button>
+      </div>
+
+      <div class="summary" id="summary" style="display:none">
+        <div class="summary-item">
+          <div class="summary-label">Total Master Bills</div>
+          <div class="summary-value" id="totalCount">0</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">Total Amount</div>
+          <div class="summary-value" id="totalAmount">$0.00</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">Properties</div>
+          <div class="summary-value" id="propertiesCount">0</div>
+        </div>
+        <div class="summary-item" id="unmappedSummary" style="display:none">
+          <div class="summary-label" style="color:#92400e">Unmapped Charge Codes</div>
+          <div class="summary-value" id="unmappedCount" style="color:#92400e">0</div>
+        </div>
+      </div>
+
+      <div id="loading" class="loading">Click "Refresh Data" to load current master bills</div>
+
+      <div id="masterBillsTable" style="display:none;max-height:600px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal-box">
+      <h2 id="modalTitle">Master Bill Detail</h2>
+      <div id="modalContent"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Amount Override Modal -->
+  <div class="modal-overlay" id="amountOverrideModal">
+    <div class="modal-box" style="max-width:500px">
+      <h2>Override Amount</h2>
+      <p style="color:#64748b;font-size:13px;margin-bottom:16px">
+        Change the amount for this line item. This will update the Stage 8 data and be reflected when you regenerate master bills.
+      </p>
+      <div style="margin-bottom:16px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Original Amount</label>
+        <div id="overrideOriginalAmount" style="font-size:18px;color:#64748b">$0.00</div>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">New Amount</label>
+        <input type="number" id="overrideNewAmount" step="0.01" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;font-size:16px" />
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Override Reason (Required)</label>
+        <textarea id="overrideReason" placeholder="Why are you changing the amount? (e.g., AP entered credit balance incorrectly)" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;min-height:80px;resize:vertical"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeAmountOverrideModal()">Cancel</button>
+        <button class="btn" onclick="submitAmountOverride()">Save Override</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Report Generation Modal -->
+  <div class="modal-overlay" id="reportModal">
+    <div class="modal-box" style="max-width:600px">
+      <h2 style="margin-bottom:20px">Generate Billback Summary Report</h2>
+
+      <label style="display:block;margin-bottom:8px;font-weight:600;font-size:13px">Report Period</label>
+      <select id="reportPeriodSelect" style="display:block;width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:20px;font-size:14px">
+        <option value="">Loading periods...</option>
+      </select>
+
+      <label style="display:block;margin-bottom:12px;font-weight:600;font-size:13px">Report Style</label>
+      <div style="display:flex;gap:12px;margin-bottom:24px">
+        <label style="flex:1;cursor:pointer">
+          <input type="radio" name="reportStyle" value="corporate" checked style="display:none">
+          <div class="style-card selected" data-style="corporate">
+            <div style="font-size:24px;margin-bottom:8px">📊</div>
+            <div style="font-weight:600;font-size:14px">Corporate</div>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">Professional tables, formal layout</div>
+          </div>
+        </label>
+        <label style="flex:1;cursor:pointer">
+          <input type="radio" name="reportStyle" value="simple" style="display:none">
+          <div class="style-card" data-style="simple">
+            <div style="font-size:24px;margin-bottom:8px">📄</div>
+            <div style="font-weight:600;font-size:14px">Simple</div>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">Clean, minimal styling</div>
+          </div>
+        </label>
+        <label style="flex:1;cursor:pointer">
+          <input type="radio" name="reportStyle" value="dashboard" style="display:none">
+          <div class="style-card" data-style="dashboard">
+            <div style="font-size:24px;margin-bottom:8px">📈</div>
+            <div style="font-weight:600;font-size:14px">Dashboard</div>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">Modern cards, visual bars</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="modal-actions" style="justify-content:space-between">
+        <a href="/templates/report_example_corporate.html" target="_blank" style="font-size:12px;color:#0ea5e9">Preview Examples</a>
+        <div style="display:flex;gap:8px">
+          <button class="btn secondary" onclick="closeReportModal()">Cancel</button>
+          <button class="btn" onclick="generateReport()" style="background:#059669">Download PDF</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual Data Upload Modal -->
+  <div class="modal-overlay" id="uploadModal">
+    <div class="modal-box" style="max-width:700px">
+      <h2 style="margin-bottom:20px">Upload Manual Billback Data</h2>
+      <p style="color:#64748b;font-size:13px;margin-bottom:16px">
+        Upload a CSV file with manual billback data from external systems. This data will be merged with the parsed bills and labeled as "MANUAL".
+      </p>
+
+      <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:20px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px">Required CSV Columns:</div>
+        <div style="font-size:12px;color:#64748b;line-height:1.6">
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">property_name</code> - Property name (must match existing properties)<br>
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">charge_code</code> - GL charge code (e.g., "5706-0000")<br>
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">amount</code> - Dollar amount<br>
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">ubi_period</code> - Billing period (MM/YYYY format, e.g., "02/2026")<br>
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">utility_type</code> - Utility type (Electric, Gas, Water, etc.)<br>
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">start_date</code> - Service start date (MM/DD/YYYY)<br>
+          <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px">end_date</code> - Service end date (MM/DD/YYYY)
+        </div>
+        <div style="margin-top:12px">
+          <a href="/api/master-bills/manual-template" style="font-size:12px;color:#0ea5e9">Download Sample CSV Template</a>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:8px">Select CSV File</label>
+        <input type="file" id="manualUploadFile" accept=".csv" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px" />
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:8px">Source System (for reference)</label>
+        <input type="text" id="manualUploadSource" placeholder="e.g., Yardi, RealPage, Manual Entry" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px" />
+      </div>
+
+      <div style="margin-bottom:20px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px">Account Tracking</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-bottom:8px">
+          <input type="checkbox" id="manualAddToTracker" onchange="document.getElementById('manualAddToUbi').disabled = !this.checked; if(!this.checked) document.getElementById('manualAddToUbi').checked = false;" />
+          Add accounts to Tracker
+          <span style="color:#64748b;font-size:11px">(auto-add unique accounts from CSV)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-left:24px">
+          <input type="checkbox" id="manualAddToUbi" disabled />
+          Add accounts to UBI
+          <span style="color:#64748b;font-size:11px">(mark as UBI for billback tracking)</span>
+        </label>
+      </div>
+
+      <div id="uploadPreview" style="display:none;margin-bottom:20px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px">Preview (first 5 rows):</div>
+        <div id="uploadPreviewContent" style="max-height:200px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;font-size:11px"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeUploadModal()">Cancel</button>
+        <button class="btn" onclick="uploadManualData()" style="background:#8b5cf6">Upload Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reclassify Modal -->
+  <div class="modal-overlay" id="reclassifyModal">
+    <div class="modal-box" style="max-width:500px">
+      <h2 style="margin-bottom:16px">Reclassify Selected Rows</h2>
+      <p id="reclassifyCount" style="font-size:13px;color:#64748b;margin-bottom:16px"></p>
+      <div style="margin-bottom:16px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">New Charge Code: <span style="font-weight:400;color:#94a3b8">(leave blank to keep current)</span></label>
+        <select id="reclassifyChargeCodeSelect" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:14px">
+          <option value="">-- Keep current charge code --</option>
+        </select>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">New Utility Type: <span style="font-weight:400;color:#94a3b8">(leave blank to keep current)</span></label>
+        <select id="reclassifyUtilitySelect" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:14px">
+          <option value="">-- Keep current utility type --</option>
+          <option value="Electric">Electric</option>
+          <option value="Gas">Gas</option>
+          <option value="Water">Water</option>
+          <option value="Sewer">Sewer</option>
+          <option value="Trash">Trash</option>
+          <option value="Cable">Cable</option>
+          <option value="Internet">Internet</option>
+          <option value="Phone">Phone</option>
+          <option value="Storm Water">Storm Water</option>
+          <option value="Environmental Fee">Environmental Fee</option>
+          <option value="Pest Control">Pest Control</option>
+          <option value="HOA Fee">HOA Fee</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:16px;background:#f8fafc;padding:10px;border-radius:6px">
+        Rows with matching property, charge code, utility, and period will be merged after reclassification.
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeReclassifyModal()">Cancel</button>
+        <button class="btn" onclick="doReclassify()" style="background:#f59e0b">Reclassify</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account Action Modal -->
+  <div class="modal-overlay" id="accountActionModal">
+    <div class="modal-box" style="max-width:420px">
+      <h2 style="margin:0 0 8px 0;font-size:16px" id="accountActionTitle">Account Action</h2>
+      <div id="accountActionInfo" style="font-size:13px;color:#64748b;margin-bottom:16px"></div>
+
+      <div id="accountActionButtons" style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn" id="btnUnassignPeriod" onclick="doAccountAction('unassign')" style="background:#3b82f6;padding:12px;font-size:14px">
+          UNASSIGN FROM PERIOD
+        </button>
+        <button class="btn" id="btnReassignPeriod" onclick="showReassignPeriodPicker()" style="background:#8b5cf6;padding:12px;font-size:14px">
+          REASSIGN TO PERIOD
+        </button>
+        <button class="btn" id="btnDeleteTracker" onclick="doAccountAction('delete')" style="background:#ef4444;padding:12px;font-size:14px">
+          DELETE FROM TRACKER
+        </button>
+      </div>
+
+      <div id="reassignPeriodPicker" style="display:none;margin-top:12px">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Select new period:</label>
+        <select id="reassignPeriodSelect" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px"></select>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn secondary" onclick="hideReassignPeriodPicker()" style="flex:1">Back</button>
+          <button class="btn" onclick="doAccountAction('reassign')" style="flex:1;background:#8b5cf6">Reassign</button>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn secondary" onclick="closeAccountActionModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let masterBills = [];
+    let filteredMasterBills = [];
+    let manualEntries = []; // Track manual entries separately
+    let sortColumn = 'property_name';
+    let sortDirection = 'asc';
+    let selectedProperty = '';
+    let selectedChargeCode = '';
+    let selectedUtility = '';
+
+    // LocalStorage cache functions
+    function saveFiltersToCache() {
+      const filters = {
+        trackerPeriod: document.getElementById('trackerPeriod').value,
+        filterStartPeriod: document.getElementById('filterStartPeriod').value,
+        filterEndPeriod: document.getElementById('filterEndPeriod').value,
+        filterProperty: document.getElementById('filterProperty').value,
+        filterChargeCode: document.getElementById('filterChargeCode').value,
+        filterUtility: document.getElementById('filterUtility').value
+      };
+      localStorage.setItem('masterBillsFilters', JSON.stringify(filters));
+    }
+
+    function loadFiltersFromCache() {
+      try {
+        const cached = localStorage.getItem('masterBillsFilters');
+        if (cached) {
+          return JSON.parse(cached);
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    async function generateMasterBills() {
+      const loading = document.getElementById('loading');
+      const table = document.getElementById('masterBillsTable');
+      const summary = document.getElementById('summary');
+
+      loading.style.display = 'block';
+      loading.textContent = 'Generating master bills...';
+      table.style.display = 'none';
+      summary.style.display = 'none';
+
+      try {
+        const startPeriod = document.getElementById('filterStartPeriod').value;
+        const endPeriod = document.getElementById('filterEndPeriod').value;
+
+        const payload = {
+          start_period: startPeriod || "",
+          end_period: endPeriod || ""
+        };
+
+        const response = await fetch('/api/master-bills/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error('Failed to generate master bills');
+
+        const data = await response.json();
+        showToast(`Generated ${data.count} master bills (Total: $${data.total_amount.toFixed(2)})`, 'ok');
+
+        // Load the generated master bills
+        await loadMasterBills();
+        updateLastRefreshed();
+      } catch (e) {
+        console.error('Error generating master bills:', e);
+        loading.textContent = 'Error generating master bills. Please try again.';
+        showToast('Error generating master bills', 'err');
+      }
+    }
+
+    function updateLastRefreshed() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      document.getElementById('lastRefreshed').textContent = `Last refreshed: ${timeStr}`;
+    }
+
+    async function loadMasterBills() {
+      const loading = document.getElementById('loading');
+      const table = document.getElementById('masterBillsTable');
+      const summary = document.getElementById('summary');
+
+      loading.style.display = 'block';
+      loading.textContent = 'Loading master bills...';
+      table.style.display = 'none';
+
+      try {
+        const response = await fetch('/api/master-bills/list');
+        if (!response.ok) throw new Error('Failed to load master bills');
+
+        const data = await response.json();
+        masterBills = data.items || [];
+
+        loading.style.display = 'none';
+
+        // Populate filter dropdowns with loaded data
+        populateFilterDropdowns();
+
+        if (masterBills.length === 0) {
+          table.innerHTML = '<div class="loading">No master bills found. Click "Generate Master Bills" to create them.</div>';
+          table.style.display = 'block';
+          return;
+        }
+
+        renderMasterBills();
+        updateSummary();
+        summary.style.display = 'flex';
+        table.style.display = 'block';
+      } catch (e) {
+        console.error('Error loading master bills:', e);
+        loading.textContent = 'Error loading master bills. Please try again.';
+        showToast('Error loading master bills', 'err');
+      }
+    }
+
+    function getSortIndicator(col) {
+      if (sortColumn === col) {
+        return `<span class="sort-indicator">${sortDirection === 'asc' ? '&#9650;' : '&#9660;'}</span>`;
+      }
+      return '<span class="sort-indicator">&#9650;&#9660;</span>';
+    }
+
+    function sortBy(col) {
+      if (sortColumn === col) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortColumn = col;
+        sortDirection = 'asc';
+      }
+      renderMasterBills();
+    }
+
+    function getFilteredMasterBills() {
+      const startPeriod = document.getElementById('filterStartPeriod').value;
+      const endPeriod = document.getElementById('filterEndPeriod').value;
+
+      return masterBills.filter(mb => {
+        if (selectedProperty && mb.property_id !== selectedProperty) return false;
+        if (selectedChargeCode && mb.ar_code_mapping !== selectedChargeCode) return false;
+        if (selectedUtility && mb.utility_name !== selectedUtility) return false;
+
+        // Period filtering - compare by converting MM/DD/YYYY to YYYY-MM for proper sorting
+        // billback_month_start is in MM/DD/YYYY format (e.g., "03/01/2026")
+        if (startPeriod || endPeriod) {
+          // Extract MM/YYYY from billback_month_start (MM/DD/YYYY format)
+          const mbStart = mb.billback_month_start || '';
+          const mbStartParts = mbStart.split('/');
+          if (mbStartParts.length >= 3) {
+            const mbPeriodYYYYMM = `${mbStartParts[2]}-${mbStartParts[0].padStart(2, '0')}`;
+
+            if (startPeriod) {
+              // Convert filter MM/YYYY to YYYY-MM
+              const [sMonth, sYear] = startPeriod.split('/');
+              const startYYYYMM = `${sYear}-${sMonth.padStart(2, '0')}`;
+              if (mbPeriodYYYYMM < startYYYYMM) return false;
+            }
+
+            if (endPeriod) {
+              // Convert filter MM/YYYY to YYYY-MM
+              const [eMonth, eYear] = endPeriod.split('/');
+              const endYYYYMM = `${eYear}-${eMonth.padStart(2, '0')}`;
+              if (mbPeriodYYYYMM > endYYYYMM) return false;
+            }
+          }
+        }
+
+        return true;
+      });
+    }
+
+    function getSortedMasterBills() {
+      const filtered = getFilteredMasterBills();
+      return [...filtered].sort((a, b) => {
+        let aVal = a[sortColumn] || '';
+        let bVal = b[sortColumn] || '';
+
+        // Handle numeric sorting for amount
+        if (sortColumn === 'utility_amount') {
+          aVal = Number(aVal) || 0;
+          bVal = Number(bVal) || 0;
+          return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+
+        // String sorting
+        aVal = String(aVal).toLowerCase();
+        bVal = String(bVal).toLowerCase();
+        if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    function applyFilters() {
+      selectedProperty = document.getElementById('filterProperty').value;
+      selectedChargeCode = document.getElementById('filterChargeCode').value;
+      selectedUtility = document.getElementById('filterUtility').value;
+      saveFiltersToCache();
+      renderMasterBills();
+      updateSummary();
+    }
+
+    function clearAllFilters() {
+      document.getElementById('filterProperty').value = '';
+      document.getElementById('filterChargeCode').value = '';
+      document.getElementById('filterUtility').value = '';
+      selectedProperty = '';
+      selectedChargeCode = '';
+      selectedUtility = '';
+      saveFiltersToCache();
+      renderMasterBills();
+      updateSummary();
+    }
+
+    function populateFilterDropdowns() {
+      const propSelect = document.getElementById('filterProperty');
+      const ccSelect = document.getElementById('filterChargeCode');
+      const utilSelect = document.getElementById('filterUtility');
+
+      // Clear existing options except the first "All" option
+      while (propSelect.options.length > 1) propSelect.remove(1);
+      while (ccSelect.options.length > 1) ccSelect.remove(1);
+      while (utilSelect.options.length > 1) utilSelect.remove(1);
+
+      // Get unique values
+      const properties = {};
+      const chargeCodes = new Set();
+      const utilities = new Set();
+
+      masterBills.forEach(mb => {
+        if (mb.property_id && mb.property_name) {
+          properties[mb.property_id] = mb.property_name;
+        }
+        if (mb.ar_code_mapping) chargeCodes.add(mb.ar_code_mapping);
+        if (mb.utility_name) utilities.add(mb.utility_name);
+      });
+
+      // Populate property dropdown
+      const sortedProps = Object.entries(properties).sort((a, b) => a[1].localeCompare(b[1]));
+      sortedProps.forEach(([id, name]) => {
+        propSelect.add(new Option(name, id));
+      });
+
+      // Populate charge code dropdown
+      [...chargeCodes].sort().forEach(cc => {
+        ccSelect.add(new Option(cc, cc));
+      });
+
+      // Populate utility dropdown
+      [...utilities].sort().forEach(util => {
+        utilSelect.add(new Option(util, util));
+      });
+
+      // Restore cached filters
+      const cachedFilters = loadFiltersFromCache();
+      if (cachedFilters) {
+        if (cachedFilters.filterProperty) {
+          propSelect.value = cachedFilters.filterProperty;
+          selectedProperty = cachedFilters.filterProperty;
+        }
+        if (cachedFilters.filterChargeCode) {
+          ccSelect.value = cachedFilters.filterChargeCode;
+          selectedChargeCode = cachedFilters.filterChargeCode;
+        }
+        if (cachedFilters.filterUtility) {
+          utilSelect.value = cachedFilters.filterUtility;
+          selectedUtility = cachedFilters.filterUtility;
+        }
+      }
+    }
+
+    function detectDuplicates(bills) {
+      // A DUPLICATE is when the same invoice (line_hash) is assigned to the
+      // SAME period + charge code more than once
+      const duplicateInfo = {};
+
+      bills.forEach(mb => {
+        if (!mb.source_line_items) return;
+
+        // Count occurrences of each line_hash within THIS master bill
+        const hashCounts = {};
+        mb.source_line_items.forEach(line => {
+          const hash = line.line_hash;
+          if (!hash) return;
+          if (!hashCounts[hash]) {
+            hashCounts[hash] = { count: 0, account: line.account_number };
+          }
+          hashCounts[hash].count++;
+        });
+
+        // Find line_hashes that appear more than once in this master bill
+        const duplicatedHashes = Object.entries(hashCounts)
+          .filter(([hash, info]) => info.count > 1);
+
+        if (duplicatedHashes.length > 0) {
+          duplicateInfo[mb.master_bill_id] = duplicatedHashes.map(([hash, info]) => ({
+            account: info.account,
+            line_hash: hash.substring(0, 8),
+            count: info.count
+          }));
+        }
+      });
+
+      return duplicateInfo;
+    }
+
+    function renderMasterBills() {
+      const container = document.getElementById('masterBillsTable');
+      const sortedBills = getSortedMasterBills();
+      const duplicateInfo = detectDuplicates(sortedBills);
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px"><input type="checkbox" id="selectAllMB" onchange="toggleSelectAllMB(this)" title="Select all"></th>
+              <th class="sortable" onclick="sortBy('property_name')">Property ${getSortIndicator('property_name')}</th>
+              <th class="sortable" onclick="sortBy('property_lookup_code')">Lookup Code ${getSortIndicator('property_lookup_code')}</th>
+              <th class="sortable" onclick="sortBy('ar_code_mapping')">Charge Code ${getSortIndicator('ar_code_mapping')}</th>
+              <th class="sortable" onclick="sortBy('utility_name')">Utility ${getSortIndicator('utility_name')}</th>
+              <th class="sortable" onclick="sortBy('billback_month_start')">Period Start ${getSortIndicator('billback_month_start')}</th>
+              <th class="sortable" onclick="sortBy('billback_month_end')">Period End ${getSortIndicator('billback_month_end')}</th>
+              <th class="sortable" onclick="sortBy('utility_amount')">Amount ${getSortIndicator('utility_amount')}</th>
+              <th>Source Lines</th>
+              <th>Overrides</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      sortedBills.forEach(mb => {
+        const hasOverrides = mb.source_line_items && mb.source_line_items.some(line => line.overridden);
+        const overrideBadge = hasOverrides ? '<span class="badge overridden">OVERRIDDEN</span>' : '';
+        const sourceCount = mb.source_line_items ? mb.source_line_items.length : 0;
+        const isUnmapped = mb.ar_code_mapping === 'UNMAPPED';
+        const dupInfo = duplicateInfo[mb.master_bill_id];
+        const isDuplicate = dupInfo && dupInfo.length > 0;
+        const chargeCodeDisplay = isUnmapped
+          ? '<span class="badge" style="background:#fef3c7;color:#92400e">UNMAPPED</span>'
+          : (mb.ar_code_mapping || 'N/A');
+
+        // Build detailed duplicate tooltip - shows which line items are duplicated
+        let duplicateBadge = '';
+        if (isDuplicate) {
+          const tooltipLines = dupInfo.map(d => {
+            return `Acct ${d.account} (${d.line_hash}...) assigned ${d.count}x`;
+          });
+          const tooltip = tooltipLines.join('&#10;');
+          duplicateBadge = `<span class="badge duplicate" title="${tooltip}">${dupInfo.length} DUP</span>`;
+        }
+
+        // Manual entry badge
+        let manualBadge = '';
+        if (mb.is_manual) {
+          manualBadge = `<span class="badge manual" title="Manually uploaded from: ${mb.manual_source || 'Unknown'}">MANUAL</span>`;
+        }
+
+        html += `
+          <tr${isUnmapped ? ' style="background:#fffbeb"' : ''}${isDuplicate ? ' style="background:#fef9c3"' : ''}${mb.is_manual ? ' style="background:#f5f3ff"' : ''}>
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="mb-select" value="${mb.master_bill_id.replace(/"/g, '&quot;')}" onchange="updateReclassifyBtn()"></td>
+            <td>${mb.property_name || 'N/A'} ${duplicateBadge} ${manualBadge}</td>
+            <td style="font-size:11px;color:#64748b">${mb.property_lookup_code || ''}</td>
+            <td>${chargeCodeDisplay}</td>
+            <td>${mb.utility_name || 'N/A'}</td>
+            <td>${mb.billback_month_start || 'N/A'}</td>
+            <td>${mb.billback_month_end || 'N/A'}</td>
+            <td style="font-weight:600;color:#0ea5e9">$${(mb.utility_amount || 0).toFixed(2)}</td>
+            <td>${sourceCount}</td>
+            <td>${overrideBadge}</td>
+            <td>
+              <button class="btn small" onclick="viewDetail('${mb.master_bill_id.replace(/'/g, "\\'")}')">View Detail</button>
+              ${mb.is_manual ? `<span onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" style="margin-left:10px;color:#94a3b8;cursor:pointer;font-size:13px" title="Delete manual entry">&#x2715;</span>` : ''}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+      container.innerHTML = html;
+    }
+
+    function updateSummary() {
+      const filtered = getFilteredMasterBills();
+      const totalCount = filtered.length;
+      const totalAmount = filtered.reduce((sum, mb) => sum + (mb.utility_amount || 0), 0);
+      const properties = new Set(filtered.map(mb => mb.property_id));
+      const unmappedCount = filtered.filter(mb => mb.ar_code_mapping === 'UNMAPPED').length;
+
+      document.getElementById('totalCount').textContent = totalCount;
+      document.getElementById('totalAmount').textContent = `$${totalAmount.toFixed(2)}`;
+      document.getElementById('propertiesCount').textContent = properties.size;
+      document.getElementById('unmappedCount').textContent = unmappedCount;
+
+      // Show/hide unmapped summary
+      const unmappedSummary = document.getElementById('unmappedSummary');
+      if (unmappedCount > 0) {
+        unmappedSummary.style.display = 'block';
+      } else {
+        unmappedSummary.style.display = 'none';
+      }
+    }
+
+    async function viewDetail(masterBillId) {
+      try {
+        const response = await fetch(`/api/master-bills/detail?id=${encodeURIComponent(masterBillId)}`);
+        if (!response.ok) throw new Error('Failed to load detail');
+
+        const mb = await response.json();
+
+        let html = `
+          <div style="background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:16px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
+              <div><strong>Property:</strong> ${mb.property_name || 'N/A'}</div>
+              <div><strong>Charge Code:</strong> ${mb.ar_code_mapping || 'N/A'}</div>
+              <div><strong>Utility:</strong> ${mb.utility_name || 'N/A'}</div>
+              <div><strong>Amount:</strong> $${(mb.utility_amount || 0).toFixed(2)}</div>
+              <div><strong>Period:</strong> ${mb.billback_month_start} to ${mb.billback_month_end}</div>
+              <div><strong>Status:</strong> <span class="badge draft">${mb.status || 'draft'}</span></div>
+            </div>
+          </div>
+        `;
+
+        // Group line items by account_number first to count invoices
+        const accountGroups = {};
+        // Track duplicates: line_hash -> array of {account_number, vendor_name, gl_code, amount}
+        const hashOccurrences = {};
+
+        if (mb.source_line_items && mb.source_line_items.length > 0) {
+          mb.source_line_items.forEach(line => {
+            const acct = line.account_number || 'Unknown Account';
+            if (!accountGroups[acct]) {
+              accountGroups[acct] = {
+                vendor_name: line.vendor_name || '',
+                lines: [],
+                total: 0
+              };
+            }
+            accountGroups[acct].lines.push(line);
+            accountGroups[acct].total += (line.amount || 0);
+
+            // Track occurrences of each line_hash
+            const hash = line.line_hash;
+            if (hash) {
+              if (!hashOccurrences[hash]) {
+                hashOccurrences[hash] = [];
+              }
+              hashOccurrences[hash].push({
+                account_number: acct,
+                vendor_name: line.vendor_name || '',
+                gl_code: line.gl_code || '',
+                amount: line.amount || 0
+              });
+            }
+          });
+        }
+
+        // Find which hashes are duplicated (appear more than once)
+        const duplicateHashes = {};
+        Object.entries(hashOccurrences).forEach(([hash, occurrences]) => {
+          if (occurrences.length > 1) {
+            duplicateHashes[hash] = occurrences;
+          }
+        });
+        const duplicateCount = Object.keys(duplicateHashes).length;
+
+        const invoiceCount = Object.keys(accountGroups).length;
+        const lineCount = mb.source_line_items ? mb.source_line_items.length : 0;
+
+        // Show duplicate warning if any
+        let duplicateWarning = '';
+        if (duplicateCount > 0) {
+          duplicateWarning = `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px;margin-bottom:16px">
+            <div style="font-weight:600;color:#b45309;margin-bottom:8px">⚠️ ${duplicateCount} Duplicate Line Item${duplicateCount > 1 ? 's' : ''} Detected</div>
+            <div style="font-size:12px;color:#92400e">The same invoice line item appears multiple times in this master bill. Look for the <span style="background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-size:11px">DUP</span> badge below.</div>
+          </div>`;
+        }
+
+        html += duplicateWarning;
+        html += `
+          <h3 style="margin:20px 0 12px 0;font-size:14px;font-weight:600">Source Line Items (${lineCount}) · <span style="color:#0ea5e9">${invoiceCount} invoice${invoiceCount !== 1 ? 's' : ''}</span></h3>
+          <div style="max-height:400px;overflow-y:auto">
+        `;
+
+        if (mb.source_line_items && mb.source_line_items.length > 0) {
+
+          // Render account groups
+          const accounts = Object.keys(accountGroups).sort();
+          accounts.forEach((acct, idx) => {
+            const group = accountGroups[acct];
+            const groupId = `acct-group-${idx}`;
+            const displayName = group.vendor_name ? `${group.vendor_name} - ${acct}` : acct;
+
+            // Check if any line in this account has overrides
+            const hasOverrides = group.lines.some(l => l.overridden);
+            const accountOverrideBadge = hasOverrides ? '<span class="badge overridden" style="margin-left:8px">OVERRIDDEN</span>' : '';
+
+            // Collect line hashes and bill_ids for this account group
+            const lineHashes = group.lines.map(l => l.line_hash).filter(h => h);
+            const billIds = [...new Set(group.lines.map(l => l.bill_id).filter(b => b))];
+            const escapedHashes = lineHashes.join(',').replace(/'/g, "\\'");
+            const escapedBillIds = billIds.join(',').replace(/'/g, "\\'");
+
+            html += `
+              <div class="account-group">
+                <div class="account-group-header" onclick="toggleAccountGroup('${groupId}')">
+                  <div>
+                    <span>${displayName}</span>
+                    <span style="margin-left:12px;color:#64748b;font-weight:400">(${group.lines.length} line items)</span>
+                    ${accountOverrideBadge}
+                  </div>
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <span style="color:#0ea5e9;font-weight:600">$${group.total.toFixed(2)}</span>
+                    ${group.lines.some(l => l.is_manual) ?
+                      `<span onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" style="color:#94a3b8;cursor:pointer;font-size:14px" title="Delete this manual entry">&#x2715;</span>` :
+                      `<button class="btn small danger" onclick="event.stopPropagation(); unassignAccount('${escapedHashes}', '${escapedBillIds}', '${displayName.replace(/'/g, "\\'")}')" title="Unassign this invoice">Unassign</button>`
+                    }
+                    <span class="expand-icon" id="icon-${groupId}">&#9660;</span>
+                  </div>
+                </div>
+                <div class="account-group-lines" id="${groupId}">
+            `;
+
+            group.lines.forEach(line => {
+              // Build override info showing what it was changed to
+              let overrideInfo = '';
+              if (line.overridden) {
+                // utility_name is what the GL was mapped/changed to (e.g., SEWER, Gas, Water)
+                const changedTo = line.utility_name || line.gl_code_name || 'N/A';
+                overrideInfo = `<span class="badge overridden">OVERRIDDEN</span>
+                  <div style="font-size:10px;color:#991b1b;margin-top:2px">Mapped to: <strong>${changedTo}</strong></div>`;
+              }
+
+              // Check if this line is a duplicate
+              let duplicateBadge = '';
+              let duplicateStyle = '';
+              const lineHash = line.line_hash;
+              if (lineHash && duplicateHashes[lineHash]) {
+                const dupes = duplicateHashes[lineHash];
+                // Find OTHER occurrences (not this one)
+                const otherOccurrences = dupes.filter(d => d.account_number !== (line.account_number || 'Unknown Account'));
+                if (otherOccurrences.length > 0) {
+                  const dupeList = otherOccurrences.map(d => `${d.vendor_name ? d.vendor_name + ' - ' : ''}${d.account_number}`).join(', ');
+                  duplicateBadge = `<div style="margin-top:4px">
+                    <span class="badge duplicate" style="background:#fef3c7;color:#b45309">DUP</span>
+                    <span style="font-size:10px;color:#b45309;margin-left:4px">Also in: ${dupeList}</span>
+                  </div>`;
+                  duplicateStyle = 'background:#fffbeb;border-left:3px solid #f59e0b;';
+                } else if (dupes.length > 1) {
+                  // Same account has this hash multiple times
+                  duplicateBadge = `<div style="margin-top:4px">
+                    <span class="badge duplicate" style="background:#fef3c7;color:#b45309">DUP</span>
+                    <span style="font-size:10px;color:#b45309;margin-left:4px">Appears ${dupes.length}x in this account</span>
+                  </div>`;
+                  duplicateStyle = 'background:#fffbeb;border-left:3px solid #f59e0b;';
+                }
+              }
+
+              // Build service period display
+              const svcStart = line.service_start || '';
+              const svcEnd = line.service_end || '';
+              const billDate = line.bill_date || '';
+              let svcPeriodHtml = '';
+              if (svcStart || svcEnd) {
+                svcPeriodHtml = `<div style="font-size:11px;color:#64748b;margin-top:2px">
+                  <strong>Service Period:</strong> ${svcStart}${svcStart && svcEnd ? ' - ' : ''}${svcEnd}${billDate ? ` &nbsp;|&nbsp; <strong>Bill Date:</strong> ${billDate}` : ''}
+                </div>`;
+              } else if (billDate) {
+                svcPeriodHtml = `<div style="font-size:11px;color:#64748b;margin-top:2px">
+                  <strong>Bill Date:</strong> ${billDate}
+                </div>`;
+              }
+
+              html += `
+                <div class="line-item" style="${duplicateStyle}">
+                  <div style="flex:1">
+                    <div style="font-size:11px;color:#64748b">
+                      <strong>GL:</strong> ${line.gl_code} - ${line.gl_code_name || 'N/A'}
+                      ${line.utility_name ? `<span style="margin-left:8px;color:#0ea5e9">(<strong>${line.utility_name}</strong>)</span>` : ''}
+                    </div>
+                    ${svcPeriodHtml}
+                    <div style="font-size:11px;color:#64748b;margin-top:2px">
+                      <strong>Description:</strong> ${line.description || 'N/A'}
+                    </div>
+                    ${line.override_reason ? `<div style="font-size:11px;color:#991b1b;margin-top:2px"><strong>Override Reason:</strong> ${line.override_reason}</div>` : ''}
+                    ${duplicateBadge}
+                  </div>
+                  <div style="text-align:right">
+                    <div style="font-weight:600;color:#0ea5e9;cursor:pointer;text-decoration:underline"
+                         title="Click to override amount"
+                         onclick="event.stopPropagation(); openAmountOverrideModal('${(line.bill_id || '').replace(/'/g, "\\'")}', '${(line.line_hash || '').replace(/'/g, "\\'")}', ${line.amount || 0}, '${(line.override_reason || '').replace(/'/g, "\\'")}')"
+                    >$${(line.amount || 0).toFixed(2)}</div>
+                    ${overrideInfo}
+                    ${line.pdf_key ? `<button class="btn small" onclick="event.stopPropagation(); viewPdf('${line.pdf_key.replace(/'/g, "\\'")}')"
+                      style="background:rgba(14,165,233,0.15);color:#0284c7;border:1px solid #bae6fd;margin-top:4px;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">
+                      View PDF</button>` : ''}
+                  </div>
+                </div>
+              `;
+            });
+
+            html += `
+                </div>
+              </div>
+            `;
+          });
+        } else {
+          html += '<div class="loading">No source line items found</div>';
+        }
+
+        html += '</div>';
+
+        document.getElementById('modalTitle').textContent = `Master Bill Detail - ${mb.ar_code_mapping}`;
+        document.getElementById('modalContent').innerHTML = html;
+        document.getElementById('detailModal').classList.add('show');
+      } catch (e) {
+        console.error('Error loading detail:', e);
+        showToast('Error loading detail', 'err');
+      }
+    }
+
+    function closeDetailModal() {
+      document.getElementById('detailModal').classList.remove('show');
+    }
+
+    async function unassignAccount(lineHashes, billIds, accountName) {
+      if (!lineHashes || !billIds) {
+        showToast('Missing line data for unassign', 'err');
+        return;
+      }
+
+      if (!confirm(`Unassign "${accountName}" from this master bill?\n\nThis will move ${lineHashes.split(',').length} line item(s) back to BILLBACK for reassignment.`)) {
+        return;
+      }
+
+      // Build assignment_ids in the format: s3_key||line_hash
+      // Each bill_id (s3_key) paired with each line_hash
+      const billIdList = billIds.split(',').filter(b => b);
+      const lineHashList = lineHashes.split(',').filter(h => h);
+
+      // Build composite assignment IDs: pair each line hash with each bill ID
+      const assignmentIds = [];
+      for (const billId of billIdList) {
+        for (const hash of lineHashList) {
+          assignmentIds.push(`${billId}||${hash}`);
+        }
+      }
+
+      if (assignmentIds.length === 0) {
+        showToast('No valid line items to unassign', 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('assignment_ids', assignmentIds.join(','));
+
+        const response = await fetch('/api/billback/ubi/unassign', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          showToast(`Unassigned ${result.unassigned} line item(s). Refresh data to see changes.`, 'ok');
+          closeDetailModal();
+          generateMasterBills();
+        } else {
+          const errData = await response.json();
+          console.error('Unassign error:', errData);
+          showToast('Error: ' + (errData.error || 'Failed to unassign'), 'err');
+        }
+      } catch (e) {
+        console.error('Error unassigning:', e);
+        showToast('Error unassigning line items', 'err');
+      }
+    }
+
+    async function deleteManualEntry(masterBillId) {
+      if (!masterBillId || !masterBillId.startsWith('manual-')) {
+        showToast('Not a manual entry', 'err');
+        return;
+      }
+      const entryId = masterBillId.substring('manual-'.length);
+      if (!confirm('Delete this manual entry? This cannot be undone.')) return;
+
+      try {
+        const response = await fetch(`/api/master-bills/manual-entry/${encodeURIComponent(entryId)}`, {
+          method: 'DELETE'
+        });
+        if (response.ok) {
+          showToast('Manual entry deleted', 'ok');
+          closeDetailModal();
+          // Remove from local cache and re-render
+          masterBills = masterBills.filter(mb => mb.master_bill_id !== masterBillId);
+          renderMasterBills();
+        } else {
+          const errData = await response.json();
+          showToast('Error: ' + (errData.error || 'Failed to delete'), 'err');
+        }
+      } catch (e) {
+        console.error('Error deleting manual entry:', e);
+        showToast('Error deleting manual entry', 'err');
+      }
+    }
+
+    // Amount Override Modal functions
+    let currentOverrideData = null;
+
+    function openAmountOverrideModal(billId, lineHash, currentAmount, existingReason = '') {
+      currentOverrideData = { billId, lineHash, currentAmount };
+      document.getElementById('overrideOriginalAmount').textContent = '$' + (currentAmount || 0).toFixed(2);
+      document.getElementById('overrideNewAmount').value = currentAmount || 0;
+      document.getElementById('overrideReason').value = existingReason || '';
+      document.getElementById('amountOverrideModal').classList.add('show');
+      document.getElementById('overrideNewAmount').focus();
+    }
+
+    function closeAmountOverrideModal() {
+      document.getElementById('amountOverrideModal').classList.remove('show');
+      currentOverrideData = null;
+    }
+
+    async function submitAmountOverride() {
+      if (!currentOverrideData) return;
+
+      const newAmount = parseFloat(document.getElementById('overrideNewAmount').value);
+      const reason = document.getElementById('overrideReason').value.trim();
+
+      if (isNaN(newAmount)) {
+        showToast('Please enter a valid amount', 'err');
+        return;
+      }
+
+      if (!reason) {
+        showToast('Please provide an override reason', 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('s3_key', currentOverrideData.billId);
+        fd.append('line_hash', currentOverrideData.lineHash);
+        fd.append('new_amount', newAmount.toString());
+        fd.append('override_reason', reason);
+
+        const response = await fetch('/api/master-bills/override-amount', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (response.ok) {
+          showToast('Amount override saved. Click "Generate" to update master bills.', 'ok');
+          closeAmountOverrideModal();
+        } else {
+          const errData = await response.json();
+          showToast(errData.error || 'Failed to save override', 'err');
+        }
+      } catch (e) {
+        console.error('Error saving override:', e);
+        showToast('Error saving override: ' + e.message, 'err');
+      }
+    }
+
+    function toggleAccountGroup(groupId) {
+      const el = document.getElementById(groupId);
+      const icon = document.getElementById(`icon-${groupId}`);
+      if (el) {
+        el.classList.toggle('show');
+        if (icon) {
+          icon.classList.toggle('rotated');
+        }
+      }
+    }
+
+    function applyDateFilter() {
+      const startPeriod = document.getElementById('filterStartPeriod').value;
+      const endPeriod = document.getElementById('filterEndPeriod').value;
+
+      if (!startPeriod && !endPeriod) {
+        showToast('Please select at least one period', 'err');
+        return;
+      }
+
+      saveFiltersToCache();
+
+      // If we already have data loaded, just re-render with filter (no network call)
+      // Only regenerate if user explicitly clicks "Refresh Data"
+      if (masterBills.length > 0) {
+        renderMasterBills();
+        updateSummary();
+        const filtered = getFilteredMasterBills();
+        showToast(`Filtered to ${filtered.length} master bills`, 'ok');
+      } else {
+        generateMasterBills();
+      }
+    }
+
+    function clearFilter() {
+      document.getElementById('filterStartPeriod').value = '';
+      document.getElementById('filterEndPeriod').value = '';
+      document.getElementById('filterProperty').value = '';
+      document.getElementById('filterChargeCode').value = '';
+      document.getElementById('filterUtility').value = '';
+      selectedProperty = '';
+      selectedChargeCode = '';
+      selectedUtility = '';
+      saveFiltersToCache();
+      generateMasterBills();
+    }
+
+    function populatePeriodDropdowns() {
+      const startSelect = document.getElementById('filterStartPeriod');
+      const endSelect = document.getElementById('filterEndPeriod');
+
+      // Generate options for the past 24 months and next 12 months
+      const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+
+      const now = new Date();
+      const options = [];
+
+      // Past 24 months + next 12 months
+      for (let i = -24; i <= 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const mm = months[d.getMonth()];
+        const yyyy = d.getFullYear();
+        const value = `${mm}/${yyyy}`;  // MM/YYYY format
+        options.push({ value, sortKey: `${yyyy}-${mm}` });
+      }
+
+      // Sort by date (newest first for easier selection)
+      options.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+      options.forEach(opt => {
+        startSelect.add(new Option(opt.value, opt.value));  // Shows MM/YYYY
+        endSelect.add(new Option(opt.value, opt.value));
+      });
+    }
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // Close modal on overlay click
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+      if (e.target.id === 'detailModal') {
+        closeDetailModal();
+      }
+    });
+
+    // ===== COMPLETION TRACKER FUNCTIONS =====
+    async function loadCompletionTracker() {
+      const period = document.getElementById('trackerPeriod').value;
+      const container = document.getElementById('trackerContent');
+
+      // Save to cache whenever tracker period changes
+      saveFiltersToCache();
+
+      if (!period) {
+        container.innerHTML = '<div class="loading" style="padding:20px;text-align:center;color:#64748b">Select a period to view completion status</div>';
+        return;
+      }
+
+      container.innerHTML = '<div class="loading">Loading completion data...</div>';
+
+      try {
+        const response = await fetch(`/api/master-bills/completion-tracker?period=${encodeURIComponent(period)}`);
+        if (!response.ok) throw new Error('Failed to load completion data');
+
+        const data = await response.json();
+        renderCompletionTracker(data);
+      } catch (e) {
+        console.error('Error loading completion tracker:', e);
+        container.innerHTML = '<div class="loading" style="color:#ef4444">Error loading completion data</div>';
+      }
+    }
+
+    function renderCompletionTracker(data) {
+      const container = document.getElementById('trackerContent');
+      const overall = data.overall || { total: 0, complete: 0, percentage: 0 };
+      const properties = data.properties || [];
+
+      const progressColor = overall.percentage >= 100 ? 'progress-green' :
+                           overall.percentage >= 50 ? 'progress-yellow' : 'progress-red';
+      const postedUnassigned = overall.posted_unassigned || 0;
+
+      let html = `
+        <div class="overall-progress" style="margin-bottom:20px">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600;margin-bottom:8px">Overall Progress: ${overall.complete} / ${overall.total} accounts assigned${postedUnassigned > 0 ? ` <span style="font-size:12px;color:#3b82f6;font-weight:500">(${postedUnassigned} posted, not yet assigned)</span>` : ''}</div>
+            <div class="progress-bar" style="width:100%;max-width:400px">
+              <div class="progress-fill ${progressColor}" style="width:${overall.percentage}%"></div>
+            </div>
+          </div>
+          <div class="progress-text" style="color:${overall.percentage >= 100 ? '#10b981' : overall.percentage >= 50 ? '#f59e0b' : '#ef4444'}">
+            ${overall.percentage}%
+          </div>
+        </div>
+
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Properties (${properties.length})</div>
+        <div class="property-grid">
+      `;
+
+      for (const prop of properties) {
+        const statusClass = prop.percentage >= 100 ? 'complete' : prop.percentage > 0 ? 'partial' : 'missing';
+        const statusIcon = prop.percentage >= 100 ? '&#10003;' : prop.percentage > 0 ? '&#9679;' : '&#10007;';
+
+        html += `
+          <div class="property-card ${statusClass}" ondblclick="togglePropertyAccounts('${prop.property_id}')" title="Double-click to expand/collapse">
+            <div class="property-name">${prop.property_name || prop.property_id}</div>
+            ${prop.ap_name ? `<div class="ap-name" style="font-size:11px;color:#7c3aed;margin-bottom:4px;font-weight:500">${prop.ap_name}</div>` : ''}
+            <div class="property-stats">
+              <span>${prop.complete}/${prop.total} assigned${(prop.posted_unassigned || 0) > 0 ? ` <span style="font-size:11px;color:#3b82f6">(${prop.posted_unassigned} posted)</span>` : ''}</span>
+              ${prop.vacant_accounts > 0 ? `<span style="font-size:11px;color:#a855f7" title="${prop.vacant_accounts} account(s) predominantly vacant">🏚 ${prop.vacant_accounts}V</span>` : ''}
+              <span style="font-weight:600;color:${prop.percentage >= 100 ? '#10b981' : prop.percentage > 0 ? '#f59e0b' : '#ef4444'}">${prop.percentage}%</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill ${prop.percentage >= 100 ? 'progress-green' : prop.percentage > 0 ? 'progress-yellow' : 'progress-red'}" style="width:${prop.percentage}%"></div>
+            </div>
+            <div class="account-list" id="accounts-${prop.property_id}">
+        `;
+
+        // Sort accounts: missing first, then posted-unassigned, then assigned
+        const sortedAccounts = (prop.accounts || []).slice().sort((a, b) => {
+          const rankA = a.has_bill ? 2 : a.has_posted_bill ? 1 : 0;
+          const rankB = b.has_bill ? 2 : b.has_posted_bill ? 1 : 0;
+          if (rankA !== rankB) return rankA - rankB;
+          const nameA = ((a.vendor_name || '') + ' - ' + (a.account_number || '')).toLowerCase();
+          const nameB = ((b.vendor_name || '') + ' - ' + (b.account_number || '')).toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+
+        for (const acc of sortedAccounts) {
+          const accClass = acc.has_bill ? 'has-bill' : acc.has_posted_bill ? 'posted-unassigned' : 'no-bill';
+          const accIcon = acc.has_bill ? '<span class="check-icon">&#10003;</span>' : acc.has_posted_bill ? '<span class="posted-icon" title="Bill posted but not yet assigned to this period">&#9679;</span>' : '<span class="x-icon">&#10007;</span>';
+
+          // Period dots: show prev/current/next coverage using actual Stage 8 assignments
+          // Include service dates in tooltips for prev/next periods
+          const prevSvcDates = (acc.prev_service_start || acc.prev_service_end) ? ` (${acc.prev_service_start || '?'}${acc.prev_service_start && acc.prev_service_end ? ' - ' : ''}${acc.prev_service_end || '?'})` : '';
+          const nextSvcDates = (acc.next_service_start || acc.next_service_end) ? ` (${acc.next_service_start || '?'}${acc.next_service_start && acc.next_service_end ? ' - ' : ''}${acc.next_service_end || '?'})` : '';
+          const currSvcDates = (acc.service_start || acc.service_end) ? ` (${acc.service_start || '?'}${acc.service_start && acc.service_end ? ' - ' : ''}${acc.service_end || '?'})` : '';
+
+          const prevDot = acc.has_prev_period ? `<span style="color:#10b981" title="Previous period assigned${prevSvcDates}">&#9679;</span>` : '<span style="color:#d1d5db" title="Previous period: no assignment">&#9675;</span>';
+          const currDot = acc.has_bill ? `<span style="color:#10b981" title="This period assigned${currSvcDates}">&#9679;</span>` : acc.has_posted_bill ? '<span style="color:#3b82f6" title="Posted, not assigned to this period">&#9679;</span>' : '<span style="color:#d1d5db" title="This period: no assignment">&#9675;</span>';
+          const nextDot = acc.has_next_period ? `<span style="color:#10b981" title="Next period assigned${nextSvcDates}">&#9679;</span>` : '<span style="color:#d1d5db" title="Next period: no assignment">&#9675;</span>';
+          const periodDots = `<span style="font-size:9px;letter-spacing:2px;margin-left:6px" title="Prev | Current | Next period">${prevDot}${currDot}${nextDot}</span>`;
+
+          const vPct = acc.vacant_pct || 0;
+          const vacantBadge = vPct > 0 ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;margin-left:6px;color:#fff;background:${vPct > 75 ? '#ef4444' : vPct > 25 ? '#f59e0b' : '#10b981'}" title="Vacant: ${acc.vacant_lines || 0} lines, House: ${acc.house_lines || 0} lines">${vPct}% V</span>` : '';
+          const scraperBadge = acc.in_scraper ? '<span style="font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px;color:#fff;background:#7c3aed" title="Account exists in utility scraper">SCR</span>' : '';
+          const escapedAcct = (acc.account_number || '').replace(/'/g, "\\'");
+          const escapedVendor = (acc.vendor_name || '').replace(/'/g, "\\'");
+          const escapedProp = (prop.property_name || '').replace(/'/g, "\\'");
+          const escapedS3Key = (acc.s3_key || '').replace(/'/g, "\\'");
+
+          // Service dates display
+          const svcStart = acc.service_start || '';
+          const svcEnd = acc.service_end || '';
+          const svcDates = (svcStart || svcEnd) ? `<div style="font-size:10px;color:#64748b;margin-top:2px">${svcStart}${svcStart && svcEnd ? ' - ' : ''}${svcEnd}</div>` : '';
+
+          html += `
+            <div class="account-item ${accClass}" onclick="event.stopPropagation(); handleAccountClick(this, '${escapedAcct}')" ondblclick="event.stopPropagation(); handleAccountDblClick(this, '${escapedVendor}', '${escapedAcct}', '${escapedProp}', '${prop.property_id}', ${acc.has_bill}, '${escapedS3Key}')" style="cursor:pointer" title="Click to search | Double-click for options">
+              <div style="flex:1">
+                <div>${acc.vendor_name || 'Unknown'} - ${acc.account_number}${periodDots}${vacantBadge}${scraperBadge}</div>
+                ${svcDates}
+              </div>
+              ${accIcon}
+            </div>
+          `;
+        }
+
+        html += `
+            </div>
+          </div>
+        `;
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function togglePropertyAccounts(propertyId) {
+      const el = document.getElementById(`accounts-${propertyId}`);
+      if (el) {
+        el.classList.toggle('show');
+      }
+    }
+
+    let _accountClickTimer = null;
+
+    function handleAccountClick(el, accountNumber) {
+      // Delay single-click to allow double-click to cancel it
+      if (_accountClickTimer) clearTimeout(_accountClickTimer);
+      _accountClickTimer = setTimeout(() => {
+        _accountClickTimer = null;
+        openAdvancedSearch(accountNumber);
+      }, 250);
+    }
+
+    // Account action modal state
+    let _accountActionState = {
+      el: null,
+      vendorName: '',
+      accountNumber: '',
+      propertyName: '',
+      propertyId: '',
+      hasBill: false,
+      s3Key: '',
+      period: ''
+    };
+
+    function handleAccountDblClick(el, vendorName, accountNumber, propertyName, propertyId, hasBill, s3Key) {
+      // Cancel pending single-click
+      if (_accountClickTimer) { clearTimeout(_accountClickTimer); _accountClickTimer = null; }
+
+      const period = document.getElementById('trackerPeriod')?.value || '';
+
+      // Store state for modal actions
+      _accountActionState = { el, vendorName, accountNumber, propertyName, propertyId, hasBill, s3Key, period };
+
+      // Update modal content
+      document.getElementById('accountActionTitle').textContent = `${vendorName} - ${accountNumber}`;
+      document.getElementById('accountActionInfo').innerHTML = `
+        <div><strong>Property:</strong> ${propertyName}</div>
+        <div><strong>Period:</strong> ${period || 'Not selected'}</div>
+        <div><strong>Status:</strong> ${hasBill ? '<span style="color:#10b981">Assigned</span>' : '<span style="color:#ef4444">Not assigned</span>'}</div>
+      `;
+
+      // Show/hide buttons based on state
+      const btnUnassign = document.getElementById('btnUnassignPeriod');
+      const btnReassign = document.getElementById('btnReassignPeriod');
+      btnUnassign.style.display = hasBill && period ? 'block' : 'none';
+      btnReassign.style.display = hasBill && period ? 'block' : 'none';
+
+      // Populate reassign period dropdown
+      populateReassignPeriods();
+
+      // Reset to buttons view
+      document.getElementById('accountActionButtons').style.display = 'flex';
+      document.getElementById('reassignPeriodPicker').style.display = 'none';
+
+      // Show modal
+      document.getElementById('accountActionModal').classList.add('show');
+    }
+
+    function closeAccountActionModal() {
+      document.getElementById('accountActionModal').classList.remove('show');
+      _accountActionState = { el: null, vendorName: '', accountNumber: '', propertyName: '', propertyId: '', hasBill: false, s3Key: '', period: '' };
+    }
+
+    function showReassignPeriodPicker() {
+      document.getElementById('accountActionButtons').style.display = 'none';
+      document.getElementById('reassignPeriodPicker').style.display = 'block';
+    }
+
+    function hideReassignPeriodPicker() {
+      document.getElementById('accountActionButtons').style.display = 'flex';
+      document.getElementById('reassignPeriodPicker').style.display = 'none';
+    }
+
+    function populateReassignPeriods() {
+      const select = document.getElementById('reassignPeriodSelect');
+      select.innerHTML = '';
+      const now = new Date();
+
+      // Generate periods: past 12 months + next 6 months
+      for (let i = -12; i <= 6; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const val = `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = val;
+        if (val === _accountActionState.period) opt.selected = true;
+        select.appendChild(opt);
+      }
+    }
+
+    function doAccountAction(action) {
+      const { el, vendorName, accountNumber, propertyName, propertyId, hasBill, s3Key, period } = _accountActionState;
+      closeAccountActionModal();
+
+      if (action === 'unassign' && hasBill && period) {
+        showToast('Unassigning from period...', 'ok');
+        const fd = new FormData();
+        fd.append('s3_key', s3Key);
+        fd.append('account_number', accountNumber);
+        fd.append('period', period);
+
+        fetch('/api/billback/ubi/unassign-account', { method: 'POST', body: fd })
+          .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Failed'); }); return r.json(); })
+          .then(() => {
+            showToast(`Unassigned ${accountNumber} from ${period}`);
+            el.classList.remove('has-bill');
+            el.classList.add('no-bill');
+            const icon = el.querySelector('.check-icon');
+            if (icon) { icon.className = 'x-icon'; icon.innerHTML = '&#10007;'; }
+            updatePropertyCardCounts(el.closest('.property-card'));
+          })
+          .catch(e => showToast(`Error: ${e.message}`, 'err'));
+
+      } else if (action === 'reassign' && hasBill && period) {
+        const newPeriod = document.getElementById('reassignPeriodSelect').value;
+        if (!newPeriod || newPeriod === period) {
+          showToast('Please select a different period', 'err');
+          return;
+        }
+        showToast(`Reassigning to ${newPeriod}...`, 'ok');
+        const fd = new FormData();
+        fd.append('s3_key', s3Key);
+        fd.append('account_number', accountNumber);
+        fd.append('old_period', period);
+        fd.append('new_period', newPeriod);
+
+        fetch('/api/billback/ubi/reassign-account', { method: 'POST', body: fd })
+          .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Failed'); }); return r.json(); })
+          .then(() => {
+            showToast(`Reassigned ${accountNumber} from ${period} to ${newPeriod}`);
+            // If viewing the old period, mark as unassigned; if viewing new period, mark as assigned
+            el.classList.remove('has-bill');
+            el.classList.add('no-bill');
+            const icon = el.querySelector('.check-icon');
+            if (icon) { icon.className = 'x-icon'; icon.innerHTML = '&#10007;'; }
+            updatePropertyCardCounts(el.closest('.property-card'));
+          })
+          .catch(e => showToast(`Error: ${e.message}`, 'err'));
+
+      } else if (action === 'delete') {
+        const fd = new FormData();
+        fd.append('vendor_name', vendorName);
+        fd.append('account_number', accountNumber);
+        fd.append('property_name', propertyName);
+
+        fetch('/api/ubi/remove-from-tracker', { method: 'POST', body: fd })
+          .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Failed'); }); return r.json(); })
+          .then(() => {
+            showToast(`Removed ${vendorName} - ${accountNumber} from tracker`);
+            el.style.transition = 'opacity 0.3s';
+            el.style.opacity = '0';
+            setTimeout(() => {
+              const propertyCard = el.closest('.property-card');
+              el.remove();
+              updatePropertyCardCounts(propertyCard);
+            }, 300);
+          })
+          .catch(e => showToast(`Error: ${e.message}`, 'err'));
+      }
+    }
+
+    function updatePropertyCardCounts(propertyCard) {
+      if (!propertyCard) return;
+      const accountList = propertyCard.querySelector('.account-list');
+      if (!accountList) return;
+
+      const remaining = accountList.querySelectorAll('.account-item').length;
+      const complete = accountList.querySelectorAll('.account-item.has-bill').length;
+      const pct = remaining > 0 ? Math.round(complete / remaining * 1000) / 10 : 0;
+
+      const statsEl = propertyCard.querySelector('.property-stats');
+      if (statsEl) {
+        const spans = statsEl.querySelectorAll('span');
+        if (spans[0]) spans[0].textContent = `${complete}/${remaining} assigned`;
+        const lastSpan = spans[spans.length - 1];
+        if (lastSpan) { lastSpan.textContent = `${pct}%`; lastSpan.style.color = pct >= 100 ? '#10b981' : pct > 0 ? '#f59e0b' : '#ef4444'; }
+      }
+
+      // Update progress bar
+      const progressFill = propertyCard.querySelector('.progress-fill');
+      if (progressFill) {
+        progressFill.style.width = `${pct}%`;
+        progressFill.className = `progress-fill ${pct >= 100 ? 'progress-green' : pct > 0 ? 'progress-yellow' : 'progress-red'}`;
+      }
+
+      // Update card status class
+      propertyCard.classList.remove('complete', 'partial', 'missing');
+      propertyCard.classList.add(pct >= 100 ? 'complete' : pct > 0 ? 'partial' : 'missing');
+    }
+
+
+    function openAdvancedSearch(accountNumber) {
+      // Open search page in new tab with account number pre-filled
+      const url = `/search?q=${encodeURIComponent(accountNumber)}`;
+      window.open(url, '_blank');
+    }
+
+    function viewPdf(pdfKey) {
+      if (!pdfKey) {
+        showToast('No PDF available for this invoice', 'err');
+        return;
+      }
+      const url = `/pdf?k=${encodeURIComponent(pdfKey)}`;
+      window.open(url, '_blank');
+    }
+
+    function populateTrackerPeriods() {
+      const select = document.getElementById('trackerPeriod');
+      const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+      const now = new Date();
+
+      // Generate options for past 24 months and next 12 months
+      const options = [];
+      for (let i = -24; i <= 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const mm = months[d.getMonth()];
+        const yyyy = d.getFullYear();
+        const value = `${mm}/${yyyy}`;
+        options.push({ value, sortKey: `${yyyy}-${mm}` });
+      }
+
+      // Sort by date (newest first)
+      options.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+      options.forEach(opt => {
+        select.add(new Option(opt.value, opt.value));
+      });
+    }
+
+    // -------- Report Generation --------
+    function openReportModal() {
+      const modal = document.getElementById('reportModal');
+      modal.classList.add('show');
+
+      // Load available periods
+      fetch('/api/billback/report/periods')
+        .then(r => r.json())
+        .then(data => {
+          const select = document.getElementById('reportPeriodSelect');
+          select.innerHTML = '<option value="">-- Select Period --</option>';
+          (data.periods || []).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.value;
+            opt.textContent = p.label + (p.has_data ? '' : ' (no data)');
+            select.appendChild(opt);
+          });
+          // Default to most recent period with data
+          const firstWithData = (data.periods || []).find(p => p.has_data);
+          if (firstWithData) select.value = firstWithData.value;
+        })
+        .catch(e => {
+          console.error('Error loading periods:', e);
+          const select = document.getElementById('reportPeriodSelect');
+          select.innerHTML = '<option value="">Error loading periods</option>';
+        });
+
+      // Setup style card selection
+      document.querySelectorAll('.style-card').forEach(card => {
+        card.addEventListener('click', function() {
+          document.querySelectorAll('.style-card').forEach(c => c.classList.remove('selected'));
+          this.classList.add('selected');
+          const radio = this.closest('label').querySelector('input[type="radio"]');
+          if (radio) radio.checked = true;
+        });
+      });
+    }
+
+    function closeReportModal() {
+      document.getElementById('reportModal').classList.remove('show');
+    }
+
+    // Manual Upload Functions
+    function openUploadModal() {
+      document.getElementById('uploadModal').classList.add('show');
+      document.getElementById('manualUploadFile').value = '';
+      document.getElementById('manualUploadSource').value = '';
+      document.getElementById('manualAddToTracker').checked = false;
+      document.getElementById('manualAddToUbi').checked = false;
+      document.getElementById('manualAddToUbi').disabled = true;
+      document.getElementById('uploadPreview').style.display = 'none';
+    }
+
+    function closeUploadModal() {
+      document.getElementById('uploadModal').classList.remove('show');
+    }
+
+    function exportMasterBillsCSV() {
+      const sorted = getSortedMasterBills();
+      if (!sorted.length) {
+        showToast('No data to export', 'err');
+        return;
+      }
+      const headers = ['Property','Lookup Code','Charge Code','Utility','Period Start','Period End','Amount','Source Lines','Status'];
+      const rows = sorted.map(mb => {
+        const sourceCount = mb.source_line_items ? mb.source_line_items.length : 0;
+        return [
+          mb.property_name || '',
+          mb.property_lookup_code || '',
+          mb.ar_code_mapping || '',
+          mb.utility_name || '',
+          mb.billback_month_start || '',
+          mb.billback_month_end || '',
+          (mb.utility_amount || 0).toFixed(2),
+          sourceCount,
+          mb.is_manual ? 'MANUAL' : (mb.status || 'draft')
+        ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+      });
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], {type: 'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Master_Bills_Export_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${sorted.length} rows`, 'ok');
+    }
+
+    // ============ RECLASSIFY UTILITY FUNCTIONS ============
+    function toggleSelectAllMB(cb) {
+      document.querySelectorAll('.mb-select').forEach(el => el.checked = cb.checked);
+      updateReclassifyBtn();
+    }
+
+    function updateReclassifyBtn() {
+      const selected = document.querySelectorAll('.mb-select:checked').length;
+      const btn = document.getElementById('reclassifyBtn');
+      if (selected > 0) {
+        btn.style.display = 'inline-block';
+        btn.textContent = `Reclassify (${selected})`;
+      } else {
+        btn.style.display = 'none';
+      }
+    }
+
+    function openReclassifyModal() {
+      const selected = document.querySelectorAll('.mb-select:checked');
+      if (!selected.length) return;
+      document.getElementById('reclassifyCount').textContent = `${selected.length} master bill row(s) selected`;
+      document.getElementById('reclassifyUtilitySelect').value = '';
+
+      // Populate charge code dropdown from current master bills data
+      const ccSelect = document.getElementById('reclassifyChargeCodeSelect');
+      const currentOptions = ccSelect.querySelectorAll('option:not(:first-child)');
+      currentOptions.forEach(o => o.remove());
+      const codes = new Set();
+      masterBills.forEach(mb => { if (mb.ar_code_mapping && mb.ar_code_mapping !== 'UNMAPPED') codes.add(mb.ar_code_mapping); });
+      Array.from(codes).sort().forEach(code => {
+        const opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = code;
+        ccSelect.appendChild(opt);
+      });
+      ccSelect.value = '';
+
+      document.getElementById('reclassifyModal').classList.add('show');
+    }
+
+    function closeReclassifyModal() {
+      document.getElementById('reclassifyModal').classList.remove('show');
+    }
+
+    async function doReclassify() {
+      const newUtility = document.getElementById('reclassifyUtilitySelect').value;
+      const newChargeCode = document.getElementById('reclassifyChargeCodeSelect').value;
+      if (!newUtility && !newChargeCode) {
+        showToast('Please select a charge code and/or utility type', 'err');
+        return;
+      }
+      const ids = Array.from(document.querySelectorAll('.mb-select:checked')).map(el => el.value);
+      if (!ids.length) return;
+
+      const payload = {master_bill_ids: ids};
+      if (newUtility) payload.new_utility = newUtility;
+      if (newChargeCode) payload.new_charge_code = newChargeCode;
+
+      try {
+        const resp = await fetch('/api/master-bills/reclassify', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Reclassify failed');
+        closeReclassifyModal();
+        const parts = [];
+        if (newChargeCode) parts.push(`charge code → "${newChargeCode}"`);
+        if (newUtility) parts.push(`utility → "${newUtility}"`);
+        showToast(`Reclassified ${data.changed} row(s): ${parts.join(', ')}`, 'ok');
+        loadMasterBills();
+      } catch (e) {
+        showToast(e.message, 'err');
+      }
+    }
+
+    function downloadSampleCSV() {
+      const headers = 'property_name,charge_code,amount,ubi_period,utility_type,start_date,end_date,vendor_name,account_number,description';
+      const sample1 = 'Sunset Apartments,5706-0000,1234.56,02/2026,Electric,01/15/2026,02/14/2026,City Power,ACC123,Common area electric';
+      const sample2 = 'Oak Gardens,5710-0000,567.89,02/2026,Water,01/20/2026,02/19/2026,Water District,WTR456,Water and sewer';
+      const csv = headers + '\n' + sample1 + '\n' + sample2;
+      const blob = new Blob([csv], {type: 'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'manual_billback_template.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('manualUploadFile')?.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const text = evt.target.result;
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          showToast('CSV must have at least a header and one data row', 'err');
+          return;
+        }
+
+        // Parse and preview
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+        const previewRows = lines.slice(1, 6); // First 5 data rows
+
+        let html = '<table style="width:100%;border-collapse:collapse"><thead><tr>';
+        headers.forEach(h => html += `<th style="padding:6px;border:1px solid #e5e7eb;background:#f9fafb;text-align:left">${h}</th>`);
+        html += '</tr></thead><tbody>';
+
+        previewRows.forEach(row => {
+          const cols = row.split(',').map(c => c.trim().replace(/"/g, ''));
+          html += '<tr>';
+          cols.forEach(c => html += `<td style="padding:6px;border:1px solid #e5e7eb">${c}</td>`);
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+
+        document.getElementById('uploadPreviewContent').innerHTML = html;
+        document.getElementById('uploadPreview').style.display = 'block';
+      };
+      reader.readAsText(file);
+    });
+
+    async function uploadManualData() {
+      const fileInput = document.getElementById('manualUploadFile');
+      const source = document.getElementById('manualUploadSource').value.trim() || 'Manual Upload';
+
+      if (!fileInput.files[0]) {
+        showToast('Please select a CSV file', 'err');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('source', source);
+      if (document.getElementById('manualAddToTracker').checked) {
+        formData.append('add_to_tracker', 'true');
+      }
+      if (document.getElementById('manualAddToUbi').checked) {
+        formData.append('add_to_ubi', 'true');
+      }
+
+      try {
+        showToast('Uploading...', 'ok');
+        const resp = await fetch('/api/master-bills/upload-manual', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.error || 'Upload failed');
+        }
+
+        const data = await resp.json();
+        let msg = `Uploaded ${data.count} manual entries`;
+        if (data.accounts_added > 0) msg += `, added ${data.accounts_added} account(s) to tracker`;
+        showToast(msg, 'ok');
+        closeUploadModal();
+
+        // Refresh the master bills to show the new data
+        generateMasterBills();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    function generateReport() {
+      const period = document.getElementById('reportPeriodSelect').value;
+      const style = document.querySelector('input[name="reportStyle"]:checked')?.value || 'corporate';
+
+      if (!period) {
+        showToast('Please select a period', 'err');
+        return;
+      }
+
+      showToast('Generating PDF report...', 'ok');
+
+      // Trigger download
+      const url = `/api/billback/report/pdf?period=${encodeURIComponent(period)}&style=${encodeURIComponent(style)}`;
+
+      fetch(url)
+        .then(response => {
+          if (!response.ok) throw new Error('Failed to generate report');
+          return response.blob();
+        })
+        .then(blob => {
+          const downloadUrl = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = `UBI_Billback_Summary_${period}_${style}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(downloadUrl);
+          closeReportModal();
+          showToast('Report downloaded successfully', 'ok');
+        })
+        .catch(e => {
+          console.error('Error generating report:', e);
+          showToast('Error generating report: ' + e.message, 'err');
+        });
+    }
+
+    // Report modal click-outside-to-close
+    (function() {
+      const modal = document.getElementById('reportModal');
+      if (!modal) return;
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeReportModal();
+      });
+    })();
+
+    // Initialize - populate dropdowns and load master bills on page load
+    populatePeriodDropdowns();
+    populateTrackerPeriods();
+
+    // Restore cached filter values
+    const cachedFilters = loadFiltersFromCache();
+    if (cachedFilters) {
+      if (cachedFilters.trackerPeriod) {
+        document.getElementById('trackerPeriod').value = cachedFilters.trackerPeriod;
+        // Auto-load tracker if period was cached
+        loadCompletionTracker();
+      }
+      if (cachedFilters.filterStartPeriod) {
+        document.getElementById('filterStartPeriod').value = cachedFilters.filterStartPeriod;
+      }
+      if (cachedFilters.filterEndPeriod) {
+        document.getElementById('filterEndPeriod').value = cachedFilters.filterEndPeriod;
+      }
+    }
+
+    loadMasterBills();
+  </script>
+</body>
+</html>

@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Post to Entrata Core</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .wrap{max-width:1100px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 12px 0}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left}
+    th{background:rgba(2,132,199,0.08);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.5px}
+    th.sortable{cursor:pointer;user-select:none}
+    th.sortable:hover{background:rgba(2,132,199,0.15)}
+    th.sort-asc::after{content:' ▲';font-size:9px;color:#0ea5e9}
+    th.sort-desc::after{content:' ▼';font-size:9px;color:#0ea5e9}
+    tr:hover{background:rgba(2,132,199,0.08)}
+    .status-chip{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .status-not-posted{background:#fef3c7;color:#92400e}
+    .status-posted{background:#d1fae5;color:#065f46}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+    .filters{display:flex;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid #e5e7eb;margin-bottom:10px}
+    .filters label{font-size:12px;color:#64748b}
+    .filters select,.filters input{padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;font-family:inherit}
+    .muted{opacity:.8;font-size:13px}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+    .loading-total{color:#94a3b8;font-style:italic;font-size:12px}
+    .loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:20000;align-items:center;justify-content:center;flex-direction:column}
+    .loading-overlay.show{display:flex}
+    .spinner{width:50px;height:50px;border:4px solid #fff;border-top:4px solid #0ea5e9;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .loading-text{color:#fff;margin-top:16px;font-size:16px;font-weight:600}
+    .location-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:15000;align-items:center;justify-content:center}
+    .location-modal-overlay.show{display:flex}
+    .location-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;padding:24px}
+    .location-modal-box h2{margin:0 0 8px 0;font-size:18px}
+    .location-modal-box .subtitle{color:#64748b;font-size:13px;margin-bottom:16px;word-break:break-all}
+    .location-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .location-modal-box select{width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px;cursor:pointer}
+    .location-modal-box select:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px rgba(14,165,233,.2)}
+    .location-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  </style>
+</head>
+<body>
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Processing...</div>
+  </div>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <!-- Vendor Location Selection Modal -->
+  <div id="locationModal" class="location-modal-overlay">
+    <div class="location-modal-box">
+      <h2>Select Vendor Location</h2>
+      <div class="subtitle" id="locationFileInfo"></div>
+      <label for="locationSelect">Vendor <span id="locationVendorId"></span> has multiple locations:</label>
+      <select id="locationSelect"></select>
+      <div class="location-modal-actions">
+        <button class="btn secondary" id="cancelLocation">Cancel</button>
+        <button class="btn" id="confirmLocation">Select Location</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="toolbar">
+        <h1>Post to Entrata Core</h1>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn small" onclick="selectAll(true)">Select All</button>
+          <button class="btn small" onclick="selectAll(false)">Clear</button>
+          <button id="delSelBtn" class="btn small danger" onclick="deleteSelected()" disabled>Delete Selected (<span id="selCount">0</span>)</button>
+          <button class="btn small" onclick="advanceToPostStage()">Advance to Billback Stage</button>
+          <button class="btn small" onclick="archiveSelected()">Advance to Archive</button>
+          <div class="muted" style="display:flex;gap:6px;align-items:center">
+            <label for="postMonth" style="font-size:12px;color:#334155">Post Month</label>
+            <select id="postMonth"></select>
+          </div>
+          <button class="btn small" onclick="confirmPost()">Post to Entrata Core</button>
+        </div>
+      </div>
+      <!-- Filters -->
+      <div class="filters">
+        <label>Status:</label>
+        <select id="filterStatus" onchange="applyFilters()">
+          <option value="">All</option>
+          <option value="Not Posted">Not Posted</option>
+          <option value="Posted">Posted</option>
+        </select>
+        <label style="margin-left:16px">Submitter:</label>
+        <select id="filterSubmitter" onchange="applyFilters()">
+          <option value="">All</option>
+          {% set submitters = [] %}
+          {% for it in items %}
+            {% if it.submitter and it.submitter not in submitters %}
+              {% set _ = submitters.append(it.submitter) %}
+            {% endif %}
+          {% endfor %}
+          {% for sub in submitters|sort %}
+          <option value="{{ sub }}">{{ sub }}</option>
+          {% endfor %}
+        </select>
+        <label style="margin-left:16px">Search:</label>
+        <input type="text" id="filterSearch" placeholder="Account, Property, Vendor..." oninput="applyFilters()" style="width:200px" />
+        <span id="rowCount" style="margin-left:auto;font-size:12px;color:#64748b"></span>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable" data-col="0" data-type="string">Account</th>
+            <th class="sortable" data-col="1" data-type="string">Property</th>
+            <th class="sortable" data-col="2" data-type="string">Vendor</th>
+            <th class="sortable" data-col="3" data-type="string">Parse Date</th>
+            <th class="sortable" data-col="4" data-type="string">Status</th>
+            <th class="sortable" data-col="5" data-type="string">Submitter</th>
+            <th class="sortable" data-col="6" data-type="currency">Total</th>
+            <th class="sortable" data-col="7" data-type="date">Modified</th>
+            <th>Select</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for it in items %}
+          {% set title_parts = (it.title or it.key).split(' | ') %}
+          <tr data-status="{{ it.status }}" data-submitter="{{ it.submitter or '' }}">
+            <td>{{ title_parts[0] if title_parts|length > 0 else '' }}</td>
+            <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ title_parts[1] if title_parts|length > 1 else '' }}">{{ title_parts[1] if title_parts|length > 1 else '' }}</td>
+            <td>{{ title_parts[2] if title_parts|length > 2 else '' }}</td>
+            <td>{{ title_parts[3] if title_parts|length > 3 else '' }}</td>
+            <td><span class="status-chip {% if it.status == 'Posted' %}status-posted{% else %}status-not-posted{% endif %}">{{ it.status }}</span></td>
+            <td style="font-size:12px">{{ it.submitter or '-' }}</td>
+            <td class="total-cell" data-key="{{ it.key }}">{% if it.total_amount is not none %}${{ "%.2f"|format(it.total_amount) }}{% else %}<span class="loading-total">...</span>{% endif %}</td>
+            <td style="font-size:11px;white-space:nowrap">{{ it.last_modified_human or it.last_modified }}</td>
+            <td><input type="checkbox" class="pick" value="{{ it.key }}" /></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      
+    </div>
+  </div>
+  <script>
+    function showLoading(msg) {
+      document.getElementById('loadingText').textContent = msg || 'Processing...';
+      document.getElementById('loadingOverlay').classList.add('show');
+    }
+    function hideLoading() {
+      document.getElementById('loadingOverlay').classList.remove('show');
+    }
+
+    function selectAll(on){
+      // Only select checkboxes in VISIBLE rows (not filtered out)
+      document.querySelectorAll('tbody tr').forEach(row => {
+        if (row.style.display !== 'none') {
+          const checkbox = row.querySelector('.pick');
+          if (checkbox) checkbox.checked = !!on;
+        }
+      });
+      updateSelectedCount();
+    }
+
+    async function advanceToPostStage(){
+      const picks = Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+      if (!picks.length){ alert('Select at least one file.'); return; }
+      if (!confirm('Advance ' + picks.length + ' file(s) to Billback (Post-Entrata) without posting?')) return;
+      showLoading('Advancing ' + picks.length + ' file(s) to Billback...');
+      const fd = new FormData(); fd.append('keys', picks.join('|||'));  // Use ||| delimiter for filenames with commas
+      const r = await fetch('/api/advance_to_post_stage', { method:'POST', body: fd });
+      const j = await r.json().catch(()=>({}));
+      hideLoading();
+      if (!r.ok || !j || j.error){ alert('Advance failed: ' + (j.error || r.status)); return; }
+      // Show errors from errors array if any
+      if (j.errors && j.errors.length > 0) {
+        const errMsgs = j.errors.map(e => `${e.key ? e.key.split('/').pop() : 'Unknown'}: ${e.error}`).join('\n');
+        alert('Some files failed to advance:\n' + errMsgs);
+      }
+      // Remove moved rows
+      (j.results||[]).forEach(o => {
+        if (o && o.moved){
+          const tr = document.querySelector(`tbody tr td input.pick[value="${(o.key||'').replace(/"/g,'\\"')}"]`)?.closest('tr');
+          if (tr) tr.remove();
+        }
+      });
+      updateSelectedCount();
+      applyFilters();
+    }
+
+    async function archiveSelected(){
+      const picks = Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+      if (!picks.length){ alert('Select at least one file to archive.'); return; }
+      if (!confirm('Archive ' + picks.length + ' file(s) to Historical Archive?')) return;
+      showLoading('Archiving ' + picks.length + ' file(s)...');
+      const fd = new FormData(); fd.append('keys', picks.join('|||'));  // Use ||| delimiter for filenames with commas
+      const r = await fetch('/api/archive_parsed', { method:'POST', body: fd });
+      const j = await r.json().catch(()=>({}));
+      hideLoading();
+      if (!r.ok || !j || j.error){ alert('Archive failed: ' + (j.error || r.status)); return; }
+      // Show errors from errors array if any
+      if (j.errors && j.errors.length > 0) {
+        const errMsgs = j.errors.map(e => `${e.key ? e.key.split('/').pop() : 'Unknown'}: ${e.error}`).join('\n');
+        alert('Some files failed to archive:\n' + errMsgs);
+      }
+      // Remove archived rows
+      (j.results||[]).forEach(o => {
+        if (o && o.archived){
+          const tr = document.querySelector(`tbody tr td input.pick[value="${(o.key||'').replace(/"/g,'\\"')}"]`)?.closest('tr');
+          if (tr) tr.remove();
+        }
+      });
+      updateSelectedCount();
+      applyFilters();
+    }
+    // Location modal state
+    let pendingLocationResolve = null;
+    let pendingLocationReject = null;
+
+    function showLocationModal(vendorId, key, choices) {
+      return new Promise((resolve, reject) => {
+        pendingLocationResolve = resolve;
+        pendingLocationReject = reject;
+
+        const modal = document.getElementById('locationModal');
+        const select = document.getElementById('locationSelect');
+        const vendorSpan = document.getElementById('locationVendorId');
+        const fileInfo = document.getElementById('locationFileInfo');
+
+        // Set vendor ID and file info
+        vendorSpan.textContent = vendorId;
+        const filename = key.split('/').pop();
+        fileInfo.textContent = 'File: ' + filename;
+
+        // Populate select with choices
+        select.innerHTML = '';
+        if (choices && choices.length) {
+          choices.forEach(c => {
+            const opt = document.createElement('option');
+            if (typeof c === 'object') {
+              opt.value = c.id;
+              opt.textContent = c.id + ' - ' + (c.name || 'Unknown');
+            } else {
+              opt.value = c;
+              opt.textContent = c;
+            }
+            select.appendChild(opt);
+          });
+        } else {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'No locations available';
+          select.appendChild(opt);
+        }
+
+        modal.classList.add('show');
+      });
+    }
+
+    // Setup location modal event handlers
+    document.addEventListener('DOMContentLoaded', () => {
+      const modal = document.getElementById('locationModal');
+      const cancelBtn = document.getElementById('cancelLocation');
+      const confirmBtn = document.getElementById('confirmLocation');
+      const select = document.getElementById('locationSelect');
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        if (pendingLocationReject) {
+          pendingLocationReject('cancelled');
+          pendingLocationResolve = null;
+          pendingLocationReject = null;
+        }
+      });
+
+      confirmBtn.addEventListener('click', () => {
+        const value = select.value;
+        modal.classList.remove('show');
+        if (pendingLocationResolve) {
+          pendingLocationResolve(value);
+          pendingLocationResolve = null;
+          pendingLocationReject = null;
+        }
+      });
+
+      // Close on overlay click
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          if (pendingLocationReject) {
+            pendingLocationReject('cancelled');
+            pendingLocationResolve = null;
+            pendingLocationReject = null;
+          }
+        }
+      });
+    });
+
+    async function confirmPost(){
+      const picks = Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+      if (!picks.length){ alert('Select at least one file to POST.'); return; }
+      if (!confirm('Post ' + picks.length + ' file(s) to Entrata Core?')) return;
+
+      // Process in batches of 10 to avoid timeout
+      const BATCH_SIZE = 10;
+      const batches = [];
+      for (let i = 0; i < picks.length; i += BATCH_SIZE) {
+        batches.push(picks.slice(i, i + BATCH_SIZE));
+      }
+
+      // Collect vendor overrides across all batches (resolved once, reused)
+      const vendorOverrides = {};
+      let totalUpdated = 0;
+      let totalMoved = 0, totalNotMoved = 0, totalFailed = 0;
+      const allErrors = [];
+      const allLines = [];
+
+      try {
+        for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+          const batch = batches[batchIdx];
+          const batchNum = batchIdx + 1;
+          showLoading(`Posting batch ${batchNum}/${batches.length} (${batch.length} files)...`);
+
+          const fd = new FormData();
+          fd.append('keys', batch.join('|||'));  // Use ||| delimiter for filenames with commas
+          try {
+            const pm = document.getElementById('postMonth');
+            if (pm && pm.value) { fd.append('post_month', pm.value); }
+          } catch(_) { }
+          // Include any vendor overrides we've already resolved
+          if (Object.keys(vendorOverrides).length > 0) {
+            fd.append('vendor_overrides', JSON.stringify(vendorOverrides));
+          }
+
+          let resp = await fetch('/api/post_to_entrata', { method: 'POST', body: fd });
+
+          if (!resp.ok) {
+            let t = await resp.text();
+            try {
+              const j = JSON.parse(t);
+              if (j && j.message === 'vendor_locations_needed' && Array.isArray(j.unresolved)) {
+                // Hide loading while collecting location selections
+                hideLoading();
+                // Build overrides using modal
+                try {
+                  for (const u of j.unresolved) {
+                    // Skip if we already have an override for this vendor
+                    if (vendorOverrides[u.vendorId]) continue;
+                    const choices = Array.isArray(u.choices) ? u.choices : [];
+                    const picked = await showLocationModal(u.vendorId, u.key, choices);
+                    if (!picked) {
+                      alert('No location selected. Cancelled.');
+                      return;
+                    }
+                    vendorOverrides[u.vendorId] = picked;
+                  }
+                } catch (e) {
+                  // User cancelled
+                  return;
+                }
+                // Retry this batch with the new overrides
+                showLoading(`Retrying batch ${batchNum}/${batches.length} with selected locations...`);
+                const fd2 = new FormData();
+                fd2.append('keys', batch.join('|||'));
+                try {
+                  const pm2 = document.getElementById('postMonth');
+                  if (pm2 && pm2.value) { fd2.append('post_month', pm2.value); }
+                } catch(_) { }
+                fd2.append('vendor_overrides', JSON.stringify(vendorOverrides));
+                resp = await fetch('/api/post_to_entrata', { method: 'POST', body: fd2 });
+                if (!resp.ok) {
+                  const t2 = await resp.text();
+                  allErrors.push({ batch: batchNum, error: t2 });
+                  continue; // Move to next batch
+                }
+              } else {
+                allErrors.push({ batch: batchNum, error: t });
+                continue; // Move to next batch
+              }
+            } catch(_) {
+              allErrors.push({ batch: batchNum, error: t });
+              continue; // Move to next batch
+            }
+          }
+
+          const j2 = await resp.json();
+          if (!j2.ok) {
+            allErrors.push({ batch: batchNum, error: j2.message || JSON.stringify(j2) });
+            continue; // Move to next batch
+          }
+
+          // Accumulate results
+          totalUpdated += (j2.updated ?? 0);
+
+          // Optimistically remove posted rows from UI
+          if (Array.isArray(j2.results)) {
+            for (const r of j2.results) {
+              if (r.posted) {
+                const cb = document.querySelector(`tbody input.pick[value="${(r.key||'').replace(/"/g,'\\\"')}"]`);
+                const row = cb ? cb.closest('tr') : null;
+                if (row) row.remove();
+              }
+              // Tally results
+              if (r.posted && r.moved) { totalMoved++; if (r.newKey) allLines.push('Moved: ' + r.newKey); }
+              else if (r.posted && !r.moved) { totalNotMoved++; allLines.push('Posted but not moved: ' + (r.key||'')); }
+              else { totalFailed++; allLines.push('Failed to post: ' + (r.key||'')); }
+            }
+          }
+          if (Array.isArray(j2.errors) && j2.errors.length) {
+            for (const e of j2.errors) { allErrors.push(e); }
+          }
+        }
+
+        hideLoading();
+
+        // Build final summary
+        let summaryLines = [];
+        if (allErrors.length > 0) {
+          summaryLines.push('Errors:');
+          for (const e of allErrors) { summaryLines.push('- ' + JSON.stringify(e)); }
+        }
+
+        alert('POST complete. Updated ' + totalUpdated + ' file(s).\n' +
+              'Moved: ' + totalMoved + ', Posted-not-moved: ' + totalNotMoved + ', Failed: ' + totalFailed +
+              (summaryLines.length ? ('\n\n' + summaryLines.join('\n')) : ''));
+        updateSelectedCount();
+        applyFilters();
+      } catch(e) { hideLoading(); alert('POST error: ' + e); }
+    }
+
+    
+
+    function updateSelectedCount(){
+      const n = document.querySelectorAll('.pick:checked').length;
+      const btn = document.getElementById('delSelBtn');
+      const span = document.getElementById('selCount');
+      if (span) span.textContent = n.toString();
+      if (btn) btn.disabled = n === 0;
+    }
+
+    // Populate Post Month (next 36 months, MM/YYYY) and wire up checkbox handlers
+    document.addEventListener('DOMContentLoaded', () => {
+      try{
+        const sel = document.getElementById('postMonth');
+        if (sel){
+          const now = new Date();
+          const total = 36; // next 3 years
+          for (let i=0;i<total;i++){
+            const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()+i, 1));
+            const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+            const yyyy = d.getUTCFullYear();
+            const label = `${mm}/${yyyy}`;
+            const opt = document.createElement('option');
+            opt.value = label; // send MM/YYYY
+            opt.textContent = label;
+            sel.appendChild(opt);
+          }
+          sel.selectedIndex = 0;
+        }
+      }catch(_){ }
+      document.querySelectorAll('.pick').forEach(c => c.addEventListener('change', updateSelectedCount));
+      updateSelectedCount();
+
+      // PERF: Lazy-load totals after page renders (much faster initial load)
+      loadTotalsLazy();
+    });
+
+    async function loadTotalsLazy() {
+      const cells = document.querySelectorAll('.total-cell .loading-total');
+      if (cells.length === 0) return;
+
+      // Load totals in batches of 5 to avoid overwhelming the server
+      const batchSize = 5;
+      const cellsArray = Array.from(cells);
+
+      for (let i = 0; i < cellsArray.length; i += batchSize) {
+        const batch = cellsArray.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (loadingSpan) => {
+          const cell = loadingSpan.closest('.total-cell');
+          const key = cell?.dataset?.key;
+          if (!key) return;
+
+          try {
+            const r = await fetch(`/api/post/total?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' });
+            const j = await r.json();
+            if (j && typeof j.total === 'number') {
+              cell.textContent = '$' + j.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            } else {
+              cell.textContent = '$0.00';
+            }
+          } catch (e) {
+            cell.textContent = 'Error';
+          }
+        }));
+      }
+    }
+
+    async function deleteSelected(){
+      const picks = Array.from(document.querySelectorAll('.pick:checked')).map(x => x.value);
+      if (!picks.length){ alert('Select at least one file to delete.'); return; }
+      if (!confirm('Delete ' + picks.length + ' merged file(s)? This cannot be undone.')) return;
+      showLoading('Deleting ' + picks.length + ' file(s)...');
+      for (const key of picks){
+        try{
+          const fd = new FormData(); fd.append('key', key);
+          const r = await fetch('/api/delete_preentrata', { method:'POST', body: fd });
+          if (r.ok){
+            const tr = document.querySelector(`tbody tr td input.pick[value="${key.replace(/"/g,'\\"')}"]`)?.closest('tr');
+            if (tr) tr.remove();
+          }
+        }catch(_){ /* continue */ }
+      }
+      hideLoading();
+      updateSelectedCount();
+      applyFilters();
+    }
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+
+    // Filtering functionality
+    function applyFilters() {
+      const statusFilter = document.getElementById('filterStatus').value.toLowerCase();
+      const submitterFilter = document.getElementById('filterSubmitter').value;
+      const searchFilter = document.getElementById('filterSearch').value.toLowerCase();
+      const rows = document.querySelectorAll('tbody tr');
+      let visibleCount = 0;
+
+      rows.forEach(row => {
+        const status = (row.dataset.status || '').toLowerCase();
+        const submitter = row.dataset.submitter || '';
+        const text = row.textContent.toLowerCase();
+
+        const statusMatch = !statusFilter || status.includes(statusFilter);
+        const submitterMatch = !submitterFilter || submitter === submitterFilter;
+        const searchMatch = !searchFilter || text.includes(searchFilter);
+
+        if (statusMatch && submitterMatch && searchMatch) {
+          row.style.display = '';
+          visibleCount++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+
+      document.getElementById('rowCount').textContent = `Showing ${visibleCount} of ${rows.length} items`;
+    }
+
+    // Table sorting functionality
+    (function(){
+      let currentSort = { col: null, dir: 'asc' };
+
+      function sortTable(colIndex, dataType) {
+        const tbody = document.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        if (currentSort.col === colIndex) {
+          currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          currentSort.col = colIndex;
+          currentSort.dir = 'asc';
+        }
+
+        document.querySelectorAll('th.sortable').forEach(th => {
+          th.classList.remove('sort-asc', 'sort-desc');
+        });
+        const th = document.querySelector(`th[data-col="${colIndex}"]`);
+        if (th) th.classList.add(currentSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        rows.sort((a, b) => {
+          const cellA = a.querySelectorAll('td')[colIndex];
+          const cellB = b.querySelectorAll('td')[colIndex];
+          let valA = cellA ? cellA.textContent.trim() : '';
+          let valB = cellB ? cellB.textContent.trim() : '';
+
+          if (dataType === 'number') {
+            valA = parseInt(valA) || 0;
+            valB = parseInt(valB) || 0;
+          } else if (dataType === 'currency') {
+            valA = parseFloat(valA.replace(/[$,\.\.\.]/g, '')) || 0;
+            valB = parseFloat(valB.replace(/[$,\.\.\.]/g, '')) || 0;
+          } else if (dataType === 'date') {
+            valA = new Date(valA).getTime() || 0;
+            valB = new Date(valB).getTime() || 0;
+          } else {
+            valA = valA.toLowerCase();
+            valB = valB.toLowerCase();
+          }
+
+          if (valA < valB) return currentSort.dir === 'asc' ? -1 : 1;
+          if (valA > valB) return currentSort.dir === 'asc' ? 1 : -1;
+          return 0;
+        });
+
+        rows.forEach(row => tbody.appendChild(row));
+      }
+
+      document.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const col = parseInt(th.dataset.col);
+          const type = th.dataset.type || 'string';
+          sortTable(col, type);
+        });
+      });
+
+      // Initialize row count
+      applyFilters();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+{
+    "Version":  "2012-10-17",
+    "Statement":  [
+                      {
+                          "Sid":  "CreateWithOwnerTagTina",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "lambda:CreateFunction",
+                                         "logs:CreateLogGroup",
+                                         "logs:CreateLogStream",
+                                         "iam:CreatePolicy",
+                                         "iam:CreateRole",
+                                         "states:CreateStateMachine",
+                                         "s3:CreateBucket"
+                                     ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringEquals":  {
+                                                                 "aws:RequestTag/Owner":  "tina"
+                                                             }
+                                        }
+                      },
+                      {
+                          "Sid":  "PutObjectMustCarryOwnerTina",
+                          "Effect":  "Allow",
+                          "Action":  "s3:PutObject",
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringEquals":  {
+                                                                 "aws:RequestTag/Owner":  "tina"
+                                                             }
+                                        }
+                      },
+                      {
+                          "Sid":  "FullControlOfTinaTaggedResources",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "s3:*",
+                                         "lambda:*",
+                                         "logs:*",
+                                         "states:*",
+                                         "iam:AttachRolePolicy",
+                                         "iam:DetachRolePolicy",
+                                         "iam:PutRolePolicy",
+                                         "iam:DeleteRolePolicy",
+                                         "iam:CreatePolicyVersion",
+                                         "iam:DeletePolicyVersion",
+                                         "iam:PassRole",
+                                         "iam:UpdateAssumeRolePolicy",
+                                         "iam:UpdateRole",
+                                         "iam:UpdateRoleDescription",
+                                         "iam:DeleteRole",
+                                         "iam:TagRole",
+                                         "iam:UntagRole"
+                                     ],
+                          "Resource":  "*",
+                          "Condition":  {
+                                            "StringEquals":  {
+                                                                 "aws:ResourceTag/Owner":  "tina"
+                                                             }
+                                        }
+                      },
+                      {
+                          "Sid":  "AllowAttachAwsManagedPolicyArns",
+                          "Effect":  "Allow",
+                          "Action":  "iam:AttachRolePolicy",
+                          "Resource":  [
+                                           "arn:aws:iam::aws:policy/*"
+                                       ]
+                      },
+                      {
+                          "Sid":  "ReadOnlyDiscovery",
+                          "Effect":  "Allow",
+                          "Action":  [
+                                         "s3:List*",
+                                         "s3:Get*",
+                                         "lambda:Get*",
+                                         "lambda:List*",
+                                         "logs:Describe*",
+                                         "logs:Get*",
+                                         "logs:List*",
+                                         "states:Describe*",
+                                         "states:List*",
+                                         "iam:Get*",
+                                         "iam:List*"
+                                     ],
+                          "Resource":  "*"
+                      }
+                  ]
+}

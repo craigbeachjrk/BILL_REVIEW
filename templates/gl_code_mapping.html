@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GL Code to Charge Code Mapping · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .btn.success{background:#10b981}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0}
+    tr:hover{background:#f9fafb}
+    input[type="text"],select{padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;width:100%;box-sizing:border-box}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.global{background:#dbeafe;color:#1e40af}
+    .badge.property{background:#d1fae5;color:#065f46}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .help-text{font-size:12px;color:#64748b;margin-top:8px;font-style:italic}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · GL Code Mapping</a></div>
+    <div class="logout">
+      <a class="btn secondary" href="/config">Config Menu</a>
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>GL Code to Charge Code Mapping (Property-Aware)</h1>
+
+    <div class="card">
+      <div class="help-text" style="margin-bottom:20px;padding:12px;background:#fef3c7;border-radius:8px;border:1px solid #fbbf24">
+        <strong>How this works:</strong> Map GL codes to charge codes for automatic lookup during billback.<br>
+        • Use <strong>Property Name</strong> to create property-specific mappings (same GL code = different charge codes at different properties)<br>
+        • Use <strong>"* (All Properties)"</strong> to create global mappings that apply everywhere<br>
+        • Property-specific mappings take precedence over global mappings
+      </div>
+
+      <div class="controls">
+        <button class="btn success" onclick="addRow()">+ Add Mapping</button>
+        <button class="btn" onclick="saveAll()">Save All</button>
+        <button class="btn secondary" onclick="loadMappings()">Refresh</button>
+        <div style="flex:1"></div>
+        <span id="rowCount" style="color:#64748b;font-size:13px"></span>
+      </div>
+
+      <div id="loading" class="loading">Loading mappings...</div>
+
+      <div id="tableContainer" style="display:none;max-height:600px;overflow-y:auto">
+        <table id="mappingTable">
+          <thead>
+            <tr>
+              <th style="width:180px">Property Name</th>
+              <th style="width:120px">Property ID</th>
+              <th style="width:120px">GL Code</th>
+              <th style="width:200px">GL Code Name</th>
+              <th style="width:120px">GL Account ID</th>
+              <th style="width:140px">Charge Code</th>
+              <th style="width:140px">Utility Name</th>
+              <th style="width:100px">Billable?</th>
+              <th style="width:200px">Notes</th>
+              <th style="width:80px">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let mappings = [];
+    let properties = [];
+    let chargeCodes = [];
+    let glAccounts = [];
+
+    async function loadProperties() {
+      try {
+        const response = await fetch('/api/catalog/properties');
+        const data = await response.json();
+        properties = data.items || [];
+      } catch (e) {
+        console.error('Error loading properties:', e);
+      }
+    }
+
+    async function loadChargeCodes() {
+      try {
+        const response = await fetch('/api/config/charge-codes');
+        const data = await response.json();
+        chargeCodes = data.items || [];
+      } catch (e) {
+        console.error('Error loading charge codes:', e);
+      }
+    }
+
+    async function loadGLAccounts() {
+      try {
+        const response = await fetch('/api/catalog/gl-accounts');
+        const data = await response.json();
+        glAccounts = data.items || [];
+        console.log('[GL Mapping] Loaded', glAccounts.length, 'GL accounts');
+        console.log('[GL Mapping] Sample GL account:', glAccounts[0]);
+      } catch (e) {
+        console.error('Error loading GL accounts:', e);
+      }
+    }
+
+    async function loadMappings() {
+      const loading = document.getElementById('loading');
+      const tableContainer = document.getElementById('tableContainer');
+
+      loading.style.display = 'block';
+      tableContainer.style.display = 'none';
+
+      await loadProperties();
+      await loadChargeCodes();
+      await loadGLAccounts();
+
+      try {
+        const response = await fetch('/api/config/gl-charge-code-mapping');
+        if (!response.ok) throw new Error('Failed to load mappings');
+
+        const data = await response.json();
+        mappings = data.items || [];
+
+        loading.style.display = 'none';
+        tableContainer.style.display = 'block';
+
+        renderTable();
+      } catch (e) {
+        console.error('Error loading mappings:', e);
+        loading.textContent = 'Error loading mappings. Please try again.';
+        showToast('Error loading mappings', 'err');
+      }
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
+
+      if (mappings.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#64748b;padding:40px">No mappings yet. Click "+ Add Mapping" to create one.</td></tr>';
+        updateRowCount();
+        return;
+      }
+
+      mappings.forEach((mapping, index) => {
+        const row = tbody.insertRow();
+        const isGlobal = mapping.property_id === '*';
+
+        row.innerHTML = `
+          <td>
+            <select data-index="${index}" data-field="property_name" onchange="updateMapping(${index}, 'property_name', this.value)">
+              <option value="*">* (All Properties)</option>
+              ${properties.map(p => `<option value="${p.name}" ${mapping.property_name === p.name ? 'selected' : ''}>${p.name}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <input type="text" value="${mapping.property_id || ''}" data-index="${index}" data-field="property_id"
+                   onchange="updateMapping(${index}, 'property_id', this.value)"
+                   ${isGlobal ? 'readonly style="background:#f3f4f6"' : 'readonly style="background:#f3f4f6"'} />
+          </td>
+          <td>
+            <select data-index="${index}" data-field="gl_code" onchange="updateMapping(${index}, 'gl_code', this.value)">
+              <option value="">-- Select GL Code --</option>
+              ${glAccounts.map(gl => `<option value="${gl.number}" ${mapping.gl_code === gl.number ? 'selected' : ''}>${gl.formatted}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <select data-index="${index}" data-field="gl_code_name" onchange="updateMapping(${index}, 'gl_code_name', this.value)">
+              <option value="">-- Select GL Name --</option>
+              ${glAccounts.map(gl => `<option value="${gl.name}" ${mapping.gl_code_name === gl.name ? 'selected' : ''}>${gl.name}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <select data-index="${index}" data-field="gl_account_id" onchange="updateMapping(${index}, 'gl_account_id', this.value)">
+              <option value="">-- Select GL Account ID --</option>
+              ${glAccounts.map(gl => `<option value="${gl.id}" ${mapping.gl_account_id === gl.id ? 'selected' : ''}>${gl.id}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <select data-index="${index}" data-field="charge_code_combo" onchange="updateMapping(${index}, 'charge_code_combo', this.value)">
+              <option value="">-- Select --</option>
+              ${chargeCodes.map(cc => `<option value="${cc.chargeCode}||${cc.utilityName || ''}" ${mapping.charge_code === cc.chargeCode && mapping.utility_name === cc.utilityName ? 'selected' : ''}>${cc.chargeCode}${cc.utilityName ? ' (' + cc.utilityName + ')' : ''}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <select data-index="${index}" data-field="utility_name" onchange="updateMapping(${index}, 'utility_name', this.value)">
+              <option value="">-- Select Utility --</option>
+              ${[...new Set(chargeCodes.map(cc => cc.utilityName).filter(u => u))].map(utilityName => `<option value="${utilityName}" ${mapping.utility_name === utilityName ? 'selected' : ''}>${utilityName}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <select data-index="${index}" data-field="is_billable" onchange="updateMapping(${index}, 'is_billable', this.value === 'true')">
+              <option value="true" ${mapping.is_billable ? 'selected' : ''}>Yes</option>
+              <option value="false" ${!mapping.is_billable ? 'selected' : ''}>No</option>
+            </select>
+          </td>
+          <td><input type="text" value="${mapping.notes || ''}" data-index="${index}" data-field="notes" onchange="updateMapping(${index}, 'notes', this.value)" /></td>
+          <td><button class="btn small secondary" onclick="deleteRow(${index})">Delete</button></td>
+        `;
+      });
+
+      updateRowCount();
+    }
+
+    function updateMapping(index, field, value) {
+      mappings[index][field] = value;
+
+      // If property name changed, update property_id
+      if (field === 'property_name') {
+        if (value === '*') {
+          mappings[index].property_id = '*';
+        } else {
+          const property = properties.find(p => p.name === value);
+          mappings[index].property_id = property ? property.id : '';
+        }
+        renderTable();
+      }
+
+      // If GL code changed, auto-fill GL code name and GL account ID
+      if (field === 'gl_code') {
+        console.log('[GL Mapping] GL Code changed to:', value);
+        const glAccount = glAccounts.find(gl => gl.number === value);
+        console.log('[GL Mapping] Found GL Account:', glAccount);
+        if (glAccount) {
+          mappings[index].gl_code_name = glAccount.name || '';
+          mappings[index].gl_account_id = glAccount.id || '';
+          console.log('[GL Mapping] Auto-filled - Name:', glAccount.name, 'ID:', glAccount.id);
+        } else {
+          console.warn('[GL Mapping] No GL Account found for code:', value);
+        }
+        renderTable();
+      }
+
+      // If GL code name changed, auto-fill GL code and GL account ID
+      if (field === 'gl_code_name') {
+        console.log('[GL Mapping] GL Code Name changed to:', value);
+        const glAccount = glAccounts.find(gl => gl.name === value);
+        console.log('[GL Mapping] Found GL Account:', glAccount);
+        if (glAccount) {
+          mappings[index].gl_code = glAccount.number || '';
+          mappings[index].gl_account_id = glAccount.id || '';
+          console.log('[GL Mapping] Auto-filled - Code:', glAccount.number, 'ID:', glAccount.id);
+        } else {
+          console.warn('[GL Mapping] No GL Account found for name:', value);
+        }
+        renderTable();
+      }
+
+      // If GL account ID changed, auto-fill GL code and GL code name
+      if (field === 'gl_account_id') {
+        console.log('[GL Mapping] GL Account ID changed to:', value);
+        const glAccount = glAccounts.find(gl => gl.id === value);
+        console.log('[GL Mapping] Found GL Account:', glAccount);
+        if (glAccount) {
+          mappings[index].gl_code = glAccount.number || '';
+          mappings[index].gl_code_name = glAccount.name || '';
+          console.log('[GL Mapping] Auto-filled - Code:', glAccount.number, 'Name:', glAccount.name);
+        } else {
+          console.warn('[GL Mapping] No GL Account found for ID:', value);
+        }
+        renderTable();
+      }
+
+      // If charge code combo changed (format: chargeCode||utilityName), parse and set both
+      if (field === 'charge_code_combo') {
+        const parts = value.split('||');
+        mappings[index].charge_code = parts[0] || '';
+        mappings[index].utility_name = parts[1] || '';
+        console.log('[GL Mapping] Charge Code Combo parsed:', { charge_code: parts[0], utility_name: parts[1] });
+        renderTable();
+        return; // Don't fall through to other handlers
+      }
+
+      // If charge code changed directly (legacy), auto-fill utility name
+      if (field === 'charge_code') {
+        const chargeCode = chargeCodes.find(cc => cc.chargeCode === value);
+        if (chargeCode) {
+          mappings[index].utility_name = chargeCode.utilityName || '';
+        }
+        renderTable();
+      }
+
+      // If utility name changed, try to auto-fill charge code (use first matching charge code)
+      if (field === 'utility_name') {
+        const chargeCode = chargeCodes.find(cc => cc.utilityName === value);
+        if (chargeCode) {
+          mappings[index].charge_code = chargeCode.chargeCode || '';
+        }
+        renderTable();
+      }
+    }
+
+    function addRow() {
+      mappings.push({
+        property_id: '*',
+        property_name: '*',
+        gl_code: '',
+        gl_code_name: '',
+        gl_account_id: '',
+        charge_code: '',
+        utility_name: '',
+        is_billable: true,
+        notes: ''
+      });
+      renderTable();
+    }
+
+    function deleteRow(index) {
+      if (confirm('Delete this mapping?')) {
+        mappings.splice(index, 1);
+        renderTable();
+      }
+    }
+
+    function updateRowCount() {
+      const count = mappings.length;
+      document.getElementById('rowCount').textContent = `${count} mapping${count !== 1 ? 's' : ''}`;
+    }
+
+    async function saveAll() {
+      try {
+        const response = await fetch('/api/config/gl-charge-code-mapping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: mappings })
+        });
+
+        if (!response.ok) throw new Error('Failed to save');
+
+        showToast('Mappings saved successfully', 'ok');
+        await loadMappings();
+      } catch (e) {
+        console.error('Error saving mappings:', e);
+        showToast('Error saving mappings', 'err');
+      }
+    }
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // Initialize
+    loadMappings();
+  </script>
+</body>
+</html>

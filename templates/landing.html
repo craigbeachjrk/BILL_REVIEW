@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bill Review @ JRK · Home</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .wrap{max-width:1100px;margin:60px auto;padding:0 20px}
+    h1{margin:0 0 16px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+    .tile{display:block;text-decoration:none;color:inherit;background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;transition:transform .08s ease, box-shadow .12s ease;cursor:pointer;position:relative;z-index:1}
+    .tile:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(0,0,0,.18)}
+    .tile h2{margin:0 0 10px 0;font-size:18px}
+    .muted{opacity:.8;font-size:13px}
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9998;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;padding:24px}
+    .modal-box h2{margin:0 0 16px 0}
+    .modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .modal-box input,.modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit}
+    .modal-box textarea{min-height:100px;resize:vertical}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div class="logout">
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div id="improveModal" class="modal-overlay">
+    <div class="modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <h1>Main</h1>
+    <div class="grid">
+      <a class="tile" href="/input">
+        <h2>INPUT</h2>
+        <div class="muted">Upload PDFs into Bill Parser</div>
+      </a>
+      <a class="tile" href="/parse">
+        <h2>PARSE</h2>
+        <div class="muted">Review parsed invoices for accuracy</div>
+      </a>
+      <a class="tile" href="/post">
+        <h2>POST</h2>
+        <div class="muted">Post invoices to Entrata Core</div>
+      </a>
+      <a class="tile" href="/search">
+        <h2>ADVANCED SEARCH</h2>
+        <div class="muted">Search across all parse dates</div>
+      </a>
+      <a class="tile" href="/workflow">
+        <h2>WORKFLOW</h2>
+        <div class="muted">Prioritized account status & overdue alerts</div>
+      </a>
+      <a class="tile" href="/directed">
+        <h2>DIRECTED</h2>
+        <div class="muted">Auto-generated daily work plans by priority</div>
+      </a>
+      <a class="tile" href="/track">
+        <h2>TRACK</h2>
+        <div class="muted">Track status of utility accounts</div>
+      </a>
+      {% if is_admin %}
+      <a class="tile" href="/print-checks">
+        <h2>PRINT CHECKS</h2>
+        <div class="muted">Create check slips from posted invoices</div>
+      </a>
+      <a class="tile" href="/review-checks">
+        <h2>REVIEW CHECKS</h2>
+        <div class="muted">Treasury review and approval of check slips</div>
+      </a>
+      {% endif %}
+      <a class="tile" href="/billback">
+        <h2>BILLBACK</h2>
+        <div class="muted">Review & adjust UBI billback amounts</div>
+      </a>
+      <a class="tile" href="/flagged">
+        <h2>FLAGGED REVIEW</h2>
+        <div class="muted">Review flagged bills for quality control</div>
+      </a>
+      <a class="tile" href="/master-bills">
+        <h2>MASTER BILLS</h2>
+        <div class="muted">View aggregated UBI master bills</div>
+      </a>
+      <a class="tile" href="/chart-by-meter">
+        <h2>CHART BY METER</h2>
+        <div class="muted">Visualize consumption trends & clean meter data</div>
+      </a>
+      {% if is_admin %}
+      <a class="tile" href="/ubi-batch">
+        <h2>UBI BATCH</h2>
+        <div class="muted">Manage UBI batches for Snowflake export</div>
+      </a>
+      <a class="tile" href="/history">
+        <h2>HISTORY</h2>
+        <div class="muted">View archived bills & posting history</div>
+      </a>
+      {% endif %}
+      <a class="tile" href="/config">
+        <h2>CONFIG</h2>
+        <div class="muted">Set the system up</div>
+      </a>
+      {% if is_admin %}
+      <a class="tile" href="/vendor-corrections">
+        <h2>VENDOR CORRECTIONS</h2>
+        <div class="muted">Find & fix mismatched vendor assignments</div>
+      </a>
+      <a class="tile" href="/account-gap-analysis">
+        <h2>GAP ANALYSIS</h2>
+        <div class="muted">Compare tracked accounts vs external lists</div>
+      </a>
+      {% endif %}
+      <a class="tile" href="/metrics">
+        <h2>METRICS</h2>
+        <div class="muted">View processing time & productivity stats</div>
+      </a>
+      {% if is_admin %}
+      <a class="tile" href="/failed">
+        <h2>FAILED JOBS</h2>
+        <div class="muted">Review failed parsing jobs</div>
+      </a>
+      <a class="tile" href="/debug">
+        <h2>DEBUG</h2>
+        <div class="muted">Triage bugs & enhancement requests</div>
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    const modal = document.getElementById('improveModal');
+    const improveBtn = document.getElementById('improveBtn');
+    const cancelBtn = document.getElementById('cancelReport');
+    const submitBtn = document.getElementById('submitReport');
+    const titleInput = document.getElementById('reportTitle');
+    const descInput = document.getElementById('reportDesc');
+
+    improveBtn.addEventListener('click', () => {
+      modal.classList.add('show');
+      titleInput.focus();
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      modal.classList.remove('show');
+      titleInput.value = '';
+      descInput.value = '';
+    });
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      }
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      const title = titleInput.value.trim();
+      const description = descInput.value.trim();
+
+      if (!title || !description) {
+        showToast('Please fill in both title and description', 'err');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/debug/report', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            title: title,
+            description: description,
+            page_url: window.location.href
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to submit report');
+        }
+
+        showToast('Report submitted successfully', 'ok');
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      } catch (e) {
+        showToast('Error submitting report', 'err');
+      }
+    });
+  </script>
+</body>
+</html>

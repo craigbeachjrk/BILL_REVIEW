@@ -1,0 +1,31 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - REGION=${AWS_DEFAULT_REGION}
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+      - REPO=jrk-bill-review
+      - IMAGE_URI=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:latest
+      - echo $IMAGE_URI > image_uri.txt
+      - echo Normalizing Windows ZIP paths if needed...
+      - |
+        # If PowerShell zip produced files like "templates\day.html", rename into proper directories
+        for f in $(ls -1 | grep 'templates\\\\.*\.html' || true); do \
+          mkdir -p templates; \
+          base=$(echo "$f" | sed 's@.*\\\\@@'); \
+          mv "$f" "templates/$base"; \
+        done
+  build:
+    commands:
+      - echo Building the Docker image...
+      - docker build -t $REPO:latest .
+      - docker tag $REPO:latest $IMAGE_URI
+  post_build:
+    commands:
+      - echo Pushing the Docker image...
+      - docker push $IMAGE_URI
+artifacts:
+  files:
+    - image_uri.txt

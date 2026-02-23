@@ -1,0 +1,29 @@
+﻿{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Stage7WriteDelete",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_7_PostEntrata_Submission/*"
+    },
+    {
+      "Sid": "Stage7ReadOptional",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_7_PostEntrata_Submission/*"
+    },
+    {
+      "Sid": "BucketListOptional",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::jrk-analytics-billing",
+      "Condition": { "StringLike": { "s3:prefix": ["Bill_Parser_7_PostEntrata_Submission/*"] } }
+    }
+  ]
+}

@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CONFIG · User Management · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 20px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:16px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb}
+    th{background:#f9fafb;font-weight:600;font-size:13px}
+    td{font-size:14px}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600}
+    .badge.enabled{background:#d1fae5;color:#065f46}
+    .badge.disabled{background:#fee2e2;color:#991b1b}
+    .badge.admin{background:#dbeafe;color:#1e40af}
+    .badge.ubi{background:#fef3c7;color:#92400e}
+    .badge.ap{background:#e5e7eb;color:#374151}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    a{color:#0ea5e9}
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:90%;padding:24px}
+    .modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .modal-box input,.modal-box select{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .actions{display:flex;gap:6px}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · CONFIG · User Management</a></div>
+    <div class="logout">
+      <a class="btn secondary" href="/config">Back to CONFIG</a>
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- Create User Modal -->
+  <div id="createModal" class="modal-overlay">
+    <div class="modal-box">
+      <h2>Create New User</h2>
+      <label for="newEmail">Email Address</label>
+      <input type="email" id="newEmail" placeholder="user@example.com" />
+
+      <label for="newFullName">Full Name</label>
+      <input type="text" id="newFullName" placeholder="John Doe" />
+
+      <label for="newRole">Role</label>
+      <select id="newRole">
+        {% for role_key, role_data in roles.items() %}
+          <option value="{{ role_key }}">{{ role_data.name }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="newPassword">Temporary Password</label>
+      <input type="password" id="newPassword" placeholder="At least 8 characters" />
+
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelCreate">Cancel</button>
+        <button class="btn" id="submitCreate">Create User</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reset Password Modal -->
+  <div id="resetModal" class="modal-overlay">
+    <div class="modal-box">
+      <h2>Reset Password</h2>
+      <p style="font-size:14px;color:#64748b;margin-bottom:16px">Reset password for <strong id="resetUserEmail"></strong></p>
+
+      <label for="resetPassword">New Temporary Password</label>
+      <input type="password" id="resetPassword" placeholder="At least 8 characters" />
+
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelReset">Cancel</button>
+        <button class="btn" id="submitReset">Reset Password</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <h1>User Management</h1>
+      <button class="btn" id="createBtn">Create User</button>
+    </div>
+
+    <div class="card">
+      <table id="usersTable">
+        <thead>
+          <tr>
+            <th style="width:25%">Email</th>
+            <th style="width:20%">Full Name</th>
+            <th style="width:15%">Role</th>
+            <th style="width:10%">Status</th>
+            <th style="width:15%">Last Login</th>
+            <th style="width:15%">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let users = [];
+    let currentResetUser = null;
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function loadUsers(){
+      try {
+        const r = await fetch('/api/users');
+        if (!r.ok) throw new Error('Failed to load');
+        const data = await r.json();
+        users = data.users || [];
+        renderUsers();
+      } catch (e) {
+        showToast('Error loading users', 'err');
+      }
+    }
+
+    function renderUsers(){
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      for (const u of users){
+        const tr = document.createElement('tr');
+
+        // Email
+        const tdEmail = document.createElement('td');
+        tdEmail.textContent = u.user_id;
+        tr.appendChild(tdEmail);
+
+        // Full Name
+        const tdName = document.createElement('td');
+        tdName.textContent = u.full_name || 'N/A';
+        tr.appendChild(tdName);
+
+        // Role
+        const tdRole = document.createElement('td');
+        const roleClass = u.role === 'System_Admins' ? 'admin' : u.role === 'UBI_Admins' ? 'ubi' : 'ap';
+        tdRole.innerHTML = `<span class="badge ${roleClass}">${u.role.replace('_', ' ')}</span>`;
+        tr.appendChild(tdRole);
+
+        // Status
+        const tdStatus = document.createElement('td');
+        tdStatus.innerHTML = `<span class="badge ${u.enabled ? 'enabled' : 'disabled'}">${u.enabled ? 'Enabled' : 'Disabled'}</span>`;
+        tr.appendChild(tdStatus);
+
+        // Last Login
+        const tdLogin = document.createElement('td');
+        tdLogin.textContent = u.last_login_utc ? formatDate(u.last_login_utc) : 'Never';
+        tdLogin.style.fontSize = '12px';
+        tr.appendChild(tdLogin);
+
+        // Actions
+        const tdActions = document.createElement('td');
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        // Reset Password button
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'btn small';
+        resetBtn.textContent = 'Reset';
+        resetBtn.onclick = () => openResetModal(u.user_id);
+        actions.appendChild(resetBtn);
+
+        // Enable/Disable button
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'btn small secondary';
+        toggleBtn.textContent = u.enabled ? 'Disable' : 'Enable';
+        toggleBtn.onclick = () => toggleUserStatus(u.user_id, u.enabled);
+        actions.appendChild(toggleBtn);
+
+        tdActions.appendChild(actions);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function toggleUserStatus(userId, currentlyEnabled){
+      const action = currentlyEnabled ? 'disable' : 'enable';
+      try {
+        const r = await fetch(`/api/users/${encodeURIComponent(userId)}/${action}`, {
+          method: 'POST'
+        });
+        if (!r.ok) throw new Error('Failed');
+        showToast(`User ${action}d successfully`, 'ok');
+        loadUsers();
+      } catch (e) {
+        showToast(`Error ${action}ing user`, 'err');
+      }
+    }
+
+    function openResetModal(userId){
+      currentResetUser = userId;
+      document.getElementById('resetUserEmail').textContent = userId;
+      document.getElementById('resetPassword').value = '';
+      document.getElementById('resetModal').classList.add('show');
+    }
+
+    async function resetPassword(){
+      const newPassword = document.getElementById('resetPassword').value.trim();
+      if (!newPassword || newPassword.length < 8){
+        showToast('Password must be at least 8 characters', 'err');
+        return;
+      }
+
+      try {
+        const r = await fetch(`/api/users/${encodeURIComponent(currentResetUser)}/reset-password`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({new_password: newPassword})
+        });
+        if (!r.ok) throw new Error('Failed');
+        showToast('Password reset successfully', 'ok');
+        document.getElementById('resetModal').classList.remove('show');
+        loadUsers();
+      } catch (e) {
+        showToast('Error resetting password', 'err');
+      }
+    }
+
+    async function createUser(){
+      const email = document.getElementById('newEmail').value.trim();
+      const fullName = document.getElementById('newFullName').value.trim();
+      const role = document.getElementById('newRole').value;
+      const password = document.getElementById('newPassword').value.trim();
+
+      if (!email || !fullName || !password){
+        showToast('All fields required', 'err');
+        return;
+      }
+
+      if (password.length < 8){
+        showToast('Password must be at least 8 characters', 'err');
+        return;
+      }
+
+      try {
+        const r = await fetch('/api/users', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            user_id: email,
+            full_name: fullName,
+            role: role,
+            password: password
+          })
+        });
+        if (!r.ok){
+          const data = await r.json();
+          throw new Error(data.error || 'Failed');
+        }
+        showToast('User created successfully', 'ok');
+        document.getElementById('createModal').classList.remove('show');
+        document.getElementById('newEmail').value = '';
+        document.getElementById('newFullName').value = '';
+        document.getElementById('newPassword').value = '';
+        loadUsers();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    function formatDate(isoStr){
+      if (!isoStr) return '';
+      try {
+        const d = new Date(isoStr);
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      } catch {
+        return isoStr.substring(0, 10);
+      }
+    }
+
+    // Modal controls
+    document.getElementById('createBtn').addEventListener('click', () => {
+      document.getElementById('createModal').classList.add('show');
+    });
+
+    document.getElementById('cancelCreate').addEventListener('click', () => {
+      document.getElementById('createModal').classList.remove('show');
+    });
+
+    document.getElementById('submitCreate').addEventListener('click', createUser);
+
+    document.getElementById('cancelReset').addEventListener('click', () => {
+      document.getElementById('resetModal').classList.remove('show');
+    });
+
+    document.getElementById('submitReset').addEventListener('click', resetPassword);
+
+    // Close modals on overlay click
+    document.getElementById('createModal').addEventListener('click', (e) => {
+      if (e.target.id === 'createModal') {
+        document.getElementById('createModal').classList.remove('show');
+      }
+    });
+
+    document.getElementById('resetModal').addEventListener('click', (e) => {
+      if (e.target.id === 'resetModal') {
+        document.getElementById('resetModal').classList.remove('show');
+      }
+    });
+
+    // Load users on page load
+    loadUsers();
+  </script>
+</body>
+</html>

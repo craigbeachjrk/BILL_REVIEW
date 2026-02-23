@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CONFIG - Workflow Reason Codes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;background:linear-gradient(135deg,var(--bg),var(--bg2))}
+    .btn{display:inline-block;padding:8px 16px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:4px 8px;font-size:12px}
+    .btn.danger{background:#ef4444}
+    .wrap{max-width:800px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px}
+    h1{margin:0 0 8px 0}
+    .subtitle{color:#64748b;margin-bottom:20px;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;margin-top:16px}
+    th,td{padding:12px 16px;border-bottom:1px solid #e5e7eb;text-align:left}
+    th{background:#f8fafc;font-weight:600}
+    tr:hover{background:rgba(14,165,233,0.05)}
+    .form-row{display:flex;gap:12px;margin-bottom:16px}
+    .form-row input{flex:1;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .empty{text-align:center;padding:40px;color:#64748b}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button class="btn" id="saveBtn">Save All</button>
+      <a class="btn secondary" href="/config">Back to Config</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <div class="card">
+      <h1>Workflow Reason Codes</h1>
+      <div class="subtitle">Configure standardized reason codes for workflow notes (e.g., "No Account", "Missing Bill", "Wrong Vendor")</div>
+
+      <div class="form-row">
+        <input type="text" id="newCode" placeholder="Code (e.g., NO_ACCOUNT)" />
+        <input type="text" id="newLabel" placeholder="Display Label (e.g., No Account)" />
+        <button class="btn" id="addBtn">Add</button>
+      </div>
+
+      <table id="reasonsTable">
+        <thead>
+          <tr>
+            <th style="width:30%">Code</th>
+            <th>Display Label</th>
+            <th style="width:100px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr><td colspan="3" class="empty">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let reasons = [];
+
+    async function fetchJSON(url) {
+      const r = await fetch(url, {credentials: 'same-origin'});
+      if (!r.ok) throw new Error('fetch failed');
+      return r.json();
+    }
+
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function loadData() {
+      try {
+        const data = await fetchJSON('/api/config/workflow-reasons');
+        reasons = data.items || [];
+        render();
+      } catch (e) {
+        showToast('Failed to load reason codes', 'err');
+      }
+    }
+
+    function render() {
+      const tbody = document.getElementById('tableBody');
+      if (reasons.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty">No reason codes defined yet. Add one above.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = reasons.map((r, idx) => `
+        <tr>
+          <td><input type="text" value="${r.code || ''}" data-idx="${idx}" data-field="code" style="width:100%;padding:6px;border:1px solid #e5e7eb;border-radius:4px" /></td>
+          <td><input type="text" value="${r.label || ''}" data-idx="${idx}" data-field="label" style="width:100%;padding:6px;border:1px solid #e5e7eb;border-radius:4px" /></td>
+          <td><button class="btn small danger" onclick="deleteRow(${idx})">Delete</button></td>
+        </tr>
+      `).join('');
+
+      // Bind input changes
+      tbody.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('input', (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          const field = e.target.dataset.field;
+          reasons[idx][field] = e.target.value;
+        });
+      });
+    }
+
+    function deleteRow(idx) {
+      if (!confirm('Delete this reason code?')) return;
+      reasons.splice(idx, 1);
+      render();
+    }
+
+    document.getElementById('addBtn').addEventListener('click', () => {
+      const code = document.getElementById('newCode').value.trim();
+      const label = document.getElementById('newLabel').value.trim();
+
+      if (!code) {
+        showToast('Code is required', 'err');
+        return;
+      }
+
+      // Check for duplicate code
+      if (reasons.some(r => r.code.toLowerCase() === code.toLowerCase())) {
+        showToast('This code already exists', 'err');
+        return;
+      }
+
+      reasons.push({ code: code, label: label || code });
+      document.getElementById('newCode').value = '';
+      document.getElementById('newLabel').value = '';
+      render();
+      showToast('Added - remember to Save All', 'ok');
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      try {
+        const resp = await fetch('/api/config/workflow-reasons', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({ items: reasons })
+        });
+
+        if (!resp.ok) throw new Error('Save failed');
+        const result = await resp.json();
+        showToast(`Saved ${result.saved} reason codes`, 'ok');
+      } catch (e) {
+        showToast('Failed to save', 'err');
+      }
+    });
+
+    // Allow Enter key to add
+    document.getElementById('newLabel').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('addBtn').click();
+    });
+    document.getElementById('newCode').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('newLabel').focus();
+    });
+
+    loadData();
+  </script>
+</body>
+</html>

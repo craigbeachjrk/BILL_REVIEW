@@ -1,0 +1,18 @@
+{
+  "LambdaFunctionConfigurations": [
+    {
+      "LambdaFunctionArn": "arn:aws:lambda:us-east-1:789814232318:function:jrk-email-ingest",
+      "Events": ["s3:ObjectCreated:*"] ,
+      "Filter": {
+        "Key": { "FilterRules": [ { "Name": "prefix", "Value": "bills/" } ] }
+      }
+    },
+    {
+      "LambdaFunctionArn": "arn:aws:lambda:us-east-1:789814232318:function:jrk-email-ingest",
+      "Events": ["s3:ObjectCreated:*"] ,
+      "Filter": {
+        "Key": { "FilterRules": [ { "Name": "prefix", "Value": "reports/" } ] }
+      }
+    }
+  ]
+}

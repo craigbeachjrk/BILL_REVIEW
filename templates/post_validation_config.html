@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CONFIG · Post Validation Overrides</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .btn.danger{background:#dc2626}
+    .wrap{max-width:1200px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left}
+    th{background:rgba(2,132,199,0.08);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.5px}
+    tr:hover{background:rgba(2,132,199,0.04)}
+    .muted{opacity:.7;font-size:12px}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .add-form{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #e5e7eb}
+    .add-form .field{display:flex;flex-direction:column;gap:4px}
+    .add-form .field label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase}
+    .add-form .field input,.add-form .field select{padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit;min-width:140px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.allow{background:#dcfce7;color:#166534}
+    .badge.block{background:#fee2e2;color:#991b1b}
+    .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .tab-bar{display:flex;gap:4px;margin-bottom:20px}
+    .tab-bar button{padding:10px 20px;border:none;border-radius:10px 10px 0 0;background:rgba(255,255,255,.4);color:#0f172a;font-family:inherit;font-weight:600;cursor:pointer;font-size:14px}
+    .tab-bar button.active{background:var(--glass);box-shadow:0 -2px 10px rgba(0,0,0,.08)}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+    .empty-state{text-align:center;padding:30px;color:#64748b}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <a class="btn secondary" href="/config">Back to Config</a>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+  <div class="wrap">
+    <h1 style="color:#0f172a;margin:0 0 14px 0">POST VALIDATION OVERRIDES</h1>
+    <p style="color:#334155;margin:0 0 20px 0">
+      These overrides control the warnings shown before posting to Entrata.
+      <strong>Allow</strong> entries suppress warnings for known-good combos.
+      <strong>Block</strong> entries force warnings even if the combo exists in history.
+    </p>
+
+    <div class="tab-bar">
+      <button class="active" onclick="switchTab('vp')">Vendor-Property</button>
+      <button onclick="switchTab('vg')">Vendor-GL Code</button>
+    </div>
+
+    <!-- Vendor-Property Overrides -->
+    <div id="tab-vp" class="tab-content active">
+      <div class="card">
+        <div class="section-header">
+          <h2 style="margin:0">Vendor-Property Overrides <span id="vpCount" class="muted"></span></h2>
+        </div>
+        <div class="add-form">
+          <div class="field">
+            <label>Vendor ID</label>
+            <input type="text" id="vpVendorId" placeholder="e.g. 12345" />
+          </div>
+          <div class="field">
+            <label>Vendor Name</label>
+            <input type="text" id="vpVendorName" placeholder="e.g. DTE Energy" />
+          </div>
+          <div class="field">
+            <label>Property ID</label>
+            <input type="text" id="vpPropertyId" placeholder="e.g. 67890" />
+          </div>
+          <div class="field">
+            <label>Property Name</label>
+            <input type="text" id="vpPropertyName" placeholder="e.g. Oak Grove" />
+          </div>
+          <div class="field">
+            <label>Action</label>
+            <select id="vpAction">
+              <option value="allow">Allow</option>
+              <option value="block">Block</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button class="btn small" onclick="addVpOverride()">+ Add</button>
+          </div>
+        </div>
+        <div id="vpTableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Vendor ID</th>
+                <th>Vendor Name</th>
+                <th>Property ID</th>
+                <th>Property Name</th>
+                <th>Action</th>
+                <th>Added By</th>
+                <th>Added At</th>
+                <th style="width:60px"></th>
+              </tr>
+            </thead>
+            <tbody id="vpBody"></tbody>
+          </table>
+        </div>
+        <div id="vpEmpty" class="empty-state" style="display:none">No vendor-property overrides configured.</div>
+      </div>
+    </div>
+
+    <!-- Vendor-GL Overrides -->
+    <div id="tab-vg" class="tab-content">
+      <div class="card">
+        <div class="section-header">
+          <h2 style="margin:0">Vendor-GL Code Overrides <span id="vgCount" class="muted"></span></h2>
+        </div>
+        <div class="add-form">
+          <div class="field">
+            <label>Vendor ID</label>
+            <input type="text" id="vgVendorId" placeholder="e.g. 12345" />
+          </div>
+          <div class="field">
+            <label>Vendor Name</label>
+            <input type="text" id="vgVendorName" placeholder="e.g. DTE Energy" />
+          </div>
+          <div class="field">
+            <label>GL Code</label>
+            <input type="text" id="vgGlCode" placeholder="e.g. 57050000" />
+          </div>
+          <div class="field">
+            <label>GL Code Name</label>
+            <input type="text" id="vgGlCodeName" placeholder="e.g. VACANT ELECTRIC" />
+          </div>
+          <div class="field">
+            <label>Action</label>
+            <select id="vgAction">
+              <option value="allow">Allow</option>
+              <option value="block">Block</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button class="btn small" onclick="addVgOverride()">+ Add</button>
+          </div>
+        </div>
+        <div id="vgTableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Vendor ID</th>
+                <th>Vendor Name</th>
+                <th>GL Code</th>
+                <th>GL Code Name</th>
+                <th>Action</th>
+                <th>Added By</th>
+                <th>Added At</th>
+                <th style="width:60px"></th>
+              </tr>
+            </thead>
+            <tbody id="vgBody"></tbody>
+          </table>
+        </div>
+        <div id="vgEmpty" class="empty-state" style="display:none">No vendor-GL code overrides configured.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let vpItems = [];
+    let vgItems = [];
+
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type || '');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function escapeHtml(s) {
+      return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-bar button').forEach((b, i) => {
+        b.classList.toggle('active', (tab === 'vp' && i === 0) || (tab === 'vg' && i === 1));
+      });
+      document.getElementById('tab-vp').classList.toggle('active', tab === 'vp');
+      document.getElementById('tab-vg').classList.toggle('active', tab === 'vg');
+    }
+
+    function safeAction(a) { return (a === 'allow' || a === 'block') ? a : 'allow'; }
+
+    function renderVp() {
+      const tbody = document.getElementById('vpBody');
+      tbody.innerHTML = '';
+      document.getElementById('vpCount').textContent = `(${vpItems.length})`;
+      document.getElementById('vpEmpty').style.display = vpItems.length ? 'none' : 'block';
+      document.getElementById('vpTableWrap').style.display = vpItems.length ? '' : 'none';
+      vpItems.forEach((item, i) => {
+        const tr = document.createElement('tr');
+        const act = safeAction(item.action);
+        tr.innerHTML = `
+          <td>${escapeHtml(item.vendor_id)}</td>
+          <td>${escapeHtml(item.vendor_name)}</td>
+          <td>${escapeHtml(item.property_id)}</td>
+          <td>${escapeHtml(item.property_name)}</td>
+          <td><span class="badge ${act}">${act}</span></td>
+          <td class="muted">${escapeHtml(item.added_by)}</td>
+          <td class="muted">${escapeHtml((item.added_at||'').slice(0,10))}</td>
+          <td><button class="btn small danger" onclick="removeVp(${i})">Del</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderVg() {
+      const tbody = document.getElementById('vgBody');
+      tbody.innerHTML = '';
+      document.getElementById('vgCount').textContent = `(${vgItems.length})`;
+      document.getElementById('vgEmpty').style.display = vgItems.length ? 'none' : 'block';
+      document.getElementById('vgTableWrap').style.display = vgItems.length ? '' : 'none';
+      vgItems.forEach((item, i) => {
+        const tr = document.createElement('tr');
+        const act = safeAction(item.action);
+        tr.innerHTML = `
+          <td>${escapeHtml(item.vendor_id)}</td>
+          <td>${escapeHtml(item.vendor_name)}</td>
+          <td>${escapeHtml(item.gl_code)}</td>
+          <td>${escapeHtml(item.gl_code_name)}</td>
+          <td><span class="badge ${act}">${act}</span></td>
+          <td class="muted">${escapeHtml(item.added_by)}</td>
+          <td class="muted">${escapeHtml((item.added_at||'').slice(0,10))}</td>
+          <td><button class="btn small danger" onclick="removeVg(${i})">Del</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function addVpOverride() {
+      const vid = document.getElementById('vpVendorId').value.trim();
+      const vname = document.getElementById('vpVendorName').value.trim();
+      const pid = document.getElementById('vpPropertyId').value.trim();
+      const pname = document.getElementById('vpPropertyName').value.trim();
+      const action = document.getElementById('vpAction').value;
+      if (!vid || !pid) { showToast('Vendor ID and Property ID are required', 'err'); return; }
+      vpItems.push({ vendor_id: vid, vendor_name: vname, property_id: pid, property_name: pname, action: action, added_by: '', added_at: '' });
+      renderVp();
+      await saveVp();
+      document.getElementById('vpVendorId').value = '';
+      document.getElementById('vpVendorName').value = '';
+      document.getElementById('vpPropertyId').value = '';
+      document.getElementById('vpPropertyName').value = '';
+    }
+
+    async function removeVp(index) {
+      if (!confirm('Remove this override?')) return;
+      vpItems.splice(index, 1);
+      renderVp();
+      await saveVp();
+    }
+
+    async function saveVp() {
+      try {
+        const resp = await fetch('/api/config/vendor-property-overrides', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ items: vpItems })
+        });
+        if (!resp.ok) throw new Error('Save failed');
+        const data = await resp.json();
+        showToast(`Saved ${data.saved} vendor-property overrides`, 'ok');
+        // Reload to get server-applied defaults (added_by, added_at)
+        await loadVp();
+      } catch (e) { showToast('Error saving: ' + e.message, 'err'); }
+    }
+
+    async function addVgOverride() {
+      const vid = document.getElementById('vgVendorId').value.trim();
+      const vname = document.getElementById('vgVendorName').value.trim();
+      const gl = document.getElementById('vgGlCode').value.trim();
+      const glname = document.getElementById('vgGlCodeName').value.trim();
+      const action = document.getElementById('vgAction').value;
+      if (!vid || !gl) { showToast('Vendor ID and GL Code are required', 'err'); return; }
+      vgItems.push({ vendor_id: vid, vendor_name: vname, gl_code: gl, gl_code_name: glname, action: action, added_by: '', added_at: '' });
+      renderVg();
+      await saveVg();
+      document.getElementById('vgVendorId').value = '';
+      document.getElementById('vgVendorName').value = '';
+      document.getElementById('vgGlCode').value = '';
+      document.getElementById('vgGlCodeName').value = '';
+    }
+
+    async function removeVg(index) {
+      if (!confirm('Remove this override?')) return;
+      vgItems.splice(index, 1);
+      renderVg();
+      await saveVg();
+    }
+
+    async function saveVg() {
+      try {
+        const resp = await fetch('/api/config/vendor-gl-overrides', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ items: vgItems })
+        });
+        if (!resp.ok) throw new Error('Save failed');
+        const data = await resp.json();
+        showToast(`Saved ${data.saved} vendor-GL overrides`, 'ok');
+        await loadVg();
+      } catch (e) { showToast('Error saving: ' + e.message, 'err'); }
+    }
+
+    async function loadVp() {
+      try {
+        const resp = await fetch('/api/config/vendor-property-overrides');
+        const data = await resp.json();
+        vpItems = data.items || [];
+        renderVp();
+      } catch (e) { showToast('Error loading vendor-property overrides', 'err'); }
+    }
+
+    async function loadVg() {
+      try {
+        const resp = await fetch('/api/config/vendor-gl-overrides');
+        const data = await resp.json();
+        vgItems = data.items || [];
+        renderVg();
+      } catch (e) { showToast('Error loading vendor-GL overrides', 'err'); }
+    }
+
+    // Load both on page load
+    loadVp();
+    loadVg();
+  </script>
+</body>
+</html>

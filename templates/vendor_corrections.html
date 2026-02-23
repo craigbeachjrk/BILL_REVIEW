@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vendor Corrections · Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.success{background:#10b981}
+    .btn.small{padding:4px 8px;font-size:11px}
+    .btn:disabled{opacity:0.5;cursor:not-allowed}
+    .wrap{max-width:1400px;margin:40px auto;padding:0 20px}
+    h1{margin:0 0 16px 0;color:#fff}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:20px}
+    .card h2{margin:0 0 16px 0;font-size:18px}
+    .summary-row{display:flex;gap:16px;margin-bottom:20px}
+    .stat-box{background:#f8fafc;padding:16px;border-radius:8px;text-align:center;flex:1}
+    .stat-box .value{font-size:28px;font-weight:700;color:#0ea5e9}
+    .stat-box .label{font-size:12px;color:#64748b;margin-top:4px}
+    .stat-box.danger .value{color:#dc2626}
+    .stat-box.warning .value{color:#f59e0b}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}
+    th{background:#f8fafc;font-weight:600;position:sticky;top:0;z-index:10}
+    tr:hover{background:rgba(14,165,233,0.05)}
+    .badge{display:inline-block;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.mismatch{background:#fee2e2;color:#991b1b}
+    .badge.ok{background:#dcfce7;color:#166534}
+    .badge.warning{background:#fef3c7;color:#92400e}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;z-index:60;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e5e7eb;border-top:2px solid #0ea5e9;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .tabs{display:flex;gap:8px;margin-bottom:16px}
+    .tab{padding:8px 16px;border-radius:8px;cursor:pointer;background:#f1f5f9;font-weight:600;font-size:13px}
+    .tab.active{background:#0ea5e9;color:#fff}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+    .modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
+    .modal.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;padding:24px;max-width:500px;width:calc(100% - 40px)}
+    .modal-box h3{margin:0 0 16px 0}
+    .form-group{margin-bottom:16px}
+    .form-group label{display:block;font-size:13px;font-weight:600;margin-bottom:4px}
+    .form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;box-sizing:border-box}
+    .vendor-list{display:flex;flex-direction:column;gap:4px;background:#f8fafc;padding:8px;border-radius:6px;margin-top:8px}
+    .vendor-item{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:#fff;border-radius:4px;font-size:12px}
+    .vendor-item.selected{background:#dbeafe;border:1px solid #3b82f6}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a> &gt; <a href="/workflow" style="color:#fff">WORKFLOW</a> &gt; Vendor Corrections</div>
+    <div>
+      <span style="margin-right:12px">Admin: {{ user }}</span>
+      <a class="btn secondary" href="/workflow">Back to WORKFLOW</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>Vendor Correction Utility</h1>
+
+    <div class="card" style="background:#fef3c7;border-color:#f59e0b">
+      <p style="margin:0;color:#92400e;font-size:13px">
+        <strong>Purpose:</strong> Find accounts where the configured vendor may not match the actual vendor from bill data.
+        Use Gemini AI to compare vendor names and apply corrections where needed.
+      </p>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('suspects')">Suspect Accounts</div>
+      <div class="tab" onclick="switchTab('history')">Correction History</div>
+    </div>
+
+    <!-- Suspects Tab -->
+    <div id="suspectsTab" class="tab-content active">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Accounts with Potential Vendor Mismatches</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="font-size:12px;color:#64748b">Scan range:</label>
+            <select id="scanDays" style="padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;font-size:13px">
+              <option value="14">14 days (fast)</option>
+              <option value="30" selected>30 days (default)</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days (slow)</option>
+            </select>
+            <button class="btn" onclick="loadSuspects()">Scan Accounts</button>
+          </div>
+        </div>
+
+        <div class="summary-row" id="suspectStats" style="display:none">
+          <div class="stat-box danger">
+            <div class="value" id="mismatchCount">0</div>
+            <div class="label">Duplicate Accounts</div>
+          </div>
+          <div class="stat-box warning">
+            <div class="value" id="multiVendorCount">0</div>
+            <div class="label">Total Entries</div>
+          </div>
+          <div class="stat-box">
+            <div class="value" id="checkedCount">0</div>
+            <div class="label">Tracked Accounts</div>
+          </div>
+        </div>
+
+        <div id="suspectsLoading" class="loading">Click "Scan Accounts" to find duplicate vendor assignments</div>
+
+        <div id="suspectsTable" style="display:none;max-height:500px;overflow-y:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Property</th>
+                <th>Account #</th>
+                <th>Tracked Under Vendors</th>
+                <th>Count</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="suspectsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="historyTab" class="tab-content">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 style="margin:0">Correction History</h2>
+          <button class="btn small" onclick="loadHistory()">Refresh</button>
+        </div>
+
+        <div id="historyLoading" class="loading">Loading history...</div>
+
+        <div id="historyTable" style="display:none;max-height:500px;overflow-y:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Property</th>
+                <th>Account #</th>
+                <th>Old Vendor</th>
+                <th>New Vendor</th>
+                <th>By</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Correction Modal -->
+  <div id="correctionModal" class="modal">
+    <div class="modal-box">
+      <h3>Consolidate Duplicate Account Entries</h3>
+
+      <div class="form-group">
+        <label>Property + Account</label>
+        <input type="text" id="modalAccount" readonly style="background:#f8fafc">
+      </div>
+
+      <div class="form-group">
+        <label>Status</label>
+        <input type="text" id="modalCurrentVendor" readonly style="background:#f8fafc">
+      </div>
+
+      <div class="form-group">
+        <label>Tracked Under These Vendors (click to select correct one)</label>
+        <div id="modalFoundVendors" class="vendor-list"></div>
+      </div>
+
+      <div class="form-group">
+        <label>Notes</label>
+        <div id="modalAiResult" style="background:#f8fafc;padding:8px;border-radius:6px;font-size:12px;color:#64748b">
+          Select the correct vendor to keep, or enter a vendor ID/name manually.
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Keep Vendor ID</label>
+        <input type="text" id="modalNewVendorId" placeholder="Vendor ID to consolidate under">
+      </div>
+
+      <div class="form-group">
+        <label>Keep Vendor Name</label>
+        <input type="text" id="modalNewVendorName" placeholder="Vendor name">
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn success" onclick="applyCorrection()" id="applyBtn">Consolidate</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let suspects = [];
+    let currentSuspect = null;
+
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[onclick*="${tab}"]`).classList.add('active');
+      document.getElementById(tab + 'Tab').classList.add('active');
+
+      if (tab === 'history') {
+        loadHistory();
+      }
+    }
+
+    async function loadSuspects() {
+      const loading = document.getElementById('suspectsLoading');
+      const table = document.getElementById('suspectsTable');
+      const stats = document.getElementById('suspectStats');
+      const days = document.getElementById('scanDays').value || 30;
+
+      loading.style.display = 'block';
+      loading.innerHTML = `<span class="spinner"></span> Scanning ${days} days of data for vendor mismatches...`;
+      table.style.display = 'none';
+      stats.style.display = 'none';
+
+      try {
+        const r = await fetch(`/api/vendor-corrections/suspects?days=${days}`);
+
+        // Read response as text first to handle non-JSON responses
+        const responseText = await r.text();
+
+        // Try to parse as JSON
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch (parseErr) {
+          // Response was not valid JSON - show first 200 chars for debugging
+          const preview = responseText.substring(0, 200);
+          console.error('Non-JSON response:', preview);
+          throw new Error(`Server returned non-JSON response (status ${r.status}). Check server logs.`);
+        }
+
+        if (!r.ok) {
+          throw new Error(data.error || `Server error (status ${r.status})`);
+        }
+
+        suspects = data.suspects || [];
+
+        // Update stats
+        const multiVendor = suspects.filter(s => s.vendor_count > 1).length;
+        const totalEntries = suspects.reduce((sum, s) => sum + (s.entry_count || 0), 0);
+        document.getElementById('mismatchCount').textContent = multiVendor;
+        document.getElementById('multiVendorCount').textContent = totalEntries;
+        document.getElementById('checkedCount').textContent = data.total_accounts || 0;
+        stats.style.display = 'flex';
+
+        renderSuspects();
+        loading.style.display = 'none';
+        table.style.display = 'block';
+
+      } catch (e) {
+        console.error('loadSuspects error:', e);
+        loading.innerHTML = `<span style="color:#dc2626">Error: ${e.message}</span>`;
+      }
+    }
+
+    function renderSuspects() {
+      const tbody = document.getElementById('suspectsTableBody');
+
+      if (suspects.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="loading">No duplicate accounts found. Same property+account must be tracked under multiple vendors to appear here.</td></tr>';
+        return;
+      }
+
+      let html = '';
+      for (const s of suspects) {
+        const statusBadge = s.vendor_count > 1
+          ? '<span class="badge warning">MULTI-VENDOR</span>'
+          : '<span class="badge ok">OK</span>';
+
+        // Show all vendor entries for this property+account with submission info
+        const vendorsHtml = (s.entries || []).map(e => {
+          // Format the posted info with full details
+          let postedInfo = '';
+          if (e.has_recent_post && e.last_posted_at) {
+            const d = new Date(e.last_posted_at);
+            const dateStr = isNaN(d) ? e.last_posted_at : d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+            const byStr = e.last_posted_by || 'Unknown';
+            const invoiceStr = e.last_invoice_no ? `Inv#${e.last_invoice_no}` : '';
+            const amountStr = e.last_total_amount ? `$${e.last_total_amount.toLocaleString('en-US', {minimumFractionDigits:2})}` : '';
+            const serviceStr = e.last_service_start ? `Svc: ${e.last_service_start}${e.last_service_end ? ' - ' + e.last_service_end : ''}` : '';
+
+            postedInfo = `<div style="background:#f8fafc;padding:6px 8px;border-radius:6px;margin-top:4px;font-size:10px">
+              <div style="color:#059669;font-weight:600">LAST POST: ${dateStr} by ${byStr}</div>
+              <div style="color:#64748b;margin-top:2px">
+                ${invoiceStr ? invoiceStr + ' • ' : ''}${amountStr ? amountStr + ' • ' : ''}${serviceStr}
+              </div>
+            </div>`;
+          } else if (e.last_posted_at) {
+            // Fallback to added_by info
+            const d = new Date(e.last_posted_at);
+            const dateStr = isNaN(d) ? e.last_posted_at : d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+            postedInfo = `<div style="color:#94a3b8;font-size:10px;margin-top:2px;font-style:italic">Added: ${dateStr} by ${e.last_posted_by || 'Unknown'} (no recent posts found)</div>`;
+          } else {
+            postedInfo = `<div style="color:#dc2626;font-size:10px;margin-top:2px;font-style:italic">No post history found</div>`;
+          }
+          return `<div style="font-size:11px;padding:6px 0;border-bottom:1px solid #f1f5f9">
+            <strong>${escapeHtml(e.vendor_name || 'Unknown')}</strong>
+            <span style="color:#64748b">(ID: ${e.vendor_id || '?'})</span>
+            ${e.is_ubi ? '<span class="badge" style="background:#dbeafe;color:#1e40af;font-size:9px;margin-left:4px">UBI</span>' : ''}
+            ${postedInfo}
+          </div>`;
+        }).join('');
+
+        // Use first entry's account_key for the review button
+        const firstEntry = s.entries && s.entries[0] ? s.entries[0] : {};
+        const accountKey = `${s.property_id}|${s.account_number}`;
+
+        html += `<tr>
+          <td>${statusBadge}</td>
+          <td>${escapeHtml(s.property_name)}</td>
+          <td style="font-family:monospace">${escapeHtml(s.account_number)}</td>
+          <td>${vendorsHtml}</td>
+          <td>${s.vendor_count} vendors</td>
+          <td>
+            <button class="btn small" onclick="openCorrection('${escapeJs(accountKey)}')">Review</button>
+          </td>
+        </tr>`;
+      }
+      tbody.innerHTML = html;
+    }
+
+    function openCorrection(accountKey) {
+      // accountKey is "property_id|account_number"
+      const [propId, acctNum] = accountKey.split('|');
+      currentSuspect = suspects.find(s => s.property_id === propId && s.account_number === acctNum);
+      if (!currentSuspect) return;
+
+      document.getElementById('modalAccount').value =
+        `${currentSuspect.property_name} - ${currentSuspect.account_number}`;
+
+      // Show all vendor entries for this account
+      const entries = currentSuspect.entries || [];
+      document.getElementById('modalCurrentVendor').value =
+        entries.length > 0 ? `${entries.length} vendor entries found` : 'No entries';
+
+      // Render all vendor entries as clickable items
+      const vendorList = document.getElementById('modalFoundVendors');
+      vendorList.innerHTML = entries.map(e => `
+        <div class="vendor-item" onclick="selectVendor('${escapeJs(e.vendor_id)}', '${escapeJs(e.vendor_name)}')">
+          <span><strong>${escapeHtml(e.vendor_name || 'Unknown')}</strong> (ID: ${e.vendor_id || '?'})</span>
+          <span style="color:#64748b">${e.is_ubi ? 'UBI' : 'Tracker'}</span>
+        </div>
+      `).join('');
+
+      document.getElementById('modalNewVendorId').value = '';
+      document.getElementById('modalNewVendorName').value = '';
+      document.getElementById('modalAiResult').innerHTML = 'Select a vendor to keep, or enter a new vendor ID/name to consolidate under';
+
+      document.getElementById('correctionModal').classList.add('show');
+    }
+
+    function closeModal() {
+      document.getElementById('correctionModal').classList.remove('show');
+      currentSuspect = null;
+    }
+
+    function selectVendor(vendorId, vendorName) {
+      document.getElementById('modalNewVendorId').value = vendorId;
+      document.getElementById('modalNewVendorName').value = vendorName;
+
+      // Highlight selected
+      document.querySelectorAll('#modalFoundVendors .vendor-item').forEach(el => {
+        el.classList.remove('selected');
+        if (el.textContent.includes(vendorId)) {
+          el.classList.add('selected');
+        }
+      });
+    }
+
+    async function compareWithAi() {
+      const resultDiv = document.getElementById('modalAiResult');
+      const newVendorName = document.getElementById('modalNewVendorName').value;
+
+      if (!currentSuspect || !newVendorName) {
+        showToast('Select a vendor first', 'err');
+        return;
+      }
+
+      resultDiv.innerHTML = '<span class="spinner"></span> Comparing with Gemini AI...';
+
+      try {
+        const formData = new FormData();
+        formData.append('vendor_a', currentSuspect.vendor_name);
+        formData.append('vendor_b', newVendorName);
+
+        const r = await fetch('/api/vendor-corrections/analyze', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!r.ok) throw new Error('Failed to analyze');
+        const data = await r.json();
+        const comp = data.comparison || {};
+
+        let statusClass = comp.same ? 'color:#22c55e' : comp.same === false ? 'color:#dc2626' : 'color:#f59e0b';
+        let statusText = comp.same ? 'SAME VENDOR' : comp.same === false ? 'DIFFERENT VENDORS' : 'UNCERTAIN';
+
+        resultDiv.innerHTML = `
+          <div style="font-weight:600;${statusClass}">${statusText}</div>
+          <div>Confidence: ${Math.round((comp.confidence || 0) * 100)}%</div>
+          <div style="margin-top:4px;font-size:11px">${escapeHtml(comp.reason || '')}</div>
+        `;
+
+      } catch (e) {
+        resultDiv.innerHTML = `<span style="color:#dc2626">Error: ${e.message}</span>`;
+      }
+    }
+
+    async function applyCorrection() {
+      const newVendorId = document.getElementById('modalNewVendorId').value.trim();
+      const newVendorName = document.getElementById('modalNewVendorName').value.trim();
+
+      if (!currentSuspect || !newVendorId || !newVendorName) {
+        showToast('Enter new vendor ID and name', 'err');
+        return;
+      }
+
+      if (!confirm(`Change vendor from "${currentSuspect.vendor_name}" to "${newVendorName}"?`)) return;
+
+      try {
+        const formData = new FormData();
+        formData.append('account_key', currentSuspect.account_key);
+        formData.append('new_vendor_id', newVendorId);
+        formData.append('new_vendor_name', newVendorName);
+
+        const r = await fetch('/api/vendor-corrections/apply', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.error || 'Failed to apply');
+        }
+
+        showToast('Correction applied successfully', 'ok');
+        closeModal();
+        loadSuspects();
+
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    async function loadHistory() {
+      const loading = document.getElementById('historyLoading');
+      const table = document.getElementById('historyTable');
+
+      loading.style.display = 'block';
+      table.style.display = 'none';
+
+      try {
+        const r = await fetch('/api/vendor-corrections/history');
+        if (!r.ok) throw new Error('Failed to load history');
+        const data = await r.json();
+        const corrections = data.corrections || [];
+
+        const tbody = document.getElementById('historyTableBody');
+        if (corrections.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="loading">No corrections applied yet</td></tr>';
+        } else {
+          let html = '';
+          for (const c of corrections) {
+            const date = c.corrected_at ? new Date(c.corrected_at).toLocaleDateString() : '-';
+            html += `<tr>
+              <td>${date}</td>
+              <td>${escapeHtml(c.property_id || '')}</td>
+              <td style="font-family:monospace">${escapeHtml(c.account_number || '')}</td>
+              <td>${escapeHtml(c.old_vendor_name || '')} (${c.old_vendor_id || ''})</td>
+              <td>${escapeHtml(c.new_vendor_name || '')} (${c.new_vendor_id || ''})</td>
+              <td>${escapeHtml(c.corrected_by || '')}</td>
+            </tr>`;
+          }
+          tbody.innerHTML = html;
+        }
+
+        loading.style.display = 'none';
+        table.style.display = 'block';
+
+      } catch (e) {
+        loading.innerHTML = `<span style="color:#dc2626">Error: ${e.message}</span>`;
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+
+    // Escape string for use in JavaScript onclick handlers (handles apostrophes, quotes, backslashes)
+    function escapeJs(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>

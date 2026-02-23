@@ -1,0 +1,70 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3ListBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing"
+    },
+    {
+      "Sid": "S3Read",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_4_Enriched_Outputs/*",
+        "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_2_Parsed_Inputs/*"
+      ]
+    },
+    {
+      "Sid": "S3WriteOverrides",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_5_Overrides/*"
+    },
+    {
+      "Sid": "DDB",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:*:table/jrk-bill-review",
+        "arn:aws:dynamodb:us-east-1:*:table/jrk-bill-review-drafts",
+        "arn:aws:dynamodb:us-east-1:*:table/jrk-bill-review-debug",
+        "arn:aws:dynamodb:us-east-1:*:table/jrk-bill-review-users",
+        "arn:aws:dynamodb:us-east-1:*:table/jrk-bill-review-users/index/*"
+      ]
+    },
+    {
+      "Sid": "SQS",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:*:jrk-bill-process"
+    },
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

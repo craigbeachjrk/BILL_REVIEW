@@ -1,0 +1,54 @@
+﻿{
+    "FunctionName":  "jrk-bill-parser",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/jrk-bill-parser-role",
+    "Handler":  "lambda_bill_parser.lambda_handler",
+    "CodeSize":  7391,
+    "Description":  "",
+    "Timeout":  300,
+    "MemorySize":  1024,
+    "LastModified":  "2025-10-23T21:09:19.000+0000",
+    "CodeSha256":  "qbgxWPQC/r8hWciFYPzkwi/xPyr7Aug0G8MgssYB2r8=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "PARSED_OUTPUTS_PREFIX":  "Bill_Parser_3_Parsed_Outputs/",
+                                          "MODEL_NAME":  "gemini-2.5-pro",
+                                          "PARSED_INPUTS_PREFIX":  "Bill_Parser_2_Parsed_Inputs/",
+                                          "PARSER_SECRET_NAME":  "gemini/matcher-keys",
+                                          "BUCKET":  "jrk-analytics-billing",
+                                          "PENDING_PREFIX":  "Bill_Parser_1_Pending_Parsing/"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "e51033dc-f232-4b64-ac6a-e6db85b326c2",
+    "Layers":  [
+                   {
+                       "Arn":  "arn:aws:lambda:us-east-1:789814232318:layer:jrk-gemini-layer:2",
+                       "CodeSize":  21926292
+                   }
+               ],
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:644f999c44288c3dd580a0b58d0576fe347ce4d089106e2c52ed35b626e0fb3c"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/jrk-bill-parser"
+                      }
+}

@@ -1,0 +1,1729 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WORKFLOW</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:4px 8px;font-size:11px}
+    .wrap{max-width:1800px;margin:40px auto;padding:0 20px}
+    h1{margin:0 0 16px 0;color:#fff}
+
+    /* Summary Cards */
+    .summary-cards{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+    .summary-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:12px 20px;min-width:120px;text-align:center;cursor:pointer;transition:transform .1s}
+    .summary-card:hover{transform:translateY(-2px)}
+    .summary-card.active{outline:3px solid #fff}
+    .summary-card .count{font-size:28px;font-weight:700;display:block}
+    .summary-card .label{font-size:12px;opacity:.8}
+    .summary-card.very-late .count{color:#b91c1c}
+    .summary-card.late .count{color:#c2410c}
+    .summary-card.slightly-late .count{color:#a16207}
+    .summary-card.due-soon .count{color:#1d4ed8}
+    .summary-card.on-track .count{color:#166534}
+
+    /* Toolbar */
+    .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap}
+    .toolbar-left{display:flex;gap:8px;align-items:center}
+    .toolbar-right{display:flex;gap:8px;align-items:center}
+    .search-box{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;width:280px;font-size:13px}
+
+    /* Table */
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden}
+    .tableWrap{overflow:auto;max-height:calc(100vh - 340px)}
+    table{width:100%;border-collapse:collapse;background:#fff}
+    th,td{padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px;white-space:nowrap}
+    th{background:#f8fafc;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer}
+    th:hover{background:#f1f5f9}
+    tr:hover{background:rgba(14,165,233,0.05)}
+    tr.has-note{background:rgba(251,191,36,0.1)}
+
+    /* Status Badges */
+    .status-badge{display:inline-block;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600}
+    .status-VERY_LATE{background:#fecaca;color:#b91c1c}
+    .status-LATE{background:#fed7aa;color:#c2410c}
+    .status-SLIGHTLY_LATE{background:#fef08a;color:#a16207}
+    .status-DUE_SOON{background:#bfdbfe;color:#1d4ed8}
+    .status-ON_TRACK{background:#bbf7d0;color:#166534}
+
+    /* Note indicator */
+    .note-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:4px 8px;border-radius:6px}
+    .note-btn:hover{background:#f1f5f9}
+    .note-btn.has-note{background:#fef3c7}
+    .search-link{opacity:0.5;transition:opacity 0.15s}
+    tr:hover .search-link{opacity:1}
+
+    /* Days overdue styling */
+    .days-overdue{font-weight:600}
+    .days-overdue.positive{color:#b91c1c}
+    .days-overdue.negative{color:#166534}
+
+    /* Drawer */
+    .drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+    .drawer-mask.open{opacity:1;pointer-events:auto}
+    .drawer{position:fixed;top:0;right:-420px;width:420px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:41;display:flex;flex-direction:column}
+    .drawer.open{right:0}
+    .drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
+    .drawer .body{flex:1;overflow:auto;padding:16px 18px}
+    .drawer .sect{margin-bottom:16px}
+    .drawer .sect-title{font-weight:600;margin-bottom:8px;font-size:13px}
+    .drawer .chiplist{display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto}
+    .drawer .chip{display:flex;align-items:center;gap:6px;font-size:12px}
+    .drawer .chip input{margin:0}
+    .drawer .actions{padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
+
+    /* Modal */
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px}
+    .modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .form-group{margin-bottom:16px}
+    .form-group label{display:block;margin-bottom:6px;font-weight:600;font-size:13px;color:#475569}
+    .form-group select,.form-group textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit}
+    .form-group textarea{min-height:80px;resize:vertical}
+    .form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+
+    /* Edit button */
+    .edit-btn{background:none;border:none;cursor:pointer;font-size:14px;padding:4px 8px;border-radius:6px;opacity:0.5}
+    .edit-btn:hover{background:#e0f2fe;opacity:1}
+
+    /* Searchable list in modal */
+    .searchable-list{max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;margin-top:4px}
+    .searchable-list .item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px}
+    .searchable-list .item:last-child{border-bottom:none}
+    .searchable-list .item:hover{background:#f0f9ff}
+    .searchable-list .item.selected{background:#dbeafe;font-weight:600}
+    .current-value{padding:8px 12px;background:#f8fafc;border-radius:6px;margin-bottom:8px;font-size:12px;color:#64748b}
+
+    /* Toast */
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:60;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* Loading */
+    .loading{text-align:center;padding:40px;color:#64748b}
+
+    /* Tabs */
+    .tab-bar{display:flex;gap:4px;margin-bottom:20px}
+    .tab-btn{padding:12px 24px;background:rgba(255,255,255,0.3);border:none;border-radius:12px 12px 0 0;cursor:pointer;font-weight:600;font-size:14px;color:#fff;transition:all 0.15s}
+    .tab-btn:hover{background:rgba(255,255,255,0.4)}
+    .tab-btn.active{background:var(--glass);color:#0f172a}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+
+    /* AP Priority specific styles */
+    .priority-summary{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+    .priority-stat{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:16px 24px;text-align:center}
+    .priority-stat .value{font-size:32px;font-weight:700;color:#0f172a}
+    .priority-stat .label{font-size:12px;color:#64748b}
+    .priority-stat.magnitude .value{color:#b91c1c}
+    .months-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
+    .months-1{background:#fef08a;color:#a16207}
+    .months-2{background:#fed7aa;color:#c2410c}
+    .months-3{background:#fecaca;color:#b91c1c}
+    .amount-col{text-align:right;font-family:monospace}
+    .view-link{color:#0284c7;text-decoration:none;font-size:12px;font-weight:600}
+    .view-link:hover{text-decoration:underline}
+    .scraper-badge{background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.3px}
+    .dup-badge{background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:5px;cursor:help}
+    .acct-copy{cursor:pointer;border-bottom:1px dashed #94a3b8}
+    .acct-copy:hover{color:#0284c7;border-bottom-color:#0284c7}
+
+    /* Row checkbox */
+    .row-select{width:16px;height:16px;cursor:pointer;accent-color:#0ea5e9}
+    th .row-select{margin:0}
+
+    /* Floating bulk toolbar */
+    .bulk-toolbar{position:fixed;bottom:-70px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.92);backdrop-filter:blur(12px);color:#fff;padding:12px 24px;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.35);display:flex;align-items:center;gap:16px;z-index:45;transition:bottom .25s ease;font-size:13px}
+    .bulk-toolbar.visible{bottom:24px}
+    .bulk-toolbar .sel-count{font-weight:700;min-width:90px}
+    .bulk-toolbar .btn{font-size:12px;padding:6px 14px}
+    .bulk-toolbar .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff}
+    .bulk-toolbar .btn.ghost:hover{background:rgba(255,255,255,.12)}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      {% if is_admin %}<a class="btn" href="/workflow/manage" style="background:#dc2626">Manage Accounts</a>{% endif %}
+      <a class="btn" href="/workflow/manager">Manager View</a>
+      <a class="btn" href="/directed">Directed</a>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>WORKFLOW</h1>
+
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="lateBills">Late Bills</button>
+      <button class="tab-btn" data-tab="apPriority">AP Priority (UBI)</button>
+    </div>
+
+    <!-- Late Bills Tab Content -->
+    <div class="tab-content active" id="lateBillsTab">
+    <div class="summary-cards" id="summaryCards">
+      <div class="summary-card very-late" data-status="VERY_LATE">
+        <span class="count" id="countVeryLate">-</span>
+        <span class="label">Very Late (15+)</span>
+      </div>
+      <div class="summary-card late" data-status="LATE">
+        <span class="count" id="countLate">-</span>
+        <span class="label">Late (8-14)</span>
+      </div>
+      <div class="summary-card slightly-late" data-status="SLIGHTLY_LATE">
+        <span class="count" id="countSlightlyLate">-</span>
+        <span class="label">Slightly Late (1-7)</span>
+      </div>
+      <div class="summary-card due-soon" data-status="DUE_SOON">
+        <span class="count" id="countDueSoon">-</span>
+        <span class="label">Due Soon (7 days)</span>
+      </div>
+      <div class="summary-card on-track" data-status="ON_TRACK">
+        <span class="count" id="countOnTrack">-</span>
+        <span class="label">On Track</span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <input type="text" class="search-box" id="searchBox" placeholder="Search property, vendor, account, AP rep..." />
+        <label style="color:#fff;font-size:12px;display:flex;align-items:center;gap:4px">
+          <input type="checkbox" id="filterHasNote" /> Has Notes
+        </label>
+        <span id="lastUpdated" style="color:rgba(255,255,255,0.7);font-size:11px;margin-left:8px"></span>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn secondary" id="recalculateBtn" title="Recalculate workflow data (may take 1-2 minutes)">Recalculate</button>
+        <button class="btn secondary" id="refreshBtn">Refresh</button>
+        <button class="btn" id="openDrawer">Filter & Sort</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tableWrap">
+        <table id="workflowTable">
+          <thead>
+            <tr>
+              <th style="width:36px"><input type="checkbox" class="row-select" id="selectAll" title="Select all visible" /></th>
+              <th data-col="note" style="width:50px">Note</th>
+              <th style="width:40px">Edit</th>
+              <th data-col="status" style="width:100px">Status</th>
+              <th data-col="propertyName">Property</th>
+              <th data-col="vendorName">Vendor</th>
+              <th data-col="accountNumber">Account #</th>
+              <th data-col="apName">AP Rep</th>
+              <th data-col="nextExpectedDate">Next Expected</th>
+              <th data-col="daysOverdue" style="width:80px">Days</th>
+              <th data-col="lastBillDate">Last Bill</th>
+              <th style="width:45px">View</th>
+              <th data-col="servicePeriodDays" style="width:80px">Period</th>
+              <th data-col="hasScraper" style="width:55px">Scraper</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="14" class="loading">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    </div><!-- End Late Bills Tab -->
+
+    <!-- AP Priority Tab Content -->
+    <div class="tab-content" id="apPriorityTab">
+      <div class="priority-summary">
+        <div class="priority-stat">
+          <span class="value" id="priorityCount">-</span>
+          <span class="label">Accounts Missing Bills</span>
+        </div>
+        <div class="priority-stat magnitude">
+          <span class="value" id="priorityMagnitude">-</span>
+          <span class="label">Est. Monthly Total</span>
+        </div>
+        <div class="priority-stat">
+          <span class="value" id="priorityPeriod">-</span>
+          <span class="label">Upcoming UBI Period</span>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <input type="text" class="search-box" id="prioritySearchBox" placeholder="Search property, vendor, account, AP rep..." />
+          <span id="priorityLastUpdated" style="color:rgba(255,255,255,0.7);font-size:11px;margin-left:8px"></span>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn secondary" id="priorityFilterBtn">Filter</button>
+          <button class="btn secondary" id="priorityRefreshBtn">Refresh</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="tableWrap">
+          <table id="priorityTable">
+            <thead>
+              <tr>
+                <th data-col="avgAmount" style="width:100px">Avg Amount</th>
+                <th data-col="propertyName">Property</th>
+                <th data-col="vendorName">Vendor</th>
+                <th data-col="accountNumber">Account #</th>
+                <th data-col="apName">AP Rep</th>
+                <th data-col="monthsBehind" style="width:100px">Months Behind</th>
+                <th data-col="lastUbiPeriod">Last UBI Period</th>
+                <th data-col="historicalBillCount" style="width:80px">Bill Count</th>
+              </tr>
+            </thead>
+            <tbody id="priorityTableBody">
+              <tr><td colspan="8" class="loading">Click to load AP Priority data...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- End AP Priority Tab -->
+
+  </div>
+
+  <!-- Filter Drawer -->
+  <div class="drawer-mask" id="drawerMask"></div>
+  <aside class="drawer" id="drawer">
+    <header>
+      <div style="font-weight:700">Filter & Sort</div>
+      <button class="btn small" id="closeDrawer">Close</button>
+    </header>
+    <div class="body">
+      <div class="sect">
+        <div class="sect-title">Sort By</div>
+        <select id="sortBy" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px">
+          <option value="urgency">Urgency (Most Urgent First)</option>
+          <option value="daysOverdue">Days Overdue</option>
+          <option value="propertyName">Property Name</option>
+          <option value="vendorName">Vendor Name</option>
+          <option value="accountNumber">Account Number</option>
+          <option value="apName">AP Rep</option>
+          <option value="nextExpectedDate">Next Expected Date</option>
+        </select>
+      </div>
+      <div class="sect">
+        <div class="sect-title">Status</div>
+        <div class="chiplist" id="statusFilters"></div>
+      </div>
+      <div class="sect">
+        <div class="sect-title">AP Rep</div>
+        <div class="chiplist" id="apFilters"></div>
+      </div>
+      <div class="sect">
+        <div class="sect-title">Property</div>
+        <input type="text" id="propSearch" placeholder="Search properties..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
+        <div class="chiplist" id="propFilters" style="max-height:150px"></div>
+      </div>
+      <div class="sect">
+        <div class="sect-title">Vendor</div>
+        <input type="text" id="vendorSearch" placeholder="Search vendors..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
+        <div class="chiplist" id="vendorFilters" style="max-height:150px"></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="clearFilters">Clear All</button>
+      <button class="btn" id="applyFilters">Apply</button>
+    </div>
+  </aside>
+
+  <!-- AP Priority Filter Drawer -->
+  <div class="drawer-mask" id="priorityDrawerMask"></div>
+  <aside class="drawer" id="priorityDrawer">
+    <header>
+      <div style="font-weight:700">AP Priority Filters</div>
+      <button class="btn small" id="closePriorityDrawer">Close</button>
+    </header>
+    <div class="body">
+      <div class="sect">
+        <div class="sect-title">Sort By</div>
+        <select id="prioritySortBy" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px">
+          <option value="avgAmount">Avg Amount (Highest First)</option>
+          <option value="monthsBehind">Months Behind (Most First)</option>
+          <option value="propertyName">Property Name</option>
+          <option value="vendorName">Vendor Name</option>
+          <option value="apName">AP Rep</option>
+        </select>
+      </div>
+      <div class="sect">
+        <div class="sect-title">AP Rep</div>
+        <div class="chiplist" id="priorityApFilters"></div>
+      </div>
+      <div class="sect">
+        <div class="sect-title">Property</div>
+        <input type="text" id="priorityPropSearch" placeholder="Search properties..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
+        <div class="chiplist" id="priorityPropFilters" style="max-height:150px"></div>
+      </div>
+      <div class="sect">
+        <div class="sect-title">Vendor</div>
+        <input type="text" id="priorityVendorSearch" placeholder="Search vendors..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
+        <div class="chiplist" id="priorityVendorFilters" style="max-height:150px"></div>
+      </div>
+      <div class="sect">
+        <div class="sect-title">Months Behind</div>
+        <div class="chiplist" id="priorityMonthsFilters">
+          <label class="chip"><input type="checkbox" value="1" /> 1 month</label>
+          <label class="chip"><input type="checkbox" value="2" /> 2 months</label>
+          <label class="chip"><input type="checkbox" value="3" /> 3+ months</label>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="clearPriorityFilters">Clear All</button>
+      <button class="btn" id="applyPriorityFilters">Apply</button>
+    </div>
+  </aside>
+
+  <!-- Note Modal -->
+  <div class="modal-overlay" id="noteModal">
+    <div class="modal-box">
+      <h2>Add/Edit Note</h2>
+      <div style="margin-bottom:16px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px">
+        <div><strong id="noteAccountInfo"></strong></div>
+      </div>
+      <div class="form-group">
+        <label>Reason Code</label>
+        <select id="noteReasonCode">
+          <option value="">-- Select Reason --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Additional Notes</label>
+        <textarea id="noteCustomText" placeholder="Enter any additional details..."></textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn secondary" id="clearNote">Clear Note</button>
+        <button class="btn secondary" id="cancelNote">Cancel</button>
+        <button class="btn" id="saveNote">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk Vendor Modal -->
+  <div class="modal-overlay" id="bulkVendorModal">
+    <div class="modal-box" style="max-width:500px">
+      <h2 id="bulkVendorTitle">Set Vendor</h2>
+      <div class="form-group">
+        <label>Vendor</label>
+        <input type="text" id="bulkVendorSearch" placeholder="Search vendors..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" />
+        <div class="searchable-list" id="bulkVendorList"></div>
+        <input type="hidden" id="bulkVendorId" />
+        <div class="current-value" id="bulkVendorSelected" style="margin-top:8px">Selected: <strong>none</strong></div>
+      </div>
+      <div class="form-actions">
+        <button class="btn secondary" onclick="document.getElementById('bulkVendorModal').classList.remove('show')">Cancel</button>
+        <button class="btn" id="bulkVendorApply">Apply to <span id="bulkVendorCount">0</span> accounts</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk Reason Code Modal -->
+  <div class="modal-overlay" id="bulkNoteModal">
+    <div class="modal-box">
+      <h2 id="bulkNoteTitle">Set Reason Code</h2>
+      <div class="form-group">
+        <label>Reason Code</label>
+        <select id="bulkNoteReasonCode">
+          <option value="">-- Select Reason --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Additional Notes</label>
+        <textarea id="bulkNoteCustomText" placeholder="Enter any additional details..."></textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn secondary" onclick="document.getElementById('bulkNoteModal').classList.remove('show')">Cancel</button>
+        <button class="btn" id="bulkNoteApply">Apply to <span id="bulkNoteCount">0</span> accounts</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Bulk Toolbar -->
+  <div class="bulk-toolbar" id="bulkToolbar">
+    <span class="sel-count" id="selCount">0 selected</span>
+    <button class="btn" id="bulkVendorBtn">Set Vendor</button>
+    <button class="btn" id="bulkNoteBtn">Set Reason Code</button>
+    <button class="btn ghost" id="deselectAllBtn">Deselect All</button>
+  </div>
+
+  <!-- Edit Account Modal -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal-box" style="max-width:550px">
+      <h2>Edit Account Mapping</h2>
+      <div style="margin-bottom:16px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px">
+        <div><strong>Account:</strong> <span id="editAccountNumber"></span></div>
+      </div>
+
+      <div class="form-group">
+        <label>Property</label>
+        <div class="current-value">Current: <span id="editCurrentProperty"></span></div>
+        <input type="text" id="editPropertySearch" placeholder="Search properties..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" />
+        <div class="searchable-list" id="editPropertyList"></div>
+        <input type="hidden" id="editPropertyId" />
+      </div>
+
+      <div class="form-group">
+        <label>Vendor</label>
+        <div class="current-value">Current: <span id="editCurrentVendor"></span></div>
+        <input type="text" id="editVendorSearch" placeholder="Search vendors..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" />
+        <div class="searchable-list" id="editVendorList"></div>
+        <input type="hidden" id="editVendorId" />
+      </div>
+
+      <div class="form-actions" style="justify-content:space-between">
+        <div>
+          {% if is_admin %}
+          <button class="btn" id="deleteAccountBtn" style="background:#dc2626" title="Remove this account from tracking">Delete Account</button>
+          {% endif %}
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn secondary" id="cancelEdit">Cancel</button>
+          <button class="btn" id="saveEdit">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allData = [];
+    let filteredData = [];
+    let selectedKeys = new Set();
+    let filterState = {
+      search: '',
+      hasNote: false,
+      statuses: [],
+      apReps: [],
+      properties: [],
+      vendors: [],
+      sortBy: 'urgency'
+    };
+    let reasonCodes = [];
+    let currentNoteAccountKey = null;
+
+    // Escape string for use in JavaScript onclick handlers (handles apostrophes, quotes, backslashes)
+    function escapeJs(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    async function fetchJSON(url) {
+      const r = await fetch(url, {credentials: 'same-origin'});
+      if (!r.ok) throw new Error('fetch failed');
+      return r.json();
+    }
+
+    function copyAcct(el, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        el.style.color = '#059669';
+        setTimeout(() => el.style.color = '', 600);
+        showToast('Copied: ' + text, 'ok');
+      }).catch(() => showToast('Copy failed', 'err'));
+    }
+
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function fmtDate(s) {
+      if (!s) return '-';
+      const d = new Date(s);
+      if (isNaN(d)) return s;
+      return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`;
+    }
+    function fmtDateParam(s) {
+      if (!s) return '';
+      const d = new Date(s);
+      if (isNaN(d)) return '';
+      return d.toISOString().slice(0, 10);
+    }
+
+    async function loadData(refresh = false) {
+      try {
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Loading...</td></tr>';
+        const url = refresh ? '/api/workflow?refresh=1' : '/api/workflow';
+        const data = await fetchJSON(url);
+
+        // Check if cache is empty - trigger recalculation
+        if (data.cacheStatus === 'empty') {
+          document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">No cached data. Starting recalculation...</td></tr>';
+          document.getElementById('lastUpdated').textContent = 'No data yet';
+          triggerRecalculate(true); // Auto-trigger with auto-refresh
+          return;
+        }
+
+        allData = data.rows || [];
+        reasonCodes = data.filters?.reasonCodes || [];
+
+        // Update last updated timestamp
+        if (data.computedAt) {
+          const d = new Date(data.computedAt);
+          document.getElementById('lastUpdated').textContent = `Updated: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+        } else {
+          document.getElementById('lastUpdated').textContent = '';
+        }
+
+        // Summary cards are computed from filteredData in applyFilters()
+
+        // Populate filter options
+        populateFilters(data.filters || {});
+
+        applyFilters();
+      } catch (e) {
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Error loading data</td></tr>';
+        showToast('Failed to load data', 'err');
+      }
+    }
+
+    async function triggerRecalculate(autoRefresh = false) {
+      try {
+        document.getElementById('recalculateBtn').disabled = true;
+        document.getElementById('recalculateBtn').textContent = 'Recalculating...';
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Recalculating workflow data... This may take 1-2 minutes.</td></tr>';
+        showToast('Recalculation started. This may take 1-2 minutes.', 'ok');
+
+        // Record the time when we started recalculation
+        const recalcStartTime = new Date().toISOString();
+        console.log('[Recalculate] Started at:', recalcStartTime);
+
+        const resp = await fetch('/api/workflow/recalculate', {
+          method: 'POST',
+          credentials: 'same-origin'
+        });
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error('[Recalculate] API error:', resp.status, errText);
+          throw new Error('Failed to start recalculation: ' + resp.status);
+        }
+
+        console.log('[Recalculate] Background task started successfully');
+
+        // Poll for completion by checking if computedAt is NEWER than when we started
+        if (autoRefresh) {
+          let attempts = 0;
+          const maxAttempts = 90; // 90 * 2s = 180 seconds (3 min) max timeout
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            try {
+              const data = await fetchJSON('/api/workflow');
+              const cacheTime = data.computedAt ? new Date(data.computedAt).getTime() : 0;
+              const startTime = new Date(recalcStartTime).getTime();
+
+              console.log('[Recalculate] Poll #' + attempts + ': cacheTime=' + data.computedAt + ', startTime=' + recalcStartTime);
+
+              // Check if cache is NEWER than when we started (not just that it exists)
+              if (cacheTime > startTime && data.rows && data.rows.length > 0) {
+                clearInterval(pollInterval);
+                document.getElementById('recalculateBtn').disabled = false;
+                document.getElementById('recalculateBtn').textContent = 'Recalculate';
+                showToast('Recalculation complete! (' + data.rows.length + ' accounts)', 'ok');
+                console.log('[Recalculate] Complete! New cache at:', data.computedAt);
+                loadData();
+              } else if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                document.getElementById('recalculateBtn').disabled = false;
+                document.getElementById('recalculateBtn').textContent = 'Recalculate';
+                showToast('Recalculation timed out. Try refreshing.', 'err');
+                console.warn('[Recalculate] Timed out after', attempts, 'attempts');
+                loadData(); // Still load whatever data is available
+              }
+            } catch (e) {
+              console.warn('[Recalculate] Poll error:', e.message);
+              // Keep polling
+            }
+          }, 2000);
+        } else {
+          // Just show message, user will refresh manually
+          setTimeout(() => {
+            document.getElementById('recalculateBtn').disabled = false;
+            document.getElementById('recalculateBtn').textContent = 'Recalculate';
+          }, 2000);
+        }
+      } catch (e) {
+        console.error('[Recalculate] Error:', e);
+        document.getElementById('recalculateBtn').disabled = false;
+        document.getElementById('recalculateBtn').textContent = 'Recalculate';
+        showToast('Failed to start recalculation: ' + e.message, 'err');
+      }
+    }
+
+    function populateFilters(filters) {
+      // Status filters
+      const statusDiv = document.getElementById('statusFilters');
+      statusDiv.innerHTML = (filters.statuses || []).map(s => `
+        <label class="chip">
+          <input type="checkbox" value="${s}" ${filterState.statuses.includes(s) ? 'checked' : ''} />
+          ${s.replace('_', ' ')}
+        </label>
+      `).join('');
+
+      // AP Rep filters
+      const apDiv = document.getElementById('apFilters');
+      apDiv.innerHTML = (filters.apReps || []).map(ap => `
+        <label class="chip">
+          <input type="checkbox" value="${ap}" ${filterState.apReps.includes(ap) ? 'checked' : ''} />
+          ${ap || '(Unassigned)'}
+        </label>
+      `).join('');
+
+      // Property filters
+      const propDiv = document.getElementById('propFilters');
+      propDiv.innerHTML = (filters.properties || []).map(p => `
+        <label class="chip" data-name="${(p.name||'').toLowerCase()}">
+          <input type="checkbox" value="${p.id}" ${filterState.properties.includes(p.id) ? 'checked' : ''} />
+          ${p.name}
+        </label>
+      `).join('');
+
+      // Vendor filters
+      const vendorDiv = document.getElementById('vendorFilters');
+      vendorDiv.innerHTML = (filters.vendors || []).map(v => `
+        <label class="chip" data-name="${(v.name||'').toLowerCase()}">
+          <input type="checkbox" value="${v.id}" ${filterState.vendors.includes(v.id) ? 'checked' : ''} />
+          ${v.name}
+        </label>
+      `).join('');
+
+      // Reason codes for note modal
+      const reasonSelect = document.getElementById('noteReasonCode');
+      reasonSelect.innerHTML = '<option value="">-- Select Reason --</option>' +
+        reasonCodes.map(r => `<option value="${r.code}">${r.label}</option>`).join('');
+    }
+
+    function applyFilters() {
+      let rows = [...allData];
+
+      // Search filter
+      if (filterState.search) {
+        const q = filterState.search.toLowerCase();
+        rows = rows.filter(r =>
+          (r.propertyName || '').toLowerCase().includes(q) ||
+          (r.vendorName || '').toLowerCase().includes(q) ||
+          (r.accountNumber || '').toLowerCase().includes(q) ||
+          (r.apName || '').toLowerCase().includes(q)
+        );
+      }
+
+      // Has Note filter
+      if (filterState.hasNote) {
+        rows = rows.filter(r => r.hasNote);
+      }
+
+      // Status filter
+      if (filterState.statuses.length > 0) {
+        rows = rows.filter(r => filterState.statuses.includes(r.status));
+      }
+
+      // AP Rep filter
+      if (filterState.apReps.length > 0) {
+        rows = rows.filter(r => filterState.apReps.includes(r.apName));
+      }
+
+      // Property filter
+      if (filterState.properties.length > 0) {
+        rows = rows.filter(r => filterState.properties.includes(r.propertyId));
+      }
+
+      // Vendor filter
+      if (filterState.vendors.length > 0) {
+        rows = rows.filter(r => filterState.vendors.includes(r.vendorId));
+      }
+
+      // Sort
+      if (filterState.sortBy === 'urgency') {
+        rows.sort((a, b) => b.urgencyScore - a.urgencyScore || b.daysOverdue - a.daysOverdue);
+      } else if (filterState.sortBy === 'daysOverdue') {
+        rows.sort((a, b) => b.daysOverdue - a.daysOverdue);
+      } else if (filterState.sortBy === 'propertyName') {
+        rows.sort((a, b) => (a.propertyName || '').localeCompare(b.propertyName || ''));
+      } else if (filterState.sortBy === 'vendorName') {
+        rows.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''));
+      } else if (filterState.sortBy === 'accountNumber') {
+        rows.sort((a, b) => (a.accountNumber || '').localeCompare(b.accountNumber || ''));
+      } else if (filterState.sortBy === 'apName') {
+        rows.sort((a, b) => (a.apName || '').localeCompare(b.apName || ''));
+      } else if (filterState.sortBy === 'nextExpectedDate') {
+        rows.sort((a, b) => (a.nextExpectedDate || '').localeCompare(b.nextExpectedDate || ''));
+      }
+
+      filteredData = rows;
+      renderTable();
+      updateSummaryFromFiltered();
+      updateBulkToolbar();
+    }
+
+    function updateSummaryFromFiltered() {
+      const counts = { VERY_LATE: 0, LATE: 0, SLIGHTLY_LATE: 0, DUE_SOON: 0, ON_TRACK: 0 };
+      filteredData.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
+      document.getElementById('countVeryLate').textContent = counts.VERY_LATE;
+      document.getElementById('countLate').textContent = counts.LATE;
+      document.getElementById('countSlightlyLate').textContent = counts.SLIGHTLY_LATE;
+      document.getElementById('countDueSoon').textContent = counts.DUE_SOON;
+      document.getElementById('countOnTrack').textContent = counts.ON_TRACK;
+    }
+
+    function updateBulkToolbar() {
+      const toolbar = document.getElementById('bulkToolbar');
+      const count = selectedKeys.size;
+      document.getElementById('selCount').textContent = count + ' selected';
+      if (count > 0) {
+        toolbar.classList.add('visible');
+      } else {
+        toolbar.classList.remove('visible');
+      }
+      // Update select-all checkbox state
+      const selectAll = document.getElementById('selectAll');
+      if (filteredData.length > 0 && filteredData.every(r => selectedKeys.has(r.accountKey))) {
+        selectAll.checked = true;
+        selectAll.indeterminate = false;
+      } else if (filteredData.some(r => selectedKeys.has(r.accountKey))) {
+        selectAll.checked = false;
+        selectAll.indeterminate = true;
+      } else {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+      }
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tableBody');
+      if (filteredData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="14" class="loading">No accounts match filters</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filteredData.map(r => {
+        const daysClass = r.daysOverdue > 0 ? 'positive' : 'negative';
+        const daysDisplay = r.daysOverdue > 0 ? `+${r.daysOverdue}` : r.daysOverdue;
+        const hasNoteClass = r.hasNote ? 'has-note' : '';
+        const noteIcon = r.hasNote ? '📝' : '➕';
+        const noteBtnClass = r.hasNote ? 'has-note' : '';
+        const noteTitle = r.note ? `${r.note.reasonCode || ''}: ${r.note.customNote || ''}` : 'Add note';
+
+        return `
+          <tr class="${hasNoteClass}" data-key="${r.accountKey}">
+            <td><input type="checkbox" class="row-select" data-key="${r.accountKey}" ${selectedKeys.has(r.accountKey) ? 'checked' : ''} /></td>
+            <td><button class="note-btn ${noteBtnClass}" title="${noteTitle}" onclick="openNoteModal('${escapeJs(r.accountKey)}')">${noteIcon}</button></td>
+            <td><button class="edit-btn" title="Edit property/vendor mapping" onclick="openEditModal('${escapeJs(r.accountKey)}')">✏️</button></td>
+            <td><span class="status-badge status-${r.status}">${r.status.replace('_', ' ')}</span></td>
+            <td>${r.propertyName || '-'}</td>
+            <td>${r.vendorName || '-'}</td>
+            <td>
+              <span class="acct-copy" title="Click to copy" onclick="event.stopPropagation();copyAcct(this,'${escapeJs(r.accountNumber || '')}')">${r.accountNumber || '-'}</span>${r.isDuplicate ? `<span class="dup-badge" title="POSSIBLE DUPLICATE — also on: ${(r.duplicateOf||[]).join(', ')}">D</span>` : ''}
+              <a href="/search?q=${encodeURIComponent(r.accountNumber || '')}" target="_blank" title="Search this account"
+                 class="search-link" style="margin-left:6px;color:#0284c7;font-size:11px;text-decoration:none"
+                 onclick="event.stopPropagation()">🔍</a>
+            </td>
+            <td>${r.apName || '-'}</td>
+            <td>${fmtDate(r.nextExpectedDate)}</td>
+            <td class="days-overdue ${daysClass}">${daysDisplay}</td>
+            <td>${fmtDate(r.lastBillDate)}</td>
+            <td>${r.lastBillPdfLink ? `<a href="/pdf?k=${encodeURIComponent(r.lastBillPdfLink)}" target="_blank" class="view-link" onclick="event.stopPropagation()">PDF</a>` : '-'}</td>
+            <td>${r.servicePeriodDays || '-'}</td>
+            <td>${r.hasScraper ? `<span class="scraper-badge" title="${r.scraperProvider || 'scraper'}">AUTO</span>` : ''}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Drawer
+    const drawer = document.getElementById('drawer');
+    const drawerMask = document.getElementById('drawerMask');
+    document.getElementById('openDrawer').addEventListener('click', () => {
+      drawer.classList.add('open');
+      drawerMask.classList.add('open');
+    });
+    document.getElementById('closeDrawer').addEventListener('click', closeDrawer);
+    drawerMask.addEventListener('click', closeDrawer);
+
+    function closeDrawer() {
+      drawer.classList.remove('open');
+      drawerMask.classList.remove('open');
+    }
+
+    document.getElementById('applyFilters').addEventListener('click', () => {
+      // Collect filter values from drawer
+      filterState.statuses = [...document.querySelectorAll('#statusFilters input:checked')].map(i => i.value);
+      filterState.apReps = [...document.querySelectorAll('#apFilters input:checked')].map(i => i.value);
+      filterState.properties = [...document.querySelectorAll('#propFilters input:checked')].map(i => i.value);
+      filterState.vendors = [...document.querySelectorAll('#vendorFilters input:checked')].map(i => i.value);
+      filterState.sortBy = document.getElementById('sortBy').value;
+      // Persist AP filter to localStorage
+      localStorage.setItem('workflow_ap_filter', JSON.stringify(filterState.apReps));
+      closeDrawer();
+      applyFilters();
+    });
+
+    document.getElementById('clearFilters').addEventListener('click', () => {
+      filterState = { search: '', hasNote: false, statuses: [], apReps: [], properties: [], vendors: [], sortBy: 'urgency' };
+      document.getElementById('searchBox').value = '';
+      document.getElementById('filterHasNote').checked = false;
+      document.getElementById('sortBy').value = 'urgency';
+      document.querySelectorAll('.drawer input[type=checkbox]').forEach(cb => cb.checked = false);
+      // Clear active summary cards
+      document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+      localStorage.removeItem('workflow_ap_filter');
+      applyFilters();
+    });
+
+    // Search
+    let searchTimeout;
+    document.getElementById('searchBox').addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        filterState.search = e.target.value;
+        applyFilters();
+      }, 200);
+    });
+
+    // Has Note filter
+    document.getElementById('filterHasNote').addEventListener('change', (e) => {
+      filterState.hasNote = e.target.checked;
+      applyFilters();
+    });
+
+    // Summary card click to filter by status
+    document.querySelectorAll('.summary-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const status = card.dataset.status;
+        const isActive = card.classList.contains('active');
+        document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+        if (isActive) {
+          filterState.statuses = [];
+        } else {
+          card.classList.add('active');
+          filterState.statuses = [status];
+        }
+        applyFilters();
+      });
+    });
+
+    // Refresh
+    document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
+
+    // Recalculate
+    document.getElementById('recalculateBtn').addEventListener('click', () => triggerRecalculate(true));
+
+    // Property/Vendor search in drawer
+    document.getElementById('propSearch').addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase();
+      document.querySelectorAll('#propFilters .chip').forEach(chip => {
+        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
+      });
+    });
+    document.getElementById('vendorSearch').addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase();
+      document.querySelectorAll('#vendorFilters .chip').forEach(chip => {
+        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
+      });
+    });
+
+    // Note Modal
+    const noteModal = document.getElementById('noteModal');
+
+    function openNoteModal(accountKey) {
+      currentNoteAccountKey = accountKey;
+      const row = allData.find(r => r.accountKey === accountKey);
+      if (!row) return;
+
+      document.getElementById('noteAccountInfo').textContent =
+        `${row.propertyName} | ${row.vendorName} | ${row.accountNumber}`;
+
+      const note = row.note;
+      document.getElementById('noteReasonCode').value = note?.reasonCode || '';
+      document.getElementById('noteCustomText').value = note?.customNote || '';
+
+      noteModal.classList.add('show');
+    }
+
+    document.getElementById('cancelNote').addEventListener('click', () => {
+      noteModal.classList.remove('show');
+      currentNoteAccountKey = null;
+    });
+
+    noteModal.addEventListener('click', (e) => {
+      if (e.target === noteModal) {
+        noteModal.classList.remove('show');
+        currentNoteAccountKey = null;
+      }
+    });
+
+    document.getElementById('clearNote').addEventListener('click', async () => {
+      if (!currentNoteAccountKey) return;
+      if (!confirm('Clear this note?')) return;
+
+      try {
+        const resp = await fetch('/api/workflow/notes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            accountKey: currentNoteAccountKey,
+            reasonCode: '',
+            customNote: ''
+          })
+        });
+        if (!resp.ok) throw new Error('Failed to clear note');
+        showToast('Note cleared', 'ok');
+        // Update in-memory data
+        const clearedRow = allData.find(r => r.accountKey === currentNoteAccountKey);
+        if (clearedRow) { clearedRow.hasNote = false; clearedRow.note = null; }
+        noteModal.classList.remove('show');
+        currentNoteAccountKey = null;
+        applyFilters();
+      } catch (e) {
+        showToast('Failed to clear note', 'err');
+      }
+    });
+
+    document.getElementById('saveNote').addEventListener('click', async () => {
+      if (!currentNoteAccountKey) return;
+
+      const reasonCode = document.getElementById('noteReasonCode').value;
+      const customNote = document.getElementById('noteCustomText').value.trim();
+
+      try {
+        const resp = await fetch('/api/workflow/notes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            accountKey: currentNoteAccountKey,
+            reasonCode: reasonCode,
+            customNote: customNote
+          })
+        });
+        if (!resp.ok) throw new Error('Failed to save note');
+        showToast('Note saved', 'ok');
+        // Update in-memory data
+        const savedRow = allData.find(r => r.accountKey === currentNoteAccountKey);
+        if (savedRow) {
+          savedRow.hasNote = !!(reasonCode || customNote);
+          savedRow.note = { reasonCode, customNote };
+        }
+        noteModal.classList.remove('show');
+        currentNoteAccountKey = null;
+        applyFilters();
+      } catch (e) {
+        showToast('Failed to save note', 'err');
+      }
+    });
+
+    // Edit Account Modal
+    const editModal = document.getElementById('editModal');
+    let currentEditAccountKey = null;
+    let allProperties = [];
+    let allVendors = [];
+
+    async function loadCatalogs() {
+      try {
+        const [propsResp, vendorsResp] = await Promise.all([
+          fetch('/api/catalog/properties', {credentials: 'same-origin'}),
+          fetch('/api/catalog/vendors', {credentials: 'same-origin'})
+        ]);
+        const propsData = await propsResp.json();
+        const vendorsData = await vendorsResp.json();
+        allProperties = propsData.items || propsData.properties || [];
+        allVendors = vendorsData.items || vendorsData.vendors || [];
+        console.log('Loaded catalogs:', allProperties.length, 'properties,', allVendors.length, 'vendors');
+      } catch (e) {
+        console.error('Failed to load catalogs:', e);
+      }
+    }
+
+    function openEditModal(accountKey) {
+      currentEditAccountKey = accountKey;
+      const row = allData.find(r => r.accountKey === accountKey);
+      if (!row) return;
+
+      document.getElementById('editAccountNumber').textContent = row.accountNumber;
+      document.getElementById('editCurrentProperty').textContent = row.propertyName || '(none)';
+      document.getElementById('editCurrentVendor').textContent = row.vendorName || '(none)';
+      document.getElementById('editPropertyId').value = row.propertyId || '';
+      document.getElementById('editVendorId').value = row.vendorId || '';
+      document.getElementById('editPropertySearch').value = '';
+      document.getElementById('editVendorSearch').value = '';
+
+      renderPropertyList('');
+      renderVendorList('');
+
+      editModal.classList.add('show');
+    }
+
+    function renderPropertyList(query) {
+      const list = document.getElementById('editPropertyList');
+      const selectedId = document.getElementById('editPropertyId').value;
+      const q = query.toLowerCase();
+      const filtered = allProperties.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.id || '').toLowerCase().includes(q)
+      ).slice(0, 50);
+
+      list.innerHTML = filtered.map(p => `
+        <div class="item ${p.id == selectedId ? 'selected' : ''}" data-id="${p.id}" data-name="${escapeJs(p.name)}" onclick="selectProperty('${p.id}', '${escapeJs(p.name)}')">
+          <span style="color:#64748b;font-size:11px;margin-right:6px">${p.id}</span> ${p.name}
+        </div>
+      `).join('') || '<div class="item" style="color:#94a3b8">No matches</div>';
+    }
+
+    function renderVendorList(query) {
+      const list = document.getElementById('editVendorList');
+      const selectedId = document.getElementById('editVendorId').value;
+      const q = query.toLowerCase();
+      const filtered = allVendors.filter(v =>
+        (v.name || '').toLowerCase().includes(q) ||
+        (v.id || '').toLowerCase().includes(q) ||
+        (v.code || '').toLowerCase().includes(q)
+      ).slice(0, 50);
+
+      list.innerHTML = filtered.map(v => `
+        <div class="item ${v.id == selectedId ? 'selected' : ''}" data-id="${v.id}" data-name="${escapeJs(v.name)}" onclick="selectVendor('${v.id}', '${escapeJs(v.name)}')">
+          <span style="color:#64748b;font-size:11px;margin-right:6px">${v.id}</span>
+          <span style="color:#0284c7;font-size:11px;margin-right:6px">${v.code || ''}</span>
+          ${v.name}
+        </div>
+      `).join('') || '<div class="item" style="color:#94a3b8">No matches</div>';
+    }
+
+    function selectProperty(id, name) {
+      document.getElementById('editPropertyId').value = id;
+      document.getElementById('editCurrentProperty').textContent = name;
+      renderPropertyList(document.getElementById('editPropertySearch').value);
+    }
+
+    function selectVendor(id, name) {
+      document.getElementById('editVendorId').value = id;
+      document.getElementById('editCurrentVendor').textContent = name;
+      renderVendorList(document.getElementById('editVendorSearch').value);
+    }
+
+    document.getElementById('editPropertySearch').addEventListener('input', (e) => {
+      renderPropertyList(e.target.value);
+    });
+    document.getElementById('editPropertySearch').addEventListener('focus', (e) => {
+      e.target.value = '';
+      renderPropertyList('');
+    });
+
+    document.getElementById('editVendorSearch').addEventListener('input', (e) => {
+      renderVendorList(e.target.value);
+    });
+    document.getElementById('editVendorSearch').addEventListener('focus', (e) => {
+      e.target.value = '';
+      renderVendorList('');
+    });
+
+    document.getElementById('cancelEdit').addEventListener('click', () => {
+      editModal.classList.remove('show');
+      currentEditAccountKey = null;
+    });
+
+    editModal.addEventListener('click', (e) => {
+      if (e.target === editModal) {
+        editModal.classList.remove('show');
+        currentEditAccountKey = null;
+      }
+    });
+
+    document.getElementById('saveEdit').addEventListener('click', async () => {
+      if (!currentEditAccountKey) {
+        console.error('No currentEditAccountKey');
+        return;
+      }
+
+      const newPropertyId = document.getElementById('editPropertyId').value;
+      const newVendorId = document.getElementById('editVendorId').value;
+      const newPropertyName = document.getElementById('editCurrentProperty').textContent;
+      const newVendorName = document.getElementById('editCurrentVendor').textContent;
+
+      console.log('Saving edit:', {
+        accountKey: currentEditAccountKey,
+        newPropertyId, newPropertyName,
+        newVendorId, newVendorName
+      });
+
+      if (!newPropertyId || !newVendorId) {
+        showToast('Please select both property and vendor', 'err');
+        console.error('Missing property or vendor ID:', {newPropertyId, newVendorId});
+        return;
+      }
+
+      try {
+        document.getElementById('saveEdit').disabled = true;
+        document.getElementById('saveEdit').textContent = 'Saving...';
+
+        const payload = {
+          accountKey: currentEditAccountKey,
+          newPropertyId: newPropertyId,
+          newPropertyName: newPropertyName,
+          newVendorId: newVendorId,
+          newVendorName: newVendorName
+        };
+        console.log('POST /api/workflow/accounts/update', payload);
+
+        const resp = await fetch('/api/workflow/accounts/update', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify(payload)
+        });
+
+        console.log('Response status:', resp.status);
+        const respData = await resp.json();
+        console.log('Response data:', respData);
+
+        if (!resp.ok) {
+          throw new Error(respData.detail || 'Failed to update');
+        }
+
+        showToast('Account mapping updated. Click Recalculate when done with all changes.', 'ok');
+        // Update in-memory data
+        const editedRow = allData.find(r => r.accountKey === currentEditAccountKey);
+        if (editedRow) {
+          editedRow.propertyId = newPropertyId;
+          editedRow.propertyName = newPropertyName;
+          editedRow.vendorId = newVendorId;
+          editedRow.vendorName = newVendorName;
+          editedRow.accountKey = newPropertyId + '|' + newVendorId + '|' + editedRow.accountNumber;
+        }
+        editModal.classList.remove('show');
+        currentEditAccountKey = null;
+        applyFilters();
+      } catch (e) {
+        showToast('Failed to update: ' + e.message, 'err');
+      } finally {
+        document.getElementById('saveEdit').disabled = false;
+        document.getElementById('saveEdit').textContent = 'Save Changes';
+      }
+    });
+
+    // Delete account (admin only)
+    const deleteBtn = document.getElementById('deleteAccountBtn');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (!currentEditAccountKey) return;
+        const row = allData.find(r => r.accountKey === currentEditAccountKey);
+        const label = row ? `${row.accountNumber} (${row.propertyName} / ${row.vendorName})` : currentEditAccountKey;
+        if (!confirm(`Delete account from tracking?\n\n${label}\n\nThis will archive the account. It can be restored from Manage Accounts.`)) return;
+
+        try {
+          deleteBtn.disabled = true;
+          deleteBtn.textContent = 'Deleting...';
+          const resp = await fetch('/api/workflow/accounts/archive', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            credentials: 'same-origin',
+            body: JSON.stringify({ account_keys: [currentEditAccountKey], reason: 'manual_delete' })
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.error || 'Failed to delete');
+          }
+          showToast('Account archived. Click Recalculate to refresh.', 'ok');
+          allData = allData.filter(r => r.accountKey !== currentEditAccountKey);
+          editModal.classList.remove('show');
+          currentEditAccountKey = null;
+          applyFilters();
+        } catch (e) {
+          showToast('Failed to delete: ' + e.message, 'err');
+        } finally {
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = 'Delete Account';
+        }
+      });
+    }
+
+    // Load catalogs on page load
+    loadCatalogs();
+
+    // ========== CHECKBOX SELECTION ==========
+    document.getElementById('selectAll').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        filteredData.forEach(r => selectedKeys.add(r.accountKey));
+      } else {
+        filteredData.forEach(r => selectedKeys.delete(r.accountKey));
+      }
+      document.querySelectorAll('#tableBody .row-select').forEach(cb => cb.checked = e.target.checked);
+      updateBulkToolbar();
+    });
+
+    document.getElementById('tableBody').addEventListener('change', (e) => {
+      if (!e.target.classList.contains('row-select')) return;
+      const key = e.target.dataset.key;
+      if (e.target.checked) { selectedKeys.add(key); } else { selectedKeys.delete(key); }
+      updateBulkToolbar();
+    });
+
+    document.getElementById('deselectAllBtn').addEventListener('click', () => {
+      selectedKeys.clear();
+      document.querySelectorAll('#tableBody .row-select').forEach(cb => cb.checked = false);
+      updateBulkToolbar();
+    });
+
+    // ========== BULK VENDOR ==========
+    document.getElementById('bulkVendorBtn').addEventListener('click', () => {
+      const count = selectedKeys.size;
+      if (count === 0) return;
+      document.getElementById('bulkVendorTitle').textContent = `Set Vendor (${count} account${count > 1 ? 's' : ''})`;
+      document.getElementById('bulkVendorCount').textContent = count;
+      document.getElementById('bulkVendorId').value = '';
+      document.getElementById('bulkVendorSearch').value = '';
+      document.getElementById('bulkVendorSelected').innerHTML = 'Selected: <strong>none</strong>';
+      try { renderBulkVendorList(''); } catch(e) { console.error('renderBulkVendorList error:', e); }
+      document.getElementById('bulkVendorModal').classList.add('show');
+    });
+
+    function renderBulkVendorList(query) {
+      const list = document.getElementById('bulkVendorList');
+      const selectedId = document.getElementById('bulkVendorId').value;
+      const q = query.toLowerCase();
+      const filtered = allVendors.filter(v =>
+        (v.name || '').toLowerCase().includes(q) ||
+        (v.id || '').toLowerCase().includes(q) ||
+        (v.code || '').toLowerCase().includes(q)
+      ).slice(0, 50);
+      list.innerHTML = filtered.map(v => {
+        const div = document.createElement('div');
+        div.className = 'item' + (v.id == selectedId ? ' selected' : '');
+        div.dataset.vid = v.id;
+        div.dataset.vname = v.name || '';
+        div.innerHTML = `<span style="color:#64748b;font-size:11px;margin-right:6px">${v.id}</span><span style="color:#0284c7;font-size:11px;margin-right:6px">${v.code || ''}</span>${v.name || ''}`;
+        return div.outerHTML;
+      }).join('') || '<div class="item" style="color:#94a3b8">No matches</div>';
+    }
+
+    document.getElementById('bulkVendorList').addEventListener('click', (e) => {
+      const item = e.target.closest('.item[data-vid]');
+      if (!item) return;
+      document.getElementById('bulkVendorId').value = item.dataset.vid;
+      document.getElementById('bulkVendorSelected').innerHTML = 'Selected: <strong>' + item.dataset.vname + '</strong>';
+      renderBulkVendorList(document.getElementById('bulkVendorSearch').value);
+    });
+
+    document.getElementById('bulkVendorSearch').addEventListener('input', (e) => {
+      renderBulkVendorList(e.target.value);
+    });
+
+    document.getElementById('bulkVendorModal').addEventListener('click', (e) => {
+      if (e.target.id === 'bulkVendorModal') e.target.classList.remove('show');
+    });
+
+    document.getElementById('bulkVendorApply').addEventListener('click', async () => {
+      const vendorId = document.getElementById('bulkVendorId').value;
+      if (!vendorId) { showToast('Please select a vendor', 'err'); return; }
+      const vendorName = document.getElementById('bulkVendorSelected').querySelector('strong').textContent;
+      const keys = [...selectedKeys];
+      const btn = document.getElementById('bulkVendorApply');
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        const resp = await fetch('/api/workflow/accounts/bulk-update', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({ accountKeys: keys, newVendorId: vendorId, newVendorName: vendorName })
+        });
+        if (!resp.ok) throw new Error('Failed to bulk update');
+        const result = await resp.json();
+        // Update in-memory and recompute accountKeys
+        const keySet = new Set(keys);
+        allData.forEach(r => {
+          if (keySet.has(r.accountKey)) {
+            r.vendorId = vendorId;
+            r.vendorName = vendorName;
+            r.accountKey = r.propertyId + '|' + vendorId + '|' + r.accountNumber;
+          }
+        });
+        selectedKeys.clear();
+        document.getElementById('bulkVendorModal').classList.remove('show');
+        applyFilters();
+        showToast(`Vendor updated for ${result.updatedCount} accounts. Click Recalculate when done.`, 'ok');
+      } catch (e) {
+        showToast('Bulk vendor update failed: ' + e.message, 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = `Apply to ${keys.length} accounts`;
+      }
+    });
+
+    // ========== BULK REASON CODE ==========
+    document.getElementById('bulkNoteBtn').addEventListener('click', () => {
+      const count = selectedKeys.size;
+      if (count === 0) return;
+      document.getElementById('bulkNoteTitle').textContent = `Set Reason Code (${count} account${count > 1 ? 's' : ''})`;
+      document.getElementById('bulkNoteCount').textContent = count;
+      document.getElementById('bulkNoteReasonCode').value = '';
+      document.getElementById('bulkNoteCustomText').value = '';
+      // Populate reason codes dropdown
+      const sel = document.getElementById('bulkNoteReasonCode');
+      sel.innerHTML = '<option value="">-- Select Reason --</option>' +
+        reasonCodes.map(r => `<option value="${r.code}">${r.label}</option>`).join('');
+      document.getElementById('bulkNoteModal').classList.add('show');
+    });
+
+    document.getElementById('bulkNoteModal').addEventListener('click', (e) => {
+      if (e.target.id === 'bulkNoteModal') e.target.classList.remove('show');
+    });
+
+    document.getElementById('bulkNoteApply').addEventListener('click', async () => {
+      const reasonCode = document.getElementById('bulkNoteReasonCode').value;
+      const customNote = document.getElementById('bulkNoteCustomText').value.trim();
+      if (!reasonCode && !customNote) { showToast('Please select a reason code or enter a note', 'err'); return; }
+      const keys = [...selectedKeys];
+      const btn = document.getElementById('bulkNoteApply');
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        const resp = await fetch('/api/workflow/notes/bulk', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({ accountKeys: keys, reasonCode, customNote })
+        });
+        if (!resp.ok) throw new Error('Failed to bulk save notes');
+        const result = await resp.json();
+        // Update in-memory
+        const keySet = new Set(keys);
+        allData.forEach(r => {
+          if (keySet.has(r.accountKey)) {
+            r.hasNote = true;
+            r.note = { reasonCode, customNote };
+          }
+        });
+        selectedKeys.clear();
+        document.getElementById('bulkNoteModal').classList.remove('show');
+        applyFilters();
+        showToast(`Reason code set for ${result.updatedCount} accounts`, 'ok');
+      } catch (e) {
+        showToast('Bulk note update failed: ' + e.message, 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = `Apply to ${keys.length} accounts`;
+      }
+    });
+
+    // Column sorting
+    document.querySelectorAll('#workflowTable th[data-col]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (col === 'note') return; // Don't sort by note column
+        filterState.sortBy = col;
+        document.getElementById('sortBy').value = col;
+        applyFilters();
+      });
+    });
+
+    // ========== AP PRIORITY TAB ==========
+    let priorityData = [];
+    let filteredPriorityData = [];
+    let prioritySearch = '';
+    let prioritySortBy = 'avgAmount';
+    let prioritySortDir = 'desc';
+    let priorityLoaded = false;
+
+    async function loadPriorityData() {
+      try {
+        document.getElementById('priorityTableBody').innerHTML = '<tr><td colspan="8" class="loading">Loading AP Priority data...</td></tr>';
+        const data = await fetchJSON('/api/workflow/ap-priority');
+
+        priorityData = data.rows || [];
+        priorityLoaded = true;
+
+        // Update summary
+        document.getElementById('priorityCount').textContent = data.totalCount || 0;
+        document.getElementById('priorityMagnitude').textContent = '$' + (data.totalMagnitude || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        document.getElementById('priorityPeriod').textContent = data.upcomingUbiPeriod || '-';
+
+        if (data.computedAt) {
+          const d = new Date(data.computedAt);
+          document.getElementById('priorityLastUpdated').textContent = `Computed: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+        }
+
+        // Populate filter options
+        if (data.filters) {
+          populatePriorityFilters(data.filters);
+        }
+
+        applyPriorityFilters();
+      } catch (e) {
+        document.getElementById('priorityTableBody').innerHTML = '<tr><td colspan="8" class="loading">Error loading data</td></tr>';
+        showToast('Failed to load AP Priority data', 'err');
+      }
+    }
+
+    function applyPriorityFilters() {
+      let rows = [...priorityData];
+
+      // Search filter
+      if (prioritySearch) {
+        const q = prioritySearch.toLowerCase();
+        rows = rows.filter(r =>
+          (r.propertyName || '').toLowerCase().includes(q) ||
+          (r.vendorName || '').toLowerCase().includes(q) ||
+          (r.accountNumber || '').toLowerCase().includes(q) ||
+          (r.apName || '').toLowerCase().includes(q)
+        );
+      }
+
+      // Sort
+      rows.sort((a, b) => {
+        let aVal = a[prioritySortBy];
+        let bVal = b[prioritySortBy];
+        if (typeof aVal === 'string') {
+          return prioritySortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        }
+        return prioritySortDir === 'asc' ? aVal - bVal : bVal - aVal;
+      });
+
+      filteredPriorityData = rows;
+      renderPriorityTable();
+    }
+
+    function renderPriorityTable() {
+      const tbody = document.getElementById('priorityTableBody');
+      if (filteredPriorityData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No accounts match filters</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filteredPriorityData.map(r => {
+        const monthsClass = r.monthsBehind >= 3 ? 'months-3' : (r.monthsBehind >= 2 ? 'months-2' : 'months-1');
+        const avgAmtFmt = '$' + (r.avgAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        return `
+          <tr>
+            <td class="amount-col">${avgAmtFmt}</td>
+            <td>${r.propertyName || '-'}</td>
+            <td>${r.vendorName || '-'}</td>
+            <td>
+              <span class="acct-copy" title="Click to copy" onclick="event.stopPropagation();copyAcct(this,'${escapeJs(r.accountNumber || '')}')">${r.accountNumber || '-'}</span>
+              <a href="/search?q=${encodeURIComponent(r.accountNumber || '')}" target="_blank" title="Search this account"
+                 class="search-link" style="margin-left:6px;color:#0284c7;font-size:11px;text-decoration:none">🔍</a>
+            </td>
+            <td>${r.apName || '-'}</td>
+            <td><span class="months-badge ${monthsClass}">${r.monthsBehind} month${r.monthsBehind > 1 ? 's' : ''}</span></td>
+            <td>${r.lastUbiPeriod || '-'}</td>
+            <td>${r.historicalBillCount || '-'}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Priority search
+    let prioritySearchTimeout;
+    document.getElementById('prioritySearchBox').addEventListener('input', (e) => {
+      clearTimeout(prioritySearchTimeout);
+      prioritySearchTimeout = setTimeout(() => {
+        prioritySearch = e.target.value;
+        applyPriorityFilters();
+      }, 200);
+    });
+
+    // Priority refresh
+    document.getElementById('priorityRefreshBtn').addEventListener('click', () => loadPriorityData());
+
+    // Priority column sorting
+    document.querySelectorAll('#priorityTable th[data-col]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (prioritySortBy === col) {
+          prioritySortDir = prioritySortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          prioritySortBy = col;
+          prioritySortDir = col === 'avgAmount' || col === 'monthsBehind' ? 'desc' : 'asc';
+        }
+        applyPriorityFilters();
+      });
+    });
+
+    // Priority filter state
+    let priorityFilterState = {
+      apReps: [],
+      properties: [],
+      vendors: [],
+      monthsBehind: []
+    };
+
+    // Priority Filter Drawer
+    const priorityDrawer = document.getElementById('priorityDrawer');
+    const priorityDrawerMask = document.getElementById('priorityDrawerMask');
+
+    document.getElementById('priorityFilterBtn').addEventListener('click', () => {
+      priorityDrawer.classList.add('open');
+      priorityDrawerMask.classList.add('open');
+    });
+
+    document.getElementById('closePriorityDrawer').addEventListener('click', closePriorityDrawer);
+    priorityDrawerMask.addEventListener('click', closePriorityDrawer);
+
+    function closePriorityDrawer() {
+      priorityDrawer.classList.remove('open');
+      priorityDrawerMask.classList.remove('open');
+    }
+
+    function populatePriorityFilters(filters) {
+      // AP Rep filters
+      const apDiv = document.getElementById('priorityApFilters');
+      apDiv.innerHTML = (filters.apReps || []).map(ap => `
+        <label class="chip">
+          <input type="checkbox" value="${ap}" ${priorityFilterState.apReps.includes(ap) ? 'checked' : ''} />
+          ${ap || '(Unassigned)'}
+        </label>
+      `).join('');
+
+      // Property filters
+      const propDiv = document.getElementById('priorityPropFilters');
+      propDiv.innerHTML = (filters.properties || []).map(p => `
+        <label class="chip" data-name="${(p.name||'').toLowerCase()}">
+          <input type="checkbox" value="${p.id}" ${priorityFilterState.properties.includes(p.id) ? 'checked' : ''} />
+          ${p.name}
+        </label>
+      `).join('');
+
+      // Vendor filters
+      const vendorDiv = document.getElementById('priorityVendorFilters');
+      vendorDiv.innerHTML = (filters.vendors || []).map(v => `
+        <label class="chip" data-name="${(v.name||'').toLowerCase()}">
+          <input type="checkbox" value="${v.id}" ${priorityFilterState.vendors.includes(v.id) ? 'checked' : ''} />
+          ${v.name}
+        </label>
+      `).join('');
+    }
+
+    document.getElementById('applyPriorityFilters').addEventListener('click', () => {
+      priorityFilterState.apReps = [...document.querySelectorAll('#priorityApFilters input:checked')].map(i => i.value);
+      priorityFilterState.properties = [...document.querySelectorAll('#priorityPropFilters input:checked')].map(i => i.value);
+      priorityFilterState.vendors = [...document.querySelectorAll('#priorityVendorFilters input:checked')].map(i => i.value);
+      priorityFilterState.monthsBehind = [...document.querySelectorAll('#priorityMonthsFilters input:checked')].map(i => i.value);
+      prioritySortBy = document.getElementById('prioritySortBy').value;
+      prioritySortDir = (prioritySortBy === 'avgAmount' || prioritySortBy === 'monthsBehind') ? 'desc' : 'asc';
+      closePriorityDrawer();
+      applyPriorityFilters();
+    });
+
+    document.getElementById('clearPriorityFilters').addEventListener('click', () => {
+      priorityFilterState = { apReps: [], properties: [], vendors: [], monthsBehind: [] };
+      document.getElementById('prioritySearchBox').value = '';
+      document.getElementById('prioritySortBy').value = 'avgAmount';
+      document.querySelectorAll('#priorityDrawer input[type=checkbox]').forEach(cb => cb.checked = false);
+      prioritySearch = '';
+      prioritySortBy = 'avgAmount';
+      prioritySortDir = 'desc';
+      applyPriorityFilters();
+    });
+
+    // Property/Vendor search in priority drawer
+    document.getElementById('priorityPropSearch').addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase();
+      document.querySelectorAll('#priorityPropFilters .chip').forEach(chip => {
+        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
+      });
+    });
+    document.getElementById('priorityVendorSearch').addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase();
+      document.querySelectorAll('#priorityVendorFilters .chip').forEach(chip => {
+        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
+      });
+    });
+
+    // Update applyPriorityFilters to use filter state
+    const originalApplyPriorityFilters = applyPriorityFilters;
+    applyPriorityFilters = function() {
+      let rows = [...priorityData];
+
+      // Search filter
+      if (prioritySearch) {
+        const q = prioritySearch.toLowerCase();
+        rows = rows.filter(r =>
+          (r.propertyName || '').toLowerCase().includes(q) ||
+          (r.vendorName || '').toLowerCase().includes(q) ||
+          (r.accountNumber || '').toLowerCase().includes(q) ||
+          (r.apName || '').toLowerCase().includes(q)
+        );
+      }
+
+      // AP Rep filter
+      if (priorityFilterState.apReps.length > 0) {
+        rows = rows.filter(r => priorityFilterState.apReps.includes(r.apName));
+      }
+
+      // Property filter
+      if (priorityFilterState.properties.length > 0) {
+        rows = rows.filter(r => priorityFilterState.properties.includes(r.propertyId));
+      }
+
+      // Vendor filter
+      if (priorityFilterState.vendors.length > 0) {
+        rows = rows.filter(r => priorityFilterState.vendors.includes(r.vendorId));
+      }
+
+      // Months behind filter
+      if (priorityFilterState.monthsBehind.length > 0) {
+        rows = rows.filter(r => {
+          if (priorityFilterState.monthsBehind.includes('3') && r.monthsBehind >= 3) return true;
+          if (priorityFilterState.monthsBehind.includes('2') && r.monthsBehind === 2) return true;
+          if (priorityFilterState.monthsBehind.includes('1') && r.monthsBehind === 1) return true;
+          return false;
+        });
+      }
+
+      // Sort
+      rows.sort((a, b) => {
+        let aVal = a[prioritySortBy];
+        let bVal = b[prioritySortBy];
+        if (typeof aVal === 'string') {
+          return prioritySortDir === 'asc' ? (aVal||'').localeCompare(bVal||'') : (bVal||'').localeCompare(aVal||'');
+        }
+        return prioritySortDir === 'asc' ? (aVal||0) - (bVal||0) : (bVal||0) - (aVal||0);
+      });
+
+      filteredPriorityData = rows;
+      renderPriorityTable();
+    };
+
+    // ========== TAB SWITCHING ==========
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+
+        // Update button states
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Update content visibility
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(tab + 'Tab').classList.add('active');
+
+        // Load AP Priority data on first view
+        if (tab === 'apPriority' && !priorityLoaded) {
+          loadPriorityData();
+        }
+      });
+    });
+
+    // Restore persisted AP filter from localStorage
+    try {
+      const savedAp = localStorage.getItem('workflow_ap_filter');
+      if (savedAp) { filterState.apReps = JSON.parse(savedAp); }
+    } catch(e) {}
+
+    // Initial load
+    loadData();
+  </script>
+</body>
+</html>

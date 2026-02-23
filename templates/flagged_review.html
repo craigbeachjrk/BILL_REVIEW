@@ -1,0 +1,558 @@
+<!doctype html>
+<!-- FLAGGED REVIEW VERSION: 2025-01-19-v2 - Invoice Aggregation -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FLAGGED FOR REVIEW &middot; Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.success{background:#059669}
+    .btn.danger{background:#dc2626}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* Submitter Groups */
+    .submitter-group{background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:16px;overflow:hidden}
+    .submitter-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;background:#f0f9ff;border-bottom:1px solid #bae6fd;cursor:pointer}
+    .submitter-header:hover{background:#e0f2fe}
+    .submitter-name{font-weight:600;font-size:16px;color:#0369a1}
+    .submitter-stats{display:flex;gap:16px;font-size:13px;color:#64748b}
+    .submitter-items{display:none;padding:12px}
+    .submitter-items.open{display:block}
+
+    /* Invoice Cards (aggregated) */
+    .invoice-card{border:1px solid #e5e7eb;border-radius:10px;margin-bottom:10px;background:#fafafa;overflow:hidden}
+    .invoice-header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;cursor:pointer;background:#fff;border-bottom:1px solid #f0f0f0}
+    .invoice-header:hover{background:#f9fafb}
+    .invoice-info{flex:1}
+    .invoice-vendor{font-weight:600;font-size:14px;color:#1e293b}
+    .invoice-meta{display:flex;gap:16px;font-size:12px;color:#64748b;margin-top:4px}
+    .invoice-amount{font-weight:600;font-size:16px;color:#059669;text-align:right}
+    .invoice-lines-count{font-size:11px;color:#94a3b8}
+
+    /* Flagged note in RED */
+    .invoice-note{background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 12px;font-size:12px;color:#dc2626;margin:8px 16px 0 16px;font-weight:500}
+    .invoice-note strong{color:#991b1b}
+
+    /* Expandable Lines */
+    .invoice-lines{display:none;padding:12px 16px;background:#f8fafc}
+    .invoice-lines.open{display:block}
+    .line-row{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:6px;background:#fff;font-size:13px}
+    .line-row:last-child{margin-bottom:0}
+    .line-desc{flex:1;color:#374151}
+    .line-amount{font-weight:600;color:#059669;margin:0 16px}
+    .line-actions{display:flex;gap:6px}
+    .line-status{font-size:11px;padding:3px 8px;border-radius:4px;font-weight:600}
+    .line-status.mistake{background:#fef2f2;color:#dc2626}
+    .line-status.ok{background:#f0fdf4;color:#16a34a}
+
+    /* Invoice Actions */
+    .invoice-actions{padding:12px 16px;background:#f1f5f9;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end}
+
+    /* Checkbox */
+    .checkbox{width:18px;height:18px;cursor:pointer}
+    .select-all-row{padding:10px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:8px}
+    .batch-actions{display:flex;gap:8px;margin-left:auto}
+
+    /* Modal */
+    .email-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .email-modal-overlay.show{display:flex}
+    .email-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:700px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto;max-height:80vh;overflow:auto}
+    .email-modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .email-field{margin-bottom:16px}
+    .email-field label{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
+    .email-field input,.email-field textarea{width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:14px}
+    .email-field textarea{min-height:300px;resize:vertical;font-family:monospace}
+    .email-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+    .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e5e7eb;border-top:2px solid #0ea5e9;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:8px}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+
+    /* Expand arrow */
+    .expand-arrow{transition:transform .2s;color:#94a3b8;margin-right:8px}
+    .expand-arrow.open{transform:rotate(90deg)}
+  </style>
+</head>
+<body>
+
+<header class="top">
+  <strong>FLAGGED FOR REVIEW</strong>
+  <div class="logout">
+    <a href="/" class="btn small secondary">Home</a>
+    <a href="/billback" class="btn small secondary">BILLBACK</a>
+    <span style="opacity:.8">{{ user }}</span>
+    <form action="/logout" method="post"><button class="btn small secondary">Logout</button></form>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="card">
+    <div class="controls">
+      <button class="btn" onclick="loadFlagged()"><span class="spinner" id="loadSpinner" style="display:none"></span>Load Flagged Items</button>
+      <span style="flex:1"></span>
+      <span id="statusText" style="color:#64748b;font-size:13px"></span>
+    </div>
+
+    <div class="summary" id="summary" style="display:none">
+      <div class="summary-item">
+        <div class="summary-label">Total Invoices</div>
+        <div class="summary-value" id="totalInvoices">0</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Submitters</div>
+        <div class="summary-value" id="totalSubmitters">0</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Total Dollars</div>
+        <div class="summary-value" id="totalDollars">$0</div>
+      </div>
+    </div>
+
+    <div id="content">
+      <div class="loading">Click "Load Flagged Items" to view invoices flagged for review</div>
+    </div>
+  </div>
+</main>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<!-- Email Modal -->
+<div class="email-modal-overlay" id="emailModal">
+  <div class="email-modal-box">
+    <h2>Email Preview</h2>
+    <div class="email-field">
+      <label>To:</label>
+      <input type="text" id="emailTo" readonly />
+    </div>
+    <div class="email-field">
+      <label>Subject:</label>
+      <input type="text" id="emailSubject" />
+    </div>
+    <div class="email-field">
+      <label>Body:</label>
+      <textarea id="emailBody"></textarea>
+    </div>
+    <div class="email-actions">
+      <button class="btn secondary" onclick="closeEmailModal()">Cancel</button>
+      <button class="btn" onclick="copyEmailToClipboard()">Copy to Clipboard</button>
+      <button class="btn success" onclick="openInMailClient()">Open in Email</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const USER = "{{ user }}";
+let flaggedData = null;
+let selectedInvoices = new Map(); // submitter -> Set of s3_keys
+let toastTimeout = null;
+
+function showToast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  if (toastTimeout) clearTimeout(toastTimeout);
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  toastTimeout = setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function loadFlagged() {
+  const spinner = document.getElementById('loadSpinner');
+  const content = document.getElementById('content');
+  spinner.style.display = 'inline-block';
+  content.innerHTML = '<div class="loading"><span class="spinner"></span> Loading flagged invoices...</div>';
+
+  try {
+    const resp = await fetch('/api/flagged?days_back=90');
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'Failed to load');
+    flaggedData = processToInvoices(data);
+    selectedInvoices.clear();
+    renderFlagged();
+    document.getElementById('summary').style.display = 'flex';
+    document.getElementById('totalInvoices').textContent = flaggedData.totalInvoices;
+    document.getElementById('totalSubmitters').textContent = flaggedData.submitters.length;
+    document.getElementById('totalDollars').textContent = '$' + flaggedData.totalDollars.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    document.getElementById('statusText').textContent = `Loaded ${flaggedData.totalInvoices} flagged invoices`;
+  } catch (err) {
+    content.innerHTML = '<div class="loading" style="color:#b91c1c">Error: ' + err.message + '</div>';
+    showToast('Error loading flagged items: ' + err.message, false);
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+// Process raw line items into invoice-level aggregation
+function processToInvoices(data) {
+  let totalInvoices = 0;
+  let totalDollars = 0;
+
+  const submitters = data.submitters.map(sub => {
+    // Group items by s3_key (invoice)
+    const invoiceMap = new Map();
+    for (const item of sub.items) {
+      const s3Key = item._s3_key || item.source_s3_key || '';
+      if (!invoiceMap.has(s3Key)) {
+        invoiceMap.set(s3Key, {
+          s3_key: s3Key,
+          lines: [],
+          vendor: item.EnrichedVendorName || item['Vendor Name'] || 'Unknown Vendor',
+          property: item.EnrichedPropertyName || item['Property Name'] || 'Unknown Property',
+          account: item['Account Number'] || item['Line Item Account Number'] || '',
+          flagged_note: item.flagged_note || '',
+          flagged_reason: item.flagged_reason || '',
+          flagged_by: item.flagged_by || '',
+          flagged_date: item.flagged_date || '',
+          total: 0
+        });
+      }
+      const inv = invoiceMap.get(s3Key);
+      let amt = item['Line Item Charge'] || item.AMOUNT || 0;
+      try { amt = parseFloat(String(amt).replace(/[$,]/g, '')); } catch(e) { amt = 0; }
+      inv.total += amt;
+      inv.lines.push({
+        ...item,
+        _amount: amt,
+        _desc: item['Line Item Description'] || item['Charge Code Description'] || 'Line item',
+        _hash: item._line_hash || ''
+      });
+    }
+
+    const invoices = Array.from(invoiceMap.values());
+    totalInvoices += invoices.length;
+    const subTotal = invoices.reduce((sum, inv) => sum + inv.total, 0);
+    totalDollars += subTotal;
+
+    return {
+      submitter: sub.submitter,
+      invoices: invoices,
+      invoice_count: invoices.length,
+      total_dollars: subTotal
+    };
+  });
+
+  return { submitters, totalInvoices, totalDollars };
+}
+
+function renderFlagged() {
+  if (!flaggedData || !flaggedData.submitters.length) {
+    document.getElementById('content').innerHTML = '<div class="loading">No flagged invoices found</div>';
+    return;
+  }
+
+  let html = '';
+  for (const sub of flaggedData.submitters) {
+    const subId = sub.submitter.replace(/[^a-zA-Z0-9]/g, '_');
+    html += `
+      <div class="submitter-group" id="group_${subId}">
+        <div class="submitter-header" onclick="toggleSubmitter('${subId}')">
+          <div>
+            <div class="submitter-name">${escapeHtml(sub.submitter)}</div>
+          </div>
+          <div class="submitter-stats">
+            <span><strong>${sub.invoice_count}</strong> invoice${sub.invoice_count !== 1 ? 's' : ''}</span>
+            <span><strong>$${sub.total_dollars.toLocaleString('en-US', {minimumFractionDigits: 2})}</strong></span>
+          </div>
+        </div>
+        <div class="submitter-items" id="items_${subId}">
+          <div class="select-all-row">
+            <input type="checkbox" class="checkbox" onchange="toggleSelectAllInvoices('${escapeJs(sub.submitter)}', this.checked)" id="selectAll_${subId}">
+            <label for="selectAll_${subId}" style="font-size:13px;cursor:pointer">Select All Invoices</label>
+            <div class="batch-actions">
+              <button class="btn small success" onclick="unflagSelectedInvoices('${escapeJs(sub.submitter)}')">Return Selected to BILLBACK</button>
+              <button class="btn small" onclick="generateEmail('${escapeJs(sub.submitter)}')">Generate Email</button>
+            </div>
+          </div>
+          ${sub.invoices.map((inv, idx) => renderInvoice(sub.submitter, inv, idx)).join('')}
+        </div>
+      </div>
+    `;
+  }
+  document.getElementById('content').innerHTML = html;
+}
+
+function renderInvoice(submitter, inv, idx) {
+  const subId = submitter.replace(/[^a-zA-Z0-9]/g, '_');
+  const invId = `inv_${subId}_${idx}`;
+
+  let flaggedDateFmt = '';
+  if (inv.flagged_date) {
+    try {
+      const d = new Date(inv.flagged_date);
+      flaggedDateFmt = d.toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+    } catch(e) {}
+  }
+
+  // Check if all lines are confirmed/dismissed
+  const allConfirmed = inv.lines.every(l => l.confirmed_as_mistake !== undefined);
+  const hasMistakes = inv.lines.some(l => l.confirmed_as_mistake === true);
+
+  return `
+    <div class="invoice-card" id="${invId}">
+      <div class="invoice-header" onclick="toggleInvoice('${invId}')">
+        <input type="checkbox" class="checkbox" style="margin-right:12px" data-submitter="${escapeHtml(submitter)}" data-s3key="${escapeHtml(inv.s3_key)}" onclick="event.stopPropagation()" onchange="toggleInvoiceSelect('${escapeJs(submitter)}', '${escapeJs(inv.s3_key)}', this.checked)">
+        <span class="expand-arrow" id="arrow_${invId}">▶</span>
+        <div class="invoice-info">
+          <div class="invoice-vendor">${escapeHtml(inv.vendor)}</div>
+          <div class="invoice-meta">
+            <span>${escapeHtml(inv.property)}</span>
+            <span>Acct: ${escapeHtml(inv.account)}</span>
+            <span>Flagged ${flaggedDateFmt} by ${escapeHtml(inv.flagged_by)}</span>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div class="invoice-amount">$${inv.total.toLocaleString('en-US', {minimumFractionDigits: 2})}</div>
+          <div class="invoice-lines-count">${inv.lines.length} line${inv.lines.length !== 1 ? 's' : ''}</div>
+        </div>
+      </div>
+      ${inv.flagged_note ? `<div class="invoice-note"><strong>NOTE:</strong> ${escapeHtml(inv.flagged_note)}</div>` : ''}
+      ${!inv.flagged_note && inv.flagged_reason && inv.flagged_reason !== 'Flagged for review' ? `<div class="invoice-note"><strong>REASON:</strong> ${escapeHtml(inv.flagged_reason)}</div>` : ''}
+      <div class="invoice-lines" id="lines_${invId}">
+        ${inv.lines.map((line, lidx) => renderLine(inv.s3_key, line, lidx)).join('')}
+      </div>
+      <div class="invoice-actions">
+        <button class="btn small success" onclick="returnInvoiceToBillback('${escapeJs(inv.s3_key)}')">Return to BILLBACK</button>
+        <button class="btn small danger" onclick="markAllAsMistake('${escapeJs(inv.s3_key)}')">Confirm All as Mistakes</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLine(s3Key, line, idx) {
+  const confirmed = line.confirmed_as_mistake;
+  let statusHtml = '';
+  if (confirmed === true) {
+    statusHtml = `<span class="line-status mistake">MISTAKE</span>`;
+  } else if (confirmed === false) {
+    statusHtml = `<span class="line-status ok">OK</span>`;
+  }
+
+  return `
+    <div class="line-row">
+      <div class="line-desc">${escapeHtml(line._desc)}</div>
+      <div class="line-amount">$${line._amount.toLocaleString('en-US', {minimumFractionDigits: 2})}</div>
+      ${statusHtml}
+      ${confirmed === undefined ? `
+        <div class="line-actions">
+          <button class="btn small danger" onclick="confirmLine('${escapeJs(line._hash)}', '${escapeJs(s3Key)}', true)">Mistake</button>
+          <button class="btn small success" onclick="confirmLine('${escapeJs(line._hash)}', '${escapeJs(s3Key)}', false)">OK</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function toggleSubmitter(subId) {
+  const items = document.getElementById('items_' + subId);
+  items.classList.toggle('open');
+}
+
+function toggleInvoice(invId) {
+  const lines = document.getElementById('lines_' + invId);
+  const arrow = document.getElementById('arrow_' + invId);
+  lines.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function escapeJs(str) {
+  return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function toggleSelectAllInvoices(submitter, checked) {
+  const checkboxes = document.querySelectorAll(`input.checkbox[data-submitter="${submitter}"]`);
+  checkboxes.forEach(cb => {
+    cb.checked = checked;
+    const s3key = cb.dataset.s3key;
+    if (s3key) toggleInvoiceSelect(submitter, s3key, checked, false);
+  });
+}
+
+function toggleInvoiceSelect(submitter, s3key, checked, updateSelectAll = true) {
+  if (!selectedInvoices.has(submitter)) {
+    selectedInvoices.set(submitter, new Set());
+  }
+  const subSet = selectedInvoices.get(submitter);
+  if (checked) {
+    subSet.add(s3key);
+  } else {
+    subSet.delete(s3key);
+  }
+}
+
+async function unflagSelectedInvoices(submitter) {
+  const subSet = selectedInvoices.get(submitter);
+  if (!subSet || subSet.size === 0) {
+    showToast('No invoices selected', false);
+    return;
+  }
+
+  if (!confirm(`Return ${subSet.size} invoice(s) to BILLBACK?`)) return;
+
+  let totalUnflagged = 0;
+  for (const s3key of subSet) {
+    try {
+      const fd = new FormData();
+      fd.append('s3_key', s3key);
+      fd.append('line_hashes', 'ALL'); // Signal to unflag entire invoice
+      const resp = await fetch('/api/flagged/unflag', { method: 'POST', body: fd });
+      const data = await resp.json();
+      if (data.ok) totalUnflagged++;
+    } catch (err) {
+      console.error('Unflag error:', err);
+    }
+  }
+
+  showToast(`Returned ${totalUnflagged} invoice(s) to BILLBACK`);
+  loadFlagged();
+}
+
+async function returnInvoiceToBillback(s3Key) {
+  if (!confirm('Return this entire invoice to BILLBACK?')) return;
+
+  try {
+    const fd = new FormData();
+    fd.append('s3_key', s3Key);
+    fd.append('line_hashes', 'ALL');
+    const resp = await fetch('/api/flagged/unflag', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'Failed');
+    showToast('Invoice returned to BILLBACK');
+    loadFlagged();
+  } catch (err) {
+    showToast('Error: ' + err.message, false);
+  }
+}
+
+async function markAllAsMistake(s3Key) {
+  if (!confirm('Mark ALL lines in this invoice as mistakes?')) return;
+
+  try {
+    const fd = new FormData();
+    fd.append('s3_key', s3Key);
+    fd.append('line_hashes', 'ALL');
+    fd.append('is_mistake', 'true');
+    const resp = await fetch('/api/flagged/confirm', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'Failed');
+    showToast('All lines marked as mistakes');
+    loadFlagged();
+  } catch (err) {
+    showToast('Error: ' + err.message, false);
+  }
+}
+
+async function confirmLine(hash, s3Key, isMistake) {
+  try {
+    const fd = new FormData();
+    fd.append('line_hashes', hash);
+    fd.append('s3_key', s3Key);
+    fd.append('is_mistake', isMistake.toString());
+    const resp = await fetch('/api/flagged/confirm', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'Failed');
+    showToast(isMistake ? 'Marked as mistake' : 'Marked as OK');
+    loadFlagged();
+  } catch (err) {
+    showToast('Error: ' + err.message, false);
+  }
+}
+
+async function generateEmail(submitter) {
+  const sub = flaggedData.submitters.find(s => s.submitter === submitter);
+  if (!sub) return;
+
+  // Get all line items from selected invoices (or all if none selected)
+  const subSet = selectedInvoices.get(submitter);
+  let invoicesToEmail = sub.invoices;
+  if (subSet && subSet.size > 0) {
+    invoicesToEmail = sub.invoices.filter(inv => subSet.has(inv.s3_key));
+  }
+
+  const itemsToEmail = invoicesToEmail.flatMap(inv => inv.lines);
+
+  if (itemsToEmail.length === 0) {
+    showToast('No items to include in email', false);
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/flagged/generate-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        submitter: submitter,
+        items: itemsToEmail,
+        message: ''
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'Failed to generate email');
+
+    document.getElementById('emailTo').value = data.email.to;
+    document.getElementById('emailSubject').value = data.email.subject;
+    document.getElementById('emailBody').value = data.email.body;
+    document.getElementById('emailModal').classList.add('show');
+  } catch (err) {
+    showToast('Error generating email: ' + err.message, false);
+  }
+}
+
+function closeEmailModal() {
+  document.getElementById('emailModal').classList.remove('show');
+}
+
+function copyEmailToClipboard() {
+  const subject = document.getElementById('emailSubject').value;
+  const body = document.getElementById('emailBody').value;
+  const text = `Subject: ${subject}\n\n${body}`;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('Email copied to clipboard');
+    closeEmailModal();
+  });
+}
+
+function openInMailClient() {
+  const to = document.getElementById('emailTo').value;
+  const subject = encodeURIComponent(document.getElementById('emailSubject').value);
+  const body = encodeURIComponent(document.getElementById('emailBody').value);
+  window.open(`mailto:${to}?subject=${subject}&body=${body}`);
+  closeEmailModal();
+}
+
+// Close modal on escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeEmailModal();
+});
+
+// Close modal on background click
+document.getElementById('emailModal').addEventListener('click', (e) => {
+  if (e.target.classList.contains('email-modal-overlay')) closeEmailModal();
+});
+</script>
+</body>
+</html>

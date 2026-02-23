@@ -1,0 +1,48 @@
+﻿{
+    "FunctionName":  "jrk-bill-parser-rework",
+    "FunctionArn":  "arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser-rework",
+    "Runtime":  "python3.12",
+    "Role":  "arn:aws:iam::789814232318:role/jrk-bill-parser-rework-role",
+    "Handler":  "rework_handler.handler",
+    "CodeSize":  1137,
+    "Description":  "",
+    "Timeout":  60,
+    "MemorySize":  512,
+    "LastModified":  "2025-10-10T00:14:26.000+0000",
+    "CodeSha256":  "8OYHrxnIn8F+s0/Td1c4Lmzoy2Lg+gX1imEZhlxTjiI=",
+    "Version":  "$LATEST",
+    "Environment":  {
+                        "Variables":  {
+                                          "POST_PARSED_PREFIX":  "Bill_Parser_2_Post_Parsed_Outputs/",
+                                          "ENRICH_PREFIX":  "Bill_Parser_4_Enriched_Outputs/",
+                                          "BUCKET":  "jrk-analytics-billing",
+                                          "REWORK_PREFIX":  "Bill_Parser_Rework_Input/",
+                                          "PRE_ENTRATA_PREFIX":  "Bill_Parser_6_PreEntrata_Submission/",
+                                          "PENDING_PREFIX":  "Bill_Parser_1_Pending_Parsing/"
+                                      }
+                    },
+    "TracingConfig":  {
+                          "Mode":  "PassThrough"
+                      },
+    "RevisionId":  "092e4c6a-fd6e-4514-a4b0-7b8849e8e224",
+    "State":  "Active",
+    "LastUpdateStatus":  "Successful",
+    "PackageType":  "Zip",
+    "Architectures":  [
+                          "x86_64"
+                      ],
+    "EphemeralStorage":  {
+                             "Size":  512
+                         },
+    "SnapStart":  {
+                      "ApplyOn":  "None",
+                      "OptimizationStatus":  "Off"
+                  },
+    "RuntimeVersionConfig":  {
+                                 "RuntimeVersionArn":  "arn:aws:lambda:us-east-1::runtime:4af3157c9dfde29be4e8f128147181e8978958ec7ddea506e754af7c3741a0a2"
+                             },
+    "LoggingConfig":  {
+                          "LogFormat":  "Text",
+                          "LogGroup":  "/aws/lambda/jrk-bill-parser-rework"
+                      }
+}

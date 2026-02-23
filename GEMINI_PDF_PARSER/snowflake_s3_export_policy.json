@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowPutToExportPrefix",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:AbortMultipartUpload"
+      ],
+      "Resource": "arn:aws:s3:::jrk-analytics-billing/Bill_Parser_Enrichment/exports/*"
+    },
+    {
+      "Sid": "AllowListBucketOnExportPrefix",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::jrk-analytics-billing",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "Bill_Parser_Enrichment/exports/*"
+        }
+      }
+    }
+  ]
+}

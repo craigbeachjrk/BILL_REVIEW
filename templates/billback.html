@@ -1,0 +1,3768 @@
+<!doctype html>
+<!-- BILLBACK VERSION: 2025-12-29-v2-multiperiod-fix -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BILLBACK · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    select,input[type="date"]{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:fixed}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0}
+    tr:hover{background:#f9fafb}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.ubi{background:#dbeafe;color:#1e40af}
+    .badge.no-ubi{background:#e5e7eb;color:#374151}
+    .badge.quarterly{background:#fef3c7;color:#92400e}
+    .badge.excluded{background:#fee2e2;color:#991b1b}
+    .amount-input{width:80px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;text-align:right}
+    .checkbox{width:18px;height:18px;cursor:pointer}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .notes{font-size:11px;color:#64748b;font-style:italic}
+    /* Flash animation for inline updates - BOLD for visibility */
+    @keyframes flash-success { 0%{background:#22c55e;box-shadow:0 0 8px #22c55e} 50%{background:#86efac} 100%{background:transparent;box-shadow:none} }
+    @keyframes flash-warning { 0%{background:#eab308;box-shadow:0 0 8px #eab308} 50%{background:#fef08a} 100%{background:transparent;box-shadow:none} }
+    @keyframes flash-zeroed { 0%{background:#fca5a5;border-color:#ef4444;box-shadow:0 0 6px #ef4444} 50%{background:#fee2e2;border-color:#f87171} 100%{background:#fff;border-color:#e5e7eb;box-shadow:none} }
+    .flash-success{animation:flash-success 2s ease-out}
+    .flash-warning{animation:flash-warning 2s ease-out}
+    .flash-zeroed{animation:flash-zeroed 2s ease-out}
+    .line-item.excluded{opacity:0.5;text-decoration:line-through}
+    .line-item.saving{opacity:0.6;pointer-events:none}
+    .zero-btn{padding:2px 6px;font-size:10px;background:#64748b;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:4px}
+    .zero-btn:hover{background:#475569}
+    .zero-btn:disabled{background:#9ca3af;cursor:not-allowed}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto}
+    .improve-modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:6px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{display:block;width:calc(100% - 24px);max-width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .improve-modal-box textarea{min-height:120px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+    .mode-tabs{display:flex;gap:8px;margin-bottom:20px;border-bottom:2px solid rgba(255,255,255,0.2);padding-bottom:8px}
+    .mode-tab{padding:10px 20px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:8px 8px 0 0;cursor:pointer;font-size:14px;font-weight:600;transition:all .2s}
+    .mode-tab.active{background:#fff;color:#0ea5e9}
+    .mode-tab:hover:not(.active){background:rgba(255,255,255,0.3)}
+    .ubi-tabs{display:flex;gap:8px;margin-bottom:16px}
+    .ubi-tab{padding:10px 20px;background:rgba(255,255,255,0.5);color:#64748b;border:2px solid transparent;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:all .2s}
+    .ubi-tab.active{background:#0ea5e9;color:#fff;border-color:#0284c7;box-shadow:0 4px 12px rgba(14,165,233,0.4)}
+    .ubi-tab:hover:not(.active){background:rgba(255,255,255,0.8);border-color:#cbd5e1}
+    .bill-group{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:12px}
+    .bill-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #e5e7eb}
+    .bill-title{font-weight:600;font-size:14px}
+    .bill-meta{font-size:12px;color:#64748b}
+    .line-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:12px}
+    .line-item:last-child{border-bottom:none}
+    .line-item:hover{background:#f9fafb}
+    .line-checkbox{margin-right:8px}
+    /* Drawer (filter panel) */
+    .drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:40}
+    .drawer{position:fixed;top:0;right:-420px;width:420px;max-width:92vw;height:100vh;background:#fff;color:#0f172a;box-shadow:-8px 0 24px rgba(2,6,23,.25);transition:right .25s ease;z-index:41;display:flex;flex-direction:column}
+    .drawer.open{right:0}
+    .drawer-mask.open{opacity:1;pointer-events:auto}
+    .drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
+    .drawer .body{padding:0 0 80px 0;overflow:auto;flex:1}
+    .drawer .sect{border-bottom:1px solid #eef2f7}
+    .drawer .sect > button{width:100%;text-align:left;padding:14px 18px;background:#fff;border:none;border-bottom:1px solid #eef2f7;font-weight:700;letter-spacing:.02em;cursor:pointer}
+    .drawer .sect .content{display:none;padding:12px 18px}
+    .drawer .sect.open .content{display:block}
+    .drawer .chiplist{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto}
+    .drawer .search{padding:0 0 12px}
+    .drawer .search input{width:calc(100% - 24px);padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px}
+    .drawer .actions{position:sticky;bottom:0;background:#fff;padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;align-items:center;justify-content:space-between}
+    #closeDrawer{min-width:40px;min-height:40px;padding:10px;font-size:18px;font-weight:700;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;z-index:100;position:relative}
+    #closeDrawer:hover{background:#0284c7;transform:scale(1.05)}
+    #closeDrawer:active{transform:scale(0.98)}
+    .loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:20000;align-items:center;justify-content:center;flex-direction:column}
+    .loading-overlay.show{display:flex}
+    .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e5e7eb;border-top:2px solid #0ea5e9;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:8px}
+    .spinner.large{width:50px;height:50px;border-width:4px}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .loading-text{color:#fff;margin-top:16px;font-size:16px;font-weight:600}
+  </style>
+</head>
+<body>
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner large"></div>
+    <div class="loading-text" id="loadingText">Processing...</div>
+    <div class="loading-text" id="loadingProgress" style="font-size:14px;margin-top:8px;opacity:0.8"></div>
+  </div>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · BILLBACK</a></div>
+    <div class="logout">
+      <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+  <div id="toast" class="toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h1>UBI Period Assignment</h1>
+
+    <div class="card">
+      <div class="ubi-tabs">
+        <button class="ubi-tab active" id="unassignedTab" onclick="switchUbiTab('unassigned')">Unassigned</button>
+        <button class="ubi-tab" id="assignedTab" onclick="switchUbiTab('assigned')">Assigned</button>
+      </div>
+
+      <!-- Unassigned Tab Content -->
+      <div id="unassignedContent">
+        <!-- Row 1: Load and filter buttons -->
+        <div class="controls" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <button class="btn" onclick="loadUnassignedBills()">Load Unassigned Bills</button>
+          <button class="btn secondary" onclick="openFilterDrawer()">Filter</button>
+          <button class="btn secondary" onclick="loadUbiConfig()">Refresh UBI Config</button>
+          <button class="btn" onclick="refreshGLMappings()" style="background:#10b981">Refresh GL Mappings</button>
+          <a class="btn" href="/billback/charts" style="background:#8b5cf6;text-decoration:none">View by Property</a>
+        </div>
+        <!-- Row 2: Selection and assignment controls -->
+        <div class="controls" style="margin-bottom:16px;flex-wrap:wrap;gap:8px;align-items:center">
+          <div style="position:relative;display:inline-block">
+            <label style="display:block;font-size:12px;margin-bottom:4px;color:#374151">Select Periods (must match MONTHS):</label>
+            <button type="button" class="btn secondary" id="periodPickerBtn" onclick="togglePeriodPicker()" style="min-width:200px;text-align:left;display:flex;justify-content:space-between;align-items:center">
+              <span id="selectedPeriodsLabel">No periods selected</span>
+              <span>▼</span>
+            </button>
+            <div id="periodPickerPanel" style="display:none;position:absolute;top:100%;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:12px;z-index:1000;min-width:250px;max-height:300px;overflow-y:auto">
+              <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #e5e7eb">
+                <button type="button" class="btn small" onclick="clearPeriodSelection()" style="width:100%">Clear All</button>
+              </div>
+              <div id="periodCheckboxList"></div>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#374151">
+            <input type="checkbox" id="selectAllUnassigned" onchange="toggleSelectAllUnassigned()" style="width:18px;height:18px;cursor:pointer" />
+            Select All
+          </label>
+          <button class="btn" id="assignBtn" onclick="assignSelectedToUbi()" disabled>Assign Selected</button>
+          <button class="btn" id="archiveBtn" onclick="archiveSelectedLines()" disabled style="background:#64748b">Archive Selected</button>
+          <button class="btn" id="flagBtn" onclick="openFlagModal()" disabled style="background:#dc2626">Flag for Review</button>
+          <div style="display:flex;align-items:center;gap:6px;margin-left:16px">
+            <label style="font-size:12px;color:#374151">Sort by:</label>
+            <select id="ubiSortSelect" onchange="loadUnassignedBills()" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px">
+              <option value="property_asc" selected>Property (A-Z)</option>
+              <option value="vendor_asc">Vendor (A-Z)</option>
+              <option value="amount_desc">Amount (High to Low)</option>
+              <option value="amount_asc">Amount (Low to High)</option>
+              <option value="modified_desc">Modified (Newest)</option>
+              <option value="modified_asc">Modified (Oldest)</option>
+            </select>
+          </div>
+          <div style="flex:1"></div>
+          <span style="color:#374151;font-size:13px;font-weight:500;background:#e5e7eb;padding:6px 12px;border-radius:6px" id="ubiSelectedCount">0 lines / 0 invoices selected</span>
+        </div>
+
+        <div id="unassignedLoading" class="loading">Click "Load Unassigned Bills" to start</div>
+
+        <div id="unassignedBills" style="display:none;max-height:600px;overflow-y:auto"></div>
+      </div>
+
+        <!-- Assigned Tab Content -->
+        <div id="assignedContent" style="display:none">
+          <div class="controls" style="margin-bottom:16px">
+            <label>Filter by Period:</label>
+            <select id="assignedPeriodFilter">
+              <option value="">-- Select Period --</option>
+            </select>
+            <button class="btn" onclick="loadAssignedBills()">Load</button>
+            <button class="btn secondary" onclick="openAssignedFilterDrawer()">More Filters</button>
+            <label style="margin-left:16px">Sort:</label>
+            <select id="assignedSortBy" onchange="renderAssignedBills()" style="padding:6px 10px">
+              <option value="vendor">Vendor</option>
+              <option value="date_newest">Date (Newest)</option>
+              <option value="date_oldest">Date (Oldest)</option>
+              <option value="amount">Amount</option>
+            </select>
+            <div style="flex:1"></div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#374151">
+              <input type="checkbox" id="selectAllAssigned" onchange="toggleSelectAllAssigned()" style="width:18px;height:18px;cursor:pointer" />
+              Select All
+            </label>
+            <button class="btn secondary" onclick="unassignSelected()" id="unassignBtn" disabled>Unassign Selected</button>
+            <button class="btn" onclick="openReassignModal()" id="reassignBtn" disabled style="background:#8b5cf6">Reassign to Period</button>
+            <span style="color:#64748b;font-size:12px" id="assignedSelectedCount">0 lines selected</span>
+          </div>
+
+          <div id="assignedLoading" class="loading">Click a period or "Refresh" to load assigned bills</div>
+
+          <div id="assignedBills" style="display:none;max-height:600px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+    <!-- End UBI Mode -->
+  </div>
+
+  <!-- Filter Drawer -->
+  <div class="drawer-mask" id="filterMask" onclick="closeFilterDrawer()"></div>
+  <aside class="drawer" id="filterDrawer">
+    <header>
+      <div style="font-weight:800">Filter Bills <span style="font-weight:400;font-size:12px;color:#64748b">(filters apply instantly)</span></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary" type="button" onclick="refreshFilterOptions()" title="Reload filter options from server">Refresh Lists</button>
+        <button id="clearFilters" class="btn secondary" type="button" onclick="clearAllFilters()">Clear All</button>
+        <button id="closeDrawer" class="btn" type="button" onclick="closeFilterDrawer()" style="background:#3b82f6">Done</button>
+      </div>
+    </header>
+    <div class="body">
+      <!-- Tracker Status -->
+      <div class="sect open" data-sect="tracker-status">
+        <button type="button" onclick="toggleFilterSection(this)">Tracker Status</button>
+        <div class="content">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <label><input type="checkbox" name="trackerStatus" value="tracked" onchange="applyFilters()"> TRACKED</label>
+            <label><input type="checkbox" name="trackerStatus" value="not-tracked" onchange="applyFilters()"> NOT TRACKED</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- UBI Status -->
+      <div class="sect" data-sect="ubi-status">
+        <button type="button" onclick="toggleFilterSection(this)">UBI Status</button>
+        <div class="content">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <label><input type="checkbox" name="ubiStatus" value="ubi" onchange="applyFilters()"> UBI</label>
+            <label><input type="checkbox" name="ubiStatus" value="not-ubi" onchange="applyFilters()"> NOT UBI</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Utility Type -->
+      <div class="sect" data-sect="utility-type">
+        <button type="button" onclick="toggleFilterSection(this)">Utility Type</button>
+        <div class="content">
+          <div style="display:flex;flex-direction:column;gap:8px" id="listUtilityType">
+            <label><input type="checkbox" name="utilityTypes" value="Electric" onchange="applyFilters()"> Electric</label>
+            <label><input type="checkbox" name="utilityTypes" value="Gas" onchange="applyFilters()"> Gas</label>
+            <label><input type="checkbox" name="utilityTypes" value="Water" onchange="applyFilters()"> Water</label>
+            <label><input type="checkbox" name="utilityTypes" value="Sewer" onchange="applyFilters()"> Sewer</label>
+            <label><input type="checkbox" name="utilityTypes" value="Trash" onchange="applyFilters()"> Trash</label>
+            <label><input type="checkbox" name="utilityTypes" value="Storm" onchange="applyFilters()"> Storm</label>
+            <label><input type="checkbox" name="utilityTypes" value="Other" onchange="applyFilters()"> Other</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Service Start Month -->
+      <div class="sect" data-sect="service-month">
+        <button type="button" onclick="toggleFilterSection(this)">Service Start Month</button>
+        <div class="content">
+          <select id="serviceStartMonthFilter" onchange="applyFilters()" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px">
+            <option value="">All Months</option>
+          </select>
+          <div style="margin-top:8px;font-size:11px;color:#64748b">Filter bills by service period start month</div>
+        </div>
+      </div>
+
+      <!-- Property -->
+      <div class="sect" data-sect="property">
+        <button type="button" onclick="toggleFilterSection(this)">Property</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qProperty" placeholder="Find property" onkeyup="filterPropertyList()" /></div>
+          <div class="chiplist" id="listProperty"></div>
+        </div>
+      </div>
+
+      <!-- Vendor -->
+      <div class="sect" data-sect="vendor">
+        <button type="button" onclick="toggleFilterSection(this)">Vendor</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qVendor" placeholder="Find vendor" onkeyup="filterVendorList()" /></div>
+          <div class="chiplist" id="listVendor"></div>
+        </div>
+      </div>
+
+      <!-- Account -->
+      <div class="sect" data-sect="account">
+        <button type="button" onclick="toggleFilterSection(this)">Account</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qAccount" placeholder="Find account" onkeyup="filterAccountList()" /></div>
+          <div class="chiplist" id="listAccount"></div>
+        </div>
+      </div>
+
+      <!-- GL Code -->
+      <div class="sect" data-sect="glcode">
+        <button type="button" onclick="toggleFilterSection(this)">GL Code (shows invoice if ANY line matches)</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qGLCode" placeholder="Find GL code" onkeyup="filterGLCodeList()" /></div>
+          <div class="chiplist" id="listGLCode"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Assigned Filter Drawer -->
+  <div class="drawer-mask" id="assignedFilterMask" onclick="closeAssignedFilterDrawer()"></div>
+  <aside class="drawer" id="assignedFilterDrawer">
+    <header>
+      <div style="font-weight:800">Filter Assigned Bills</div>
+      <div>
+        <button id="clearAssignedFilters" class="btn secondary" type="button" onclick="clearAllAssignedFilters()">Clear All</button>
+        <button id="closeAssignedDrawer" class="btn" type="button" onclick="closeAssignedFilterDrawer()">✕</button>
+      </div>
+    </header>
+    <div class="body">
+      <!-- Property -->
+      <div class="sect open" data-sect="assigned-property">
+        <button type="button" onclick="toggleFilterSection(this)">Property</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qAssignedProperty" placeholder="Find property" onkeyup="filterAssignedPropertyList()" /></div>
+          <div class="chiplist" id="listAssignedProperty"></div>
+        </div>
+      </div>
+
+      <!-- Vendor -->
+      <div class="sect" data-sect="assigned-vendor">
+        <button type="button" onclick="toggleFilterSection(this)">Vendor</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qAssignedVendor" placeholder="Find vendor" onkeyup="filterAssignedVendorList()" /></div>
+          <div class="chiplist" id="listAssignedVendor"></div>
+        </div>
+      </div>
+
+      <!-- Account -->
+      <div class="sect" data-sect="assigned-account">
+        <button type="button" onclick="toggleFilterSection(this)">Account</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qAssignedAccount" placeholder="Find account" onkeyup="filterAssignedAccountList()" /></div>
+          <div class="chiplist" id="listAssignedAccount"></div>
+        </div>
+      </div>
+
+      <!-- Charge Code -->
+      <div class="sect" data-sect="assigned-charge-code">
+        <button type="button" onclick="toggleFilterSection(this)">Charge Code</button>
+        <div class="content">
+          <div class="search"><input type="text" id="qAssignedChargeCode" placeholder="Find charge code" onkeyup="filterAssignedChargeCodeList()" /></div>
+          <div class="chiplist" id="listAssignedChargeCode"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Charge Code Override Modal -->
+  <div class="improve-modal-overlay" id="chargeCodeOverrideModal">
+    <div class="improve-modal-box">
+      <h2>Override Charge Code</h2>
+      <div style="margin-bottom:16px;padding:10px;background:#f9fafb;border-radius:8px;font-size:13px">
+        <div><strong>Current Charge Code:</strong> <span id="currentChargeCode"></span></div>
+      </div>
+      <label>New Charge Code</label>
+      <select id="newChargeCode" style="display:block;width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px">
+        <option value="">-- Select Charge Code --</option>
+      </select>
+      <label for="chargeCodeOverrideReason">Override Reason (Required)</label>
+      <textarea id="chargeCodeOverrideReason" placeholder="Why are you changing the charge code?" style="display:block;width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;min-height:80px"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelChargeCodeOverride">Cancel</button>
+        <button class="btn" id="submitChargeCodeOverride">Save Override</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Amount Override Modal -->
+  <div class="improve-modal-overlay" id="amountOverrideModal">
+    <div class="improve-modal-box">
+      <h2>Override Amount</h2>
+      <div style="margin-bottom:16px;padding:10px;background:#f9fafb;border-radius:8px;font-size:13px">
+        <div><strong>Original Amount:</strong> $<span id="originalAmount"></span></div>
+      </div>
+      <label for="newAmount">New Amount</label>
+      <input type="number" step="0.01" id="newAmount" placeholder="Enter new amount" style="display:block;width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px" />
+      <label for="amountOverrideReason">Override Reason (Required)</label>
+      <textarea id="amountOverrideReason" placeholder="Why are you changing the amount?" style="display:block;width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;min-height:80px"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelAmountOverride">Cancel</button>
+        <button class="btn" id="submitAmountOverride">Save Override</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Exclusion Reason Modal -->
+  <div class="improve-modal-overlay" id="exclusionModal">
+    <div class="improve-modal-box">
+      <h2>Exclude Line from UBI</h2>
+      <div style="margin-bottom:16px;padding:10px;background:#fff3cd;border-radius:8px;font-size:13px;border:1px solid #ffc107">
+        <strong>Warning:</strong> This line item will be excluded from all UBI processing.
+      </div>
+      <label for="exclusionReason">Exclusion Reason (Required)</label>
+      <textarea id="exclusionReason" placeholder="Why are you excluding this line from UBI?" style="display:block;width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;min-height:80px"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelExclusion">Cancel</button>
+        <button class="btn" id="submitExclusion" style="background:#dc3545">Exclude from UBI</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reassign to Period Modal -->
+  <div class="improve-modal-overlay" id="reassignModal">
+    <div class="improve-modal-box">
+      <h2>Reassign to Different Period</h2>
+      <div style="margin-bottom:16px;padding:10px;background:#e0e7ff;border-radius:8px;font-size:13px;border:1px solid #818cf8">
+        <strong>Note:</strong> Selected line items will be moved to the new UBI period.
+      </div>
+      <label for="reassignPeriodSelect" style="display:block;margin-bottom:8px;font-weight:600">Select New Period</label>
+      <select id="reassignPeriodSelect" style="display:block;width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-size:14px">
+        <option value="">-- Select Period --</option>
+      </select>
+      <div id="reassignSummary" style="margin-bottom:16px;font-size:13px;color:#64748b"></div>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" onclick="closeReassignModal()">Cancel</button>
+        <button class="btn" onclick="submitReassign()" style="background:#8b5cf6">Reassign</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flag for Review Modal -->
+  <div class="improve-modal-overlay" id="flagModal">
+    <div class="improve-modal-box" style="max-width:600px;max-height:80vh;overflow:auto">
+      <h2 style="color:#0369a1">Flag Invoices for Review</h2>
+      <div style="margin-bottom:16px;padding:10px;background:#f0f9ff;border-radius:8px;font-size:13px;border:1px solid #bae6fd">
+        <strong>Note:</strong> Flagged invoices will be removed from BILLBACK and sent to the review queue. Add a note for each invoice explaining the issue.
+      </div>
+      <div id="flagItemsList" style="max-height:350px;overflow-y:auto;margin-bottom:16px"></div>
+      <label style="display:block;margin-bottom:8px;font-weight:600">General Reason (applies to all invoices)</label>
+      <input type="text" id="flagReason" placeholder="e.g., Incorrect GL code, Wrong amount, etc." style="display:block;width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-size:14px">
+      <div class="improve-modal-actions">
+        <button class="btn secondary" onclick="closeFlagModal()">Cancel</button>
+        <button class="btn" onclick="submitFlag()">Flag Selected Invoices</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account Comment Modal -->
+  <div class="improve-modal-overlay" id="accountCommentModal">
+    <div class="improve-modal-box" style="max-width:500px">
+      <h2 style="color:#92400e">Add Comment to Account</h2>
+      <div id="accountCommentInfo" style="margin-bottom:16px;padding:10px;background:#fef3c7;border-radius:8px;font-size:13px;border:1px solid #fcd34d"></div>
+      <label style="display:block;margin-bottom:8px;font-weight:600">Comment</label>
+      <textarea id="accountCommentText" placeholder="Add a note about this account..." style="display:block;width:calc(100% - 24px);padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-size:14px;min-height:100px;resize:vertical"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" onclick="closeAccountCommentModal()">Cancel</button>
+        <button class="btn" onclick="saveAccountComment()" style="background:#92400e">Save Comment</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // UBI Period Assignment JavaScript
+    let ubiUnassignedBills = [];
+    let ubiAssignedData = [];
+    let ubiPeriods = [];
+    let ubiMapping = [];
+    let accountsToTrack = [];
+    let chargeCodes = [];
+    let glAccounts = [];
+    let glCodeMappings = [];
+
+    // Escape HTML entities to prevent XSS
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // Escape string for use in JavaScript onclick handlers (handles apostrophes, quotes, backslashes)
+    function escapeJs(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    // Override modal state
+    let currentOverrideBillId = '';
+    let currentOverrideLineIndex = -1;
+
+    // ============================================================================
+    // GL CODE MAPPING & OVERRIDE FUNCTIONS
+    // ============================================================================
+
+    async function loadGLCodeMappings() {
+      try {
+        const response = await fetch('/api/config/gl-charge-code-mapping');
+        if (!response.ok) throw new Error('Failed to load GL mappings');
+        const data = await response.json();
+        glCodeMappings = data.items || [];
+        console.log(`Loaded ${glCodeMappings.length} GL code mappings`);
+      } catch (e) {
+        console.error('Error loading GL code mappings:', e);
+        glCodeMappings = [];
+      }
+    }
+
+    function lookupChargeCode(propertyId, glAccountId, glCode) {
+      if (!propertyId || (!glAccountId && !glCode)) {
+        console.log('[GL Lookup] Missing required fields:', { propertyId, glAccountId, glCode });
+        return null;
+      }
+
+      // Normalize for comparison
+      const normalizedGlAccountId = String(glAccountId || '').trim();
+      const normalizedGlCode = String(glCode || '').trim();
+      const normalizedPropertyId = String(propertyId).trim();
+
+      console.log('[GL Lookup] Searching for:', { propertyId: normalizedPropertyId, glAccountId: normalizedGlAccountId, glCode: normalizedGlCode });
+      console.log('[GL Lookup] Available mappings:', glCodeMappings.length);
+
+      // PRIORITY: gl_code is the primary lookup field (what user sees like "5721-0000")
+      // gl_account_id can be mismatched due to enrichment bugs, so it's the fallback
+
+      // 1. Try property-specific mapping by GL Code first (primary)
+      let mapping = null;
+      if (normalizedGlCode) {
+        mapping = glCodeMappings.find(m => {
+          const match = String(m.property_id).trim() === normalizedPropertyId &&
+                        String(m.gl_code || '').trim() === normalizedGlCode;
+          if (match) console.log('[GL Lookup] Found property-specific match by GL Code:', m);
+          return match;
+        });
+      }
+
+      // 2. Fall back to property-specific mapping by GL Account ID
+      if (!mapping && normalizedGlAccountId) {
+        mapping = glCodeMappings.find(m => {
+          const match = String(m.property_id).trim() === normalizedPropertyId &&
+                        String(m.gl_account_id || '').trim() === normalizedGlAccountId;
+          if (match) console.log('[GL Lookup] Found property-specific match by GL Account ID:', m);
+          return match;
+        });
+      }
+
+      // 3. Fall back to wildcard mapping by GL Code (primary)
+      if (!mapping && normalizedGlCode) {
+        mapping = glCodeMappings.find(m => {
+          const match = String(m.property_id).trim() === '*' &&
+                        String(m.gl_code || '').trim() === normalizedGlCode;
+          if (match) console.log('[GL Lookup] Found wildcard match by GL Code:', m);
+          return match;
+        });
+      }
+
+      // 4. Fall back to wildcard mapping by GL Account ID
+      if (!mapping && normalizedGlAccountId) {
+        mapping = glCodeMappings.find(m => {
+          const match = String(m.property_id).trim() === '*' &&
+                        String(m.gl_account_id || '').trim() === normalizedGlAccountId;
+          if (match) console.log('[GL Lookup] Found wildcard match by GL Account ID:', m);
+          return match;
+        });
+      }
+
+      if (!mapping) {
+        console.log('[GL Lookup] No mapping found for:', { propertyId: normalizedPropertyId, glAccountId: normalizedGlAccountId, glCode: normalizedGlCode });
+      }
+
+      return mapping;
+    }
+
+    async function refreshGLMappings() {
+      // Use filtered bills, not all loaded bills
+      const billsToProcess = getFilteredBills();
+      const totalLoaded = ubiUnassignedBills.length;
+      const filteredCount = billsToProcess.length;
+
+      if (totalLoaded === 0) {
+        showToast('No bills loaded. Load bills first.', 'err');
+        return;
+      }
+
+      if (filteredCount === 0) {
+        showToast('No bills match current filters.', 'err');
+        return;
+      }
+
+      // CRITICAL: Always reload GL mappings FIRST to ensure we have the latest config
+      // This fixes issues where mappings were empty because user didn't click "Refresh UBI Config"
+      showLoading('Loading GL mappings...');
+      await loadGLCodeMappings();
+      hideLoading();
+
+      if (glCodeMappings.length === 0) {
+        showToast('No GL code mappings configured. Add mappings in Config > GL Code Mapping.', 'err');
+        return;
+      }
+
+      const filterNote = filteredCount < totalLoaded
+        ? `\n\nNote: This will only process ${filteredCount} of ${totalLoaded} bills (based on current filters).`
+        : '';
+
+      if (!confirm(`This will re-apply GL code mappings (${glCodeMappings.length} rules) to ${filteredCount} bill(s) (except manually overridden lines).${filterNote}\n\nContinue?`)) {
+        return;
+      }
+
+      let updatedCount = 0;
+      let errorCount = 0;
+      let skippedOverridden = 0;
+      let noMappingCount = 0;
+      const unmappedGLCodes = new Set();
+
+      showLoading(`Refreshing GL mappings for ${filteredCount} bills...`);
+
+      for (const bill of billsToProcess) {
+        for (let lineIndex = 0; lineIndex < bill.unassigned_lines.length; lineIndex++) {
+          const line = bill.unassigned_lines[lineIndex];
+          const ld = line.line_data;
+
+          // Get charge code and property/GL info - use SAME field names as renderLineItems
+          const chargeCode = ld['Charge Code'] || ld['charge_code'] || '';
+          const propertyId = ld['Property ID'] || ld['propertyId'] || ld['EnrichedPropertyID'] || '';
+          const glAccountId = ld['EnrichedGLAccountID'] || ld['GL Account ID'] || ld['glAccountId'] || '';
+          const glCode = ld['EnrichedGLAccountNumber'] || ld['GL Account Number'] || ld['glAccountNumber'] || ld['GL Code'] || '';
+
+          // Skip if manually overridden - respect user's manual changes
+          const isOverridden = ld['charge_code_overridden'] === true || ld['charge_code_overridden'] === 'true';
+          if (isOverridden) {
+            skippedOverridden++;
+            continue;
+          }
+
+          // Try to find a GL mapping
+          const mapping = lookupChargeCode(propertyId, glAccountId, glCode);
+          if (!mapping || !mapping.charge_code) {
+            noMappingCount++;
+            if (glCode) unmappedGLCodes.add(glCode);
+            continue;
+          }
+
+          // FORCE update ALL lines - don't skip even if they appear to match
+          // User needs to refresh mappings to fix corrupted data
+
+          // Update the line item with the mapped charge code AND utility_name
+          try {
+            const fd = new FormData();
+            fd.append('bill_id', bill.s3_key);
+            fd.append('line_index', lineIndex);
+            fd.append('charge_code', mapping.charge_code);
+            fd.append('charge_code_source', 'mapping');
+            fd.append('charge_code_overridden', 'false');
+            // Also send utility_name from mapping to properly disambiguate UBILL entries
+            if (mapping.utility_name) {
+              fd.append('utility_name', mapping.utility_name);
+            }
+
+            const response = await fetch('/api/billback/update-line-item', {
+              method: 'POST',
+              body: fd
+            });
+
+            if (response.ok) {
+              updatedCount++;
+              // Update local data including utility_name
+              ld['Charge Code'] = mapping.charge_code;
+              ld['charge_code'] = mapping.charge_code;
+              ld['charge_code_source'] = 'mapping';
+              if (mapping.utility_name) {
+                ld['mapped_utility_name'] = mapping.utility_name;
+              }
+            } else {
+              errorCount++;
+            }
+          } catch (e) {
+            console.error('Error updating line item:', e);
+            errorCount++;
+          }
+        }
+      }
+
+      hideLoading();
+
+      // Build detailed summary
+      let parts = [];
+      if (updatedCount > 0) parts.push(`${updatedCount} updated`);
+      if (noMappingCount > 0) parts.push(`${noMappingCount} no mapping`);
+      if (skippedOverridden > 0) parts.push(`${skippedOverridden} overridden`);
+      if (errorCount > 0) parts.push(`${errorCount} errors`);
+
+      let msg = parts.length > 0 ? `GL Mappings: ${parts.join(', ')}` : 'No line items processed';
+
+      // Log unmapped GL codes to console (non-blocking)
+      if (unmappedGLCodes.size > 0) {
+        const unmapped = Array.from(unmappedGLCodes).sort();
+        console.log('[GL Mapping] GL codes with no mapping configured:', unmapped);
+        msg += ` | ${unmapped.length} unmapped GL codes (see console)`;
+      }
+
+      showToast(msg, updatedCount > 0 ? 'ok' : 'err');
+
+      if (updatedCount > 0) {
+        // Just re-render, no network call needed - local data already updated above
+        renderUnassignedBills();
+      }
+    }
+
+    function openChargeCodeOverrideModal(billId, lineIndex, currentChargeCode, existingReason = '') {
+      currentOverrideBillId = billId;
+      currentOverrideLineIndex = lineIndex;
+
+      document.getElementById('currentChargeCode').textContent = currentChargeCode || 'None';
+
+      // Populate charge code dropdown - use index as value to preserve utility_name
+      const dropdown = document.getElementById('newChargeCode');
+      dropdown.innerHTML = '<option value="">-- Select Charge Code --</option>';
+      chargeCodes.forEach((cc, idx) => {
+        const option = document.createElement('option');
+        // Use index to uniquely identify each charge code entry (including duplicate chargeCode with different utilityName)
+        option.value = idx;
+        option.textContent = cc.chargeCode + (cc.utilityName ? ' - ' + cc.utilityName : '');
+        if (cc.chargeCode === currentChargeCode) {
+          option.selected = true;
+        }
+        dropdown.appendChild(option);
+      });
+
+      // Pre-populate with existing reason if available
+      document.getElementById('chargeCodeOverrideReason').value = existingReason || '';
+
+      document.getElementById('chargeCodeOverrideModal').classList.add('show');
+    }
+
+    function closeChargeCodeOverrideModal() {
+      document.getElementById('chargeCodeOverrideModal').classList.remove('show');
+      currentOverrideBillId = '';
+      currentOverrideLineIndex = -1;
+    }
+
+    async function submitChargeCodeOverride() {
+      const selectedIndex = document.getElementById('newChargeCode').value.trim();
+      const reason = document.getElementById('chargeCodeOverrideReason').value.trim();
+
+      if (selectedIndex === '') {
+        showToast('Please select a charge code', 'err');
+        return;
+      }
+
+      if (!reason) {
+        showToast('Please provide a reason for this override', 'err');
+        return;
+      }
+
+      // Lookup the charge code entry by index to get both chargeCode and utilityName
+      const ccEntry = chargeCodes[parseInt(selectedIndex)];
+      if (!ccEntry) {
+        showToast('Invalid charge code selection', 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('bill_id', currentOverrideBillId);
+        fd.append('line_index', currentOverrideLineIndex);
+        fd.append('charge_code', ccEntry.chargeCode);
+        fd.append('charge_code_source', 'override');
+        fd.append('charge_code_overridden', 'true');
+        fd.append('charge_code_override_reason', reason);
+        // Also send utility_name to properly disambiguate duplicate charge codes (e.g., UBILL entries)
+        if (ccEntry.utilityName) {
+          fd.append('utility_name', ccEntry.utilityName);
+        }
+
+        const response = await fetch('/api/billback/update-line-item', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) throw new Error('Failed to save override');
+
+        const result = await response.json();
+        showToast('Charge code override saved', 'ok');
+        closeChargeCodeOverrideModal();
+
+        // Update local data AND DOM inline - no full re-render
+        const bill = ubiUnassignedBills.find(b => b.s3_key === currentOverrideBillId);
+        if (bill && bill.unassigned_lines && bill.unassigned_lines[currentOverrideLineIndex]) {
+          const lineData = bill.unassigned_lines[currentOverrideLineIndex].line_data;
+          // Update charge code fields
+          lineData['Charge Code'] = ccEntry.chargeCode;
+          lineData['charge_code'] = ccEntry.chargeCode;
+          lineData['Charge Code Source'] = 'override';
+          lineData['charge_code_source'] = 'override';
+          lineData['Charge Code Overridden'] = true;
+          lineData['charge_code_overridden'] = true;
+          lineData['Charge Code Override Reason'] = reason;
+          lineData['charge_code_override_reason'] = reason;
+          // Update utility type if provided (this is what master bills reads)
+          if (ccEntry.utilityName) {
+            lineData['Utility Type'] = ccEntry.utilityName;
+          }
+
+          // Update DOM inline
+          updateLineItemDOM(currentOverrideBillId, currentOverrideLineIndex, {
+            chargeCode: ccEntry.chargeCode,
+            chargeCodeOverridden: true
+          });
+        }
+      } catch (e) {
+        console.error('Error saving charge code override:', e);
+        showToast('Error saving override', 'err');
+      }
+    }
+
+    function openAmountOverrideModal(billId, lineIndex, currentAmount, existingReason = '') {
+      currentOverrideBillId = billId;
+      currentOverrideLineIndex = lineIndex;
+
+      document.getElementById('originalAmount').textContent = currentAmount.toFixed(2);
+      document.getElementById('newAmount').value = currentAmount;
+      // Pre-populate with existing reason if available
+      document.getElementById('amountOverrideReason').value = existingReason || '';
+
+      document.getElementById('amountOverrideModal').classList.add('show');
+    }
+
+    function closeAmountOverrideModal() {
+      document.getElementById('amountOverrideModal').classList.remove('show');
+      currentOverrideBillId = '';
+      currentOverrideLineIndex = -1;
+    }
+
+    async function submitAmountOverride() {
+      const newAmount = parseFloat(document.getElementById('newAmount').value);
+      const reason = document.getElementById('amountOverrideReason').value.trim();
+
+      if (isNaN(newAmount)) {
+        showToast('Please enter a valid amount', 'err');
+        return;
+      }
+
+      if (!reason) {
+        showToast('Please provide a reason for this override', 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('bill_id', currentOverrideBillId);
+        fd.append('line_index', currentOverrideLineIndex);
+        fd.append('current_amount', newAmount.toString());
+        fd.append('amount_overridden', 'true');
+        fd.append('amount_override_reason', reason);
+
+        const response = await fetch('/api/billback/update-line-item', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) throw new Error('Failed to save override');
+
+        showToast('Amount override saved', 'ok');
+        closeAmountOverrideModal();
+
+        // Update local data AND DOM inline - no full re-render
+        const bill = ubiUnassignedBills.find(b => b.s3_key === currentOverrideBillId);
+        if (bill && bill.unassigned_lines && bill.unassigned_lines[currentOverrideLineIndex]) {
+          const lineData = bill.unassigned_lines[currentOverrideLineIndex].line_data;
+          // Update amount fields
+          lineData['Current Amount'] = newAmount;
+          lineData['current_amount'] = newAmount;
+          lineData['Amount Overridden'] = true;
+          lineData['amount_overridden'] = true;
+          lineData['Amount Override Reason'] = reason;
+          lineData['amount_override_reason'] = reason;
+          // Also update the charge value used for display
+          bill.unassigned_lines[currentOverrideLineIndex].charge = newAmount;
+
+          // Update DOM inline - find the line item and update it
+          updateLineItemDOM(currentOverrideBillId, currentOverrideLineIndex, {
+            amount: newAmount,
+            amountOverridden: true,
+            amountOverrideReason: reason
+          });
+        }
+      } catch (e) {
+        console.error('Error saving amount override:', e);
+        showToast('Error saving override', 'err');
+      }
+    }
+
+    function openExclusionModal(billId, lineIndex) {
+      currentOverrideBillId = billId;
+      currentOverrideLineIndex = lineIndex;
+
+      document.getElementById('exclusionReason').value = '';
+      document.getElementById('exclusionModal').classList.add('show');
+    }
+
+    function closeExclusionModal(revertCheckbox = true) {
+      document.getElementById('exclusionModal').classList.remove('show');
+
+      // If closing without saving, revert the checkbox
+      if (revertCheckbox && currentOverrideBillId && currentOverrideLineIndex >= 0) {
+        const bill = ubiUnassignedBills.find(b => b.s3_key === currentOverrideBillId);
+        if (bill && bill.unassigned_lines && bill.unassigned_lines[currentOverrideLineIndex]) {
+          const lineId = bill.unassigned_lines[currentOverrideLineIndex].line_hash || `${currentOverrideBillId}_${currentOverrideLineIndex}`;
+          const amtInput = document.getElementById(`amt_${lineId}`);
+          if (amtInput) {
+            const lineItemDiv = amtInput.closest('.line-item');
+            if (lineItemDiv) {
+              const checkbox = lineItemDiv.querySelector('input[type="checkbox"][onchange*="toggleExclusion"]');
+              if (checkbox) checkbox.checked = false;
+            }
+          }
+        }
+      }
+
+      currentOverrideBillId = '';
+      currentOverrideLineIndex = -1;
+    }
+
+    async function submitExclusion() {
+      const reason = document.getElementById('exclusionReason').value.trim();
+
+      if (!reason) {
+        showToast('Please provide a reason for exclusion', 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('bill_id', currentOverrideBillId);
+        fd.append('line_index', currentOverrideLineIndex);
+        fd.append('is_excluded_from_ubi', '1');
+        fd.append('exclusion_reason', reason);
+
+        const response = await fetch('/api/billback/update-line-item', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) throw new Error('Failed to save exclusion');
+
+        showToast('Line item excluded from UBI', 'ok');
+        closeExclusionModal(false); // false = don't revert checkbox since we saved successfully
+
+        // Update local data AND DOM inline - no full re-render
+        const bill = ubiUnassignedBills.find(b => b.s3_key === currentOverrideBillId);
+        if (bill && bill.unassigned_lines && bill.unassigned_lines[currentOverrideLineIndex]) {
+          // Update in unassigned_lines.line_data (what render reads)
+          bill.unassigned_lines[currentOverrideLineIndex].line_data.is_excluded_from_ubi = 1;
+          bill.unassigned_lines[currentOverrideLineIndex].line_data.exclusion_reason = reason;
+
+          // Update DOM inline
+          updateLineItemDOM(currentOverrideBillId, currentOverrideLineIndex, {
+            excluded: true,
+            exclusionReason: reason
+          });
+        }
+      } catch (e) {
+        console.error('Error saving exclusion:', e);
+        showToast('Error saving exclusion', 'err');
+      }
+    }
+
+    // ============================================================================
+    // INLINE DOM UPDATE FUNCTIONS - No full re-render, instant visual feedback
+    // ============================================================================
+
+    function updateLineItemDOM(billId, lineIndex, changes) {
+      // Find the line item element by its unique identifier
+      const bill = ubiUnassignedBills.find(b => b.s3_key === billId);
+      if (!bill || !bill.unassigned_lines || !bill.unassigned_lines[lineIndex]) return;
+
+      const line = bill.unassigned_lines[lineIndex];
+      // IMPORTANT: Must match the sanitization in renderUnassignedBills
+      const lineId = `${billId}_${line.line_hash}`.replace(/[^a-zA-Z0-9]/g, '_');
+
+      // Find all line-item divs and locate ours by looking for the amount input with matching lineId
+      const amtInput = document.getElementById(`amt_${lineId}`);
+      if (!amtInput) {
+        console.warn('[updateLineItemDOM] Could not find amount input for line:', lineId);
+        return;
+      }
+
+      const lineItemDiv = amtInput.closest('.line-item');
+      if (!lineItemDiv) return;
+
+      // Apply visual feedback flash
+      lineItemDiv.classList.remove('flash-success', 'flash-warning');
+      void lineItemDiv.offsetWidth; // Force reflow
+      lineItemDiv.classList.add(changes.excluded ? 'flash-warning' : 'flash-success');
+
+      // Update amount if changed
+      if (changes.amount !== undefined) {
+        amtInput.value = changes.amount.toFixed(2);
+        amtInput.setAttribute('data-original', changes.amount.toString());
+
+        // Flash the input field itself - red flash for zeroed, green for other changes
+        amtInput.classList.remove('flash-zeroed', 'flash-success');
+        void amtInput.offsetWidth; // Force reflow
+        if (changes.amount === 0) {
+          amtInput.classList.add('flash-zeroed');
+        }
+
+        // Add/update OVERRIDDEN badge
+        if (changes.amountOverridden) {
+          amtInput.setAttribute('data-override-reason', changes.amountOverrideReason || '');
+          // Find or create the badge next to amount input
+          let badge = amtInput.nextElementSibling;
+          if (!badge || !badge.classList.contains('badge')) {
+            badge = document.createElement('span');
+            badge.className = 'badge';
+            badge.style.cssText = 'background:#f59e0b;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px';
+            amtInput.parentNode.insertBefore(badge, amtInput.nextSibling);
+          }
+          badge.textContent = 'OVERRIDDEN';
+          badge.title = changes.amountOverrideReason || '';
+
+          // Flash the badge too
+          badge.classList.remove('flash-success');
+          void badge.offsetWidth;
+          badge.classList.add('flash-success');
+        }
+      }
+
+      // Update exclusion status
+      if (changes.excluded !== undefined) {
+        const excludeCheckbox = lineItemDiv.querySelector('input[type="checkbox"][onchange*="toggleExclusion"]');
+        if (excludeCheckbox) {
+          excludeCheckbox.checked = changes.excluded;
+        }
+
+        if (changes.excluded) {
+          lineItemDiv.classList.add('excluded');
+          lineItemDiv.style.opacity = '0.5';
+          lineItemDiv.style.textDecoration = 'line-through';
+          // Add EXCLUDED badge if not present
+          const chargeCodeArea = lineItemDiv.querySelector('div[style*="flex:1"] > div:first-child');
+          if (chargeCodeArea && !chargeCodeArea.querySelector('.badge[style*="ef4444"]')) {
+            const badge = document.createElement('span');
+            badge.className = 'badge';
+            badge.style.cssText = 'background:#ef4444;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px';
+            badge.textContent = 'EXCLUDED';
+            badge.title = changes.exclusionReason || '';
+            chargeCodeArea.appendChild(badge);
+          }
+        } else {
+          lineItemDiv.classList.remove('excluded');
+          lineItemDiv.style.opacity = '1';
+          lineItemDiv.style.textDecoration = 'none';
+          // Remove EXCLUDED badge
+          const excludedBadge = lineItemDiv.querySelector('.badge[style*="ef4444"]');
+          if (excludedBadge) excludedBadge.remove();
+        }
+      }
+
+      // Update charge code if changed
+      if (changes.chargeCode !== undefined) {
+        const chargeCodeSpan = lineItemDiv.querySelector('span[onclick*="openChargeCodeOverrideModal"]');
+        if (chargeCodeSpan) {
+          chargeCodeSpan.textContent = changes.chargeCode || 'UNCLASSIFIED';
+
+          // Add/update OVERRIDE badge for charge code
+          if (changes.chargeCodeOverridden) {
+            const chargeCodeArea = chargeCodeSpan.parentNode;
+            let badge = chargeCodeArea.querySelector('.badge[style*="8b5cf6"]');
+            if (!badge) {
+              badge = document.createElement('span');
+              badge.className = 'badge';
+              badge.style.cssText = 'background:#8b5cf6;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px';
+              chargeCodeSpan.parentNode.insertBefore(badge, chargeCodeSpan.nextSibling);
+            }
+            badge.textContent = 'OVERRIDE';
+          }
+        }
+      }
+
+      // Remove the saving indicator
+      lineItemDiv.classList.remove('saving');
+    }
+
+    // Quick zero amount - one click with simple reason prompt
+    async function quickZeroAmount(billId, lineIndex, event) {
+      const btn = event?.target;
+      if (btn) btn.disabled = true;
+
+      const reason = prompt('Reason for zeroing this amount (required):');
+      if (!reason || !reason.trim()) {
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('bill_id', billId);
+        fd.append('line_index', lineIndex);
+        fd.append('current_amount', '0');
+        fd.append('amount_overridden', 'true');
+        fd.append('amount_override_reason', reason.trim());
+
+        const response = await fetch('/api/billback/update-line-item', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) throw new Error('Failed to zero amount');
+
+        // Update local data
+        const bill = ubiUnassignedBills.find(b => b.s3_key === billId);
+        if (bill && bill.unassigned_lines && bill.unassigned_lines[lineIndex]) {
+          const lineData = bill.unassigned_lines[lineIndex].line_data;
+          lineData['Current Amount'] = 0;
+          lineData['current_amount'] = 0;
+          lineData['Amount Overridden'] = true;
+          lineData['amount_overridden'] = true;
+          lineData['Amount Override Reason'] = reason.trim();
+          lineData['amount_override_reason'] = reason.trim();
+          bill.unassigned_lines[lineIndex].charge = 0;
+        }
+
+        // Update DOM inline
+        updateLineItemDOM(billId, lineIndex, {
+          amount: 0,
+          amountOverridden: true,
+          amountOverrideReason: reason.trim()
+        });
+
+        showToast('Amount zeroed', 'ok');
+      } catch (e) {
+        console.error('Error zeroing amount:', e);
+        showToast('Error zeroing amount', 'err');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // Toggle exclusion - handles both exclude and unexclude
+    async function toggleExclusion(billId, lineIndex, shouldExclude, event) {
+      const checkbox = event?.target;
+
+      if (shouldExclude) {
+        // Exclude - need reason via modal
+        openExclusionModal(billId, lineIndex);
+        // If they cancel, we need to uncheck the box
+        // The modal will handle this
+      } else {
+        // Unexclude - confirm and do it
+        if (!confirm('Remove exclusion from this line item? It will be included in UBI processing again.')) {
+          if (checkbox) checkbox.checked = true; // Revert checkbox
+          return;
+        }
+
+        try {
+          const fd = new FormData();
+          fd.append('bill_id', billId);
+          fd.append('line_index', lineIndex);
+          fd.append('is_excluded_from_ubi', '0');
+          fd.append('exclusion_reason', '');
+
+          const response = await fetch('/api/billback/update-line-item', {
+            method: 'POST',
+            body: fd
+          });
+
+          if (!response.ok) throw new Error('Failed to remove exclusion');
+
+          // Update local data
+          const bill = ubiUnassignedBills.find(b => b.s3_key === billId);
+          if (bill && bill.unassigned_lines && bill.unassigned_lines[lineIndex]) {
+            bill.unassigned_lines[lineIndex].line_data.is_excluded_from_ubi = 0;
+            bill.unassigned_lines[lineIndex].line_data.exclusion_reason = '';
+          }
+
+          // Update DOM inline
+          updateLineItemDOM(billId, lineIndex, {
+            excluded: false,
+            exclusionReason: ''
+          });
+
+          showToast('Exclusion removed', 'ok');
+        } catch (e) {
+          console.error('Error removing exclusion:', e);
+          showToast('Error removing exclusion', 'err');
+          if (checkbox) checkbox.checked = true; // Revert checkbox on error
+        }
+      }
+    }
+
+    // ============================================================================
+    // ACCOUNT MANAGEMENT FUNCTIONS (INDEPENDENT TRACKER & UBI)
+    // ============================================================================
+
+    async function addAccountToTracker(accountNumber, vendorName, propertyName, vendorId, propertyId) {
+      console.log('[Toggle Tracker] Parameters:', { accountNumber, vendorName, propertyName, vendorId, propertyId });
+
+      // Check if already tracked - if so, toggle to REMOVE
+      const currentlyTracked = isInTracker(accountNumber, vendorName);
+      const action = currentlyTracked ? 'remove' : 'add';
+      const actionLabel = currentlyTracked ? 'Remove' : 'Add';
+      const endpoint = currentlyTracked ? '/api/ubi/remove-from-tracker' : '/api/ubi/add-to-tracker';
+
+      if (!confirm(`${actionLabel} account ${accountNumber} ${currentlyTracked ? 'from' : 'to'} Tracker?\n\nProperty: ${propertyName}\nVendor: ${vendorName}\n\nThis will set is_tracked=${!currentlyTracked}.`)) {
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('account_number', accountNumber);
+        fd.append('vendor_name', vendorName);
+        fd.append('property_name', propertyName);
+        fd.append('vendor_id', vendorId || '');
+        fd.append('property_id', propertyId || '');
+
+        console.log(`[${actionLabel} Tracker] Sending FormData:`, {
+          account_number: accountNumber,
+          vendor_name: vendorName,
+          property_name: propertyName,
+          vendor_id: vendorId || '(empty)',
+          property_id: propertyId || '(empty)'
+        });
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('API Error:', errorData);
+          throw new Error(errorData.error || `Failed to ${action} tracker`);
+        }
+
+        // Update local cache and refresh badges (faster than full reload)
+        updateAccountInCache(accountNumber, vendorName, propertyName, vendorId, propertyId, { is_tracked: !currentlyTracked });
+        refreshBadgesForAccount(accountNumber, vendorName);
+
+        showToast(`Account ${action === 'add' ? 'added to' : 'removed from'} tracker`, 'ok');
+      } catch (e) {
+        console.error(`Error ${action}ing tracker:`, e);
+        showToast(`Error ${action}ing tracker: ${e.message}`, 'err');
+      }
+    }
+
+    async function addAccountToUBI(accountNumber, vendorName, propertyName, vendorId, propertyId) {
+      console.log('[Toggle UBI] Parameters:', { accountNumber, vendorName, propertyName, vendorId, propertyId });
+
+      // Check if already UBI - if so, toggle to REMOVE
+      const currentlyUBI = isUbiTracked(accountNumber, vendorName);
+      const action = currentlyUBI ? 'remove' : 'add';
+      const actionLabel = currentlyUBI ? 'Remove' : 'Add';
+      const endpoint = currentlyUBI ? '/api/ubi/remove-from-ubi' : '/api/ubi/add-to-ubi';
+
+      if (!confirm(`${actionLabel} account ${accountNumber} ${currentlyUBI ? 'from' : 'to'} UBI?\n\nProperty: ${propertyName}\nVendor: ${vendorName}\n\nThis will set is_ubi=${!currentlyUBI}.`)) {
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('account_number', accountNumber);
+        fd.append('vendor_name', vendorName);
+        fd.append('property_name', propertyName);
+        fd.append('vendor_id', vendorId || '');
+        fd.append('property_id', propertyId || '');
+
+        console.log(`[${actionLabel} UBI] Sending FormData:`, {
+          account_number: accountNumber,
+          vendor_name: vendorName,
+          property_name: propertyName,
+          vendor_id: vendorId || '(empty)',
+          property_id: propertyId || '(empty)'
+        });
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('API Error:', errorData);
+          throw new Error(errorData.error || `Failed to ${action} UBI`);
+        }
+
+        // Update local cache and refresh badges (faster than full reload)
+        updateAccountInCache(accountNumber, vendorName, propertyName, vendorId, propertyId, { is_ubi: !currentlyUBI });
+        refreshBadgesForAccount(accountNumber, vendorName);
+
+        showToast(`Account ${action === 'add' ? 'added to' : 'removed from'} UBI`, 'ok');
+      } catch (e) {
+        console.error(`Error ${action}ing UBI:`, e);
+        showToast(`Error ${action}ing UBI: ${e.message}`, 'err');
+      }
+    }
+
+    // Remove a bill from the UI after it's been moved
+    function removeBillFromUI(billId) {
+      // Find and remove the bill-group element
+      const billGroups = document.querySelectorAll('.bill-group');
+      let removed = false;
+
+      billGroups.forEach(group => {
+        const checkboxes = group.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+          if (checkbox.id.includes(billId.replace(/[^a-zA-Z0-9]/g, '_'))) {
+            group.remove();
+            removed = true;
+          }
+        });
+      });
+
+      // Update the bill from ubiUnassignedBills array
+      const billIndex = ubiUnassignedBills.findIndex(b => b.s3_key === billId);
+      if (billIndex >= 0) {
+        ubiUnassignedBills.splice(billIndex, 1);
+      }
+
+      // Update summary stats if the bill was removed
+      if (removed) {
+        updateSummaryStats();
+      }
+
+      return removed;
+    }
+
+    // Update summary statistics
+    function updateSummaryStats() {
+      const totalBills = ubiUnassignedBills.length;
+      const totalLines = ubiUnassignedBills.reduce((sum, bill) => sum + (bill.unassigned_lines?.length || 0), 0);
+      const totalAmount = ubiUnassignedBills.reduce((sum, bill) => {
+        const billTotal = (bill.unassigned_lines || []).reduce((s, line) => {
+          const amt = parseFloat(line.line_data?.Amount || 0);
+          return s + amt;
+        }, 0);
+        return sum + billTotal;
+      }, 0);
+
+      // Update DOM if summary elements exist
+      const billCountEl = document.querySelector('#summaryBillCount');
+      const lineCountEl = document.querySelector('#summaryLineCount');
+      const amountEl = document.querySelector('#summaryAmount');
+
+      if (billCountEl) billCountEl.textContent = totalBills;
+      if (lineCountEl) lineCountEl.textContent = totalLines;
+      if (amountEl) amountEl.textContent = '$' + totalAmount.toFixed(2);
+    }
+
+    async function sendBillToPost(billId) {
+      if (!confirm('Send this bill back to POST (Stage 6) for reprocessing?\n\nThis will MOVE the bill from Stage 7 (BILLBACK) back to Stage 6 (POST).')) {
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('bill_id', billId);
+
+        const response = await fetch('/api/billback/send-to-post', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to send to POST');
+        }
+
+        // Remove the bill from UI instead of reloading
+        const removed = removeBillFromUI(billId);
+
+        if (removed) {
+          showToast('Bill moved back to POST successfully', 'ok');
+        } else {
+          showToast('Bill moved to POST (refresh to update view)', 'ok');
+        }
+      } catch (e) {
+        console.error('Error sending to POST:', e);
+        showToast(`Error sending to POST: ${e.message}`, 'err');
+      }
+    }
+
+    // Open PDF in new tab
+    function viewPdf(pdfKey) {
+      if (!pdfKey) {
+        showToast('No PDF available for this invoice', 'err');
+        return;
+      }
+      // Use the /pdf endpoint with the S3 key
+      const url = `/pdf?k=${encodeURIComponent(pdfKey)}`;
+      window.open(url, '_blank');
+    }
+
+    // ============================================================================
+    // END ACCOUNT MANAGEMENT FUNCTIONS
+    // ============================================================================
+
+    // Filter state
+    let ubiFilters = {
+      trackerStatus: [],
+      ubiStatus: [],
+      utilityTypes: [],
+      properties: [],
+      vendors: [],
+      accounts: [],
+      glCodes: [],
+      serviceStartMonth: ''
+    };
+    let allProperties = [];
+    let allVendors = [];
+    let allAccounts = [];
+    let allGLCodes = [];
+    let allServiceMonths = [];
+    let allUtilityTypes = [];
+
+    // Cached filter options from server (loaded once)
+    let cachedFilterOptions = null;
+
+    // Load filter options from server (cached for the session)
+    async function loadFilterOptions() {
+      if (cachedFilterOptions) return cachedFilterOptions;
+
+      try {
+        const response = await fetch('/api/billback/ubi/filter-options?days_back=60');
+        if (!response.ok) throw new Error('Failed to load filter options');
+        cachedFilterOptions = await response.json();
+        console.log(`Loaded filter options in ${cachedFilterOptions.scan_time_seconds}s: ${cachedFilterOptions.properties.length} properties, ${cachedFilterOptions.vendors.length} vendors, ${cachedFilterOptions.gl_codes.length} GL codes`);
+
+        // Populate the filter lists immediately
+        allProperties = cachedFilterOptions.properties || [];
+        allVendors = cachedFilterOptions.vendors || [];
+        allGLCodes = cachedFilterOptions.gl_codes || [];
+
+        return cachedFilterOptions;
+      } catch (e) {
+        console.error('Error loading filter options:', e);
+        return null;
+      }
+    }
+
+    // Load filter options on page load so user can filter BEFORE loading bills
+    (async function() {
+      console.log('Loading filter options on page init...');
+      await loadFilterOptions();
+      // Pre-populate filter lists so they're ready when drawer opens
+      if (cachedFilterOptions) {
+        renderFilterList('listProperty', allProperties, 'properties');
+        renderFilterList('listVendor', allVendors, 'vendors');
+        renderFilterList('listGLCode', allGLCodes, 'glCodes');
+        console.log('Filter options ready - you can now filter before loading bills');
+      }
+    })();
+
+    // Refresh filter options (clear cache and reload from server)
+    async function refreshFilterOptions() {
+      cachedFilterOptions = null;
+      showToast('Refreshing filter lists...', 'ok');
+      await loadFilterOptions();
+      if (cachedFilterOptions) {
+        renderFilterList('listProperty', allProperties, 'properties');
+        renderFilterList('listVendor', allVendors, 'vendors');
+        renderFilterList('listGLCode', allGLCodes, 'glCodes');
+        showToast(`Loaded ${allProperties.length} properties, ${allVendors.length} vendors, ${allGLCodes.length} GL codes`, 'ok');
+      }
+    }
+
+    // Assigned bills filters
+    let assignedFilters = {
+      properties: [],
+      vendors: [],
+      accounts: [],
+      chargeCodes: []
+    };
+    let assignedAllProperties = [];
+    let assignedAllVendors = [];
+    let assignedAllAccounts = [];
+    let assignedAllChargeCodes = [];
+
+    // Open/Close drawer
+    function openFilterDrawer() {
+      document.getElementById('filterDrawer').classList.add('open');
+      document.getElementById('filterMask').classList.add('open');
+      populateFilterOptions();
+    }
+
+    function closeFilterDrawer() {
+      document.getElementById('filterDrawer').classList.remove('open');
+      document.getElementById('filterMask').classList.remove('open');
+    }
+
+    // Open/Close assigned filter drawer
+    function openAssignedFilterDrawer() {
+      buildAssignedFilterLists();
+      document.getElementById('assignedFilterDrawer').classList.add('open');
+      document.getElementById('assignedFilterMask').classList.add('open');
+    }
+
+    function closeAssignedFilterDrawer() {
+      document.getElementById('assignedFilterDrawer').classList.remove('open');
+      document.getElementById('assignedFilterMask').classList.remove('open');
+    }
+
+    // Toggle filter section
+    function toggleFilterSection(btn) {
+      const sect = btn.closest('.sect');
+      sect.classList.toggle('open');
+    }
+
+    // Populate filter options from loaded bills
+    async function populateFilterOptions() {
+      // Load filter options from server (cached)
+      const options = await loadFilterOptions();
+
+      if (options) {
+        // Use server-cached options for properties, vendors, GL codes
+        allProperties = options.properties || [];
+        allVendors = options.vendors || [];
+        allGLCodes = options.gl_codes || [];
+      }
+
+      // Get accounts and service months from loaded bills (these vary based on what's loaded)
+      const accounts = new Set();
+      const serviceMonths = new Set();
+
+      ubiUnassignedBills.forEach(bill => {
+        const firstLine = bill.unassigned_lines[0];
+        if (!firstLine) return;
+        const ld = firstLine.line_data;
+
+        const account = ld['Account Number'] || bill.account;
+        accounts.add(account);
+
+        // Extract service start month
+        const serviceStart = ld['Bill Period Start'] || ld['Service Period Start'] || '';
+        if (serviceStart) {
+          const parts = serviceStart.split('/');
+          if (parts.length >= 3) {
+            const monthNum = parseInt(parts[0], 10);
+            let year = parseInt(parts[2], 10);
+            if (!isNaN(year) && year < 100) {
+              year = year + 2000;
+            }
+            if (!isNaN(monthNum) && !isNaN(year)) {
+              const serviceMonth = `${String(monthNum).padStart(2, '0')}/${year}`;
+              serviceMonths.add(serviceMonth);
+            }
+          }
+        }
+      });
+
+      allAccounts = Array.from(accounts).sort();
+      allServiceMonths = Array.from(serviceMonths).sort((a, b) => {
+        const [aMonth, aYear] = a.split('/').map(Number);
+        const [bMonth, bYear] = b.split('/').map(Number);
+        if (aYear !== bYear) return bYear - aYear;
+        return bMonth - aMonth;
+      });
+
+      renderFilterList('listProperty', allProperties, 'properties');
+      renderFilterList('listVendor', allVendors, 'vendors');
+      renderFilterList('listAccount', allAccounts, 'accounts');
+      renderFilterList('listGLCode', allGLCodes, 'glCodes');
+
+      // Populate service month dropdown
+      const serviceMonthSelect = document.getElementById('serviceStartMonthFilter');
+      if (serviceMonthSelect) {
+        serviceMonthSelect.innerHTML = '<option value="">All Months</option>' +
+          allServiceMonths.map(m => `<option value="${m}">${m}</option>`).join('');
+      }
+    }
+
+    // Render filter checkbox list
+    function renderFilterList(containerId, items, filterKey) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = items.map(item => `
+        <label>
+          <input type="checkbox" name="${filterKey}" value="${item}" onchange="applyFilters()" ${ubiFilters[filterKey].includes(item) ? 'checked' : ''}>
+          ${item}
+        </label>
+      `).join('');
+    }
+
+    // Filter individual lists
+    function filterPropertyList() {
+      const query = document.getElementById('qProperty').value.toLowerCase();
+      const filtered = allProperties.filter(p => p.toLowerCase().includes(query));
+      renderFilterList('listProperty', filtered, 'properties');
+    }
+
+    function filterVendorList() {
+      const query = document.getElementById('qVendor').value.toLowerCase();
+      const filtered = allVendors.filter(v => v.toLowerCase().includes(query));
+      renderFilterList('listVendor', filtered, 'vendors');
+    }
+
+    function filterAccountList() {
+      const query = document.getElementById('qAccount').value.toLowerCase();
+      const filtered = allAccounts.filter(a => a.toLowerCase().includes(query));
+      renderFilterList('listAccount', filtered, 'accounts');
+    }
+
+    function filterGLCodeList() {
+      const query = document.getElementById('qGLCode').value.toLowerCase();
+      const filtered = allGLCodes.filter(g => g.toLowerCase().includes(query));
+      renderFilterList('listGLCode', filtered, 'glCodes');
+    }
+
+    // Apply filters
+    function applyFilters() {
+      // Get tracker status filters
+      ubiFilters.trackerStatus = Array.from(document.querySelectorAll('input[name="trackerStatus"]:checked')).map(cb => cb.value);
+
+      // Get UBI status filters
+      ubiFilters.ubiStatus = Array.from(document.querySelectorAll('input[name="ubiStatus"]:checked')).map(cb => cb.value);
+
+      // Get utility type filters
+      ubiFilters.utilityTypes = Array.from(document.querySelectorAll('input[name="utilityTypes"]:checked')).map(cb => cb.value);
+
+      // Get property filters
+      ubiFilters.properties = Array.from(document.querySelectorAll('input[name="properties"]:checked')).map(cb => cb.value);
+
+      // Get vendor filters
+      ubiFilters.vendors = Array.from(document.querySelectorAll('input[name="vendors"]:checked')).map(cb => cb.value);
+
+      // Get account filters
+      ubiFilters.accounts = Array.from(document.querySelectorAll('input[name="accounts"]:checked')).map(cb => cb.value);
+
+      // Get GL code filters
+      ubiFilters.glCodes = Array.from(document.querySelectorAll('input[name="glCodes"]:checked')).map(cb => cb.value);
+
+      // Get service start month filter
+      const serviceMonthSelect = document.getElementById('serviceStartMonthFilter');
+      ubiFilters.serviceStartMonth = serviceMonthSelect ? serviceMonthSelect.value : '';
+
+      // Re-render with filters (client-side only)
+      renderUnassignedBills();
+    }
+
+    // Apply filters and reload from server (for property/vendor/GL server-side filtering)
+    async function applyFiltersAndReload() {
+      // First apply the current checkbox states to ubiFilters
+      applyFilters();
+
+      // Close the drawer
+      closeFilterDrawer();
+
+      // Reload from server with the selected filters
+      await loadUnassignedBills();
+    }
+
+    // Clear all filters
+    function clearAllFilters() {
+      ubiFilters = {
+        trackerStatus: [],
+        ubiStatus: [],
+        utilityTypes: [],
+        properties: [],
+        vendors: [],
+        accounts: [],
+        glCodes: [],
+        serviceStartMonth: ''
+      };
+
+      // Uncheck all checkboxes
+      document.querySelectorAll('#filterDrawer input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+      // Clear search inputs
+      document.querySelectorAll('#filterDrawer .search input').forEach(input => input.value = '');
+
+      // Reset service month dropdown
+      const serviceMonthSelect = document.getElementById('serviceStartMonthFilter');
+      if (serviceMonthSelect) serviceMonthSelect.value = '';
+
+      // Re-render filter lists to show all items
+      renderFilterList('listProperty', allProperties, 'properties');
+      renderFilterList('listVendor', allVendors, 'vendors');
+      renderFilterList('listAccount', allAccounts, 'accounts');
+      renderFilterList('listGLCode', allGLCodes, 'glCodes');
+
+      // Re-render
+      renderUnassignedBills();
+
+      showToast('Filters cleared', 'ok');
+    }
+
+    // ============================================================================
+    // ASSIGNED BILLS FILTER FUNCTIONS
+    // ============================================================================
+
+    // Build filter lists from assigned data
+    function buildAssignedFilterLists() {
+      const properties = new Set();
+      const vendors = new Set();
+      const accounts = new Set();
+      const chargeCodes = new Set();
+
+      ubiAssignedData.forEach(periodData => {
+        periodData.bills.forEach(bill => {
+          vendors.add(bill.vendor || 'Unknown');
+          accounts.add(bill.account || 'Unknown');
+          bill.assigned_lines.forEach(line => {
+            const ld = line.line_data || {};
+            const property = ld['EnrichedPropertyName'] || ld['Property Name'] || 'Unknown';
+            const chargeCode = ld['Charge Code'] || 'N/A';
+            properties.add(property);
+            chargeCodes.add(chargeCode);
+          });
+        });
+      });
+
+      assignedAllProperties = Array.from(properties).sort();
+      assignedAllVendors = Array.from(vendors).sort();
+      assignedAllAccounts = Array.from(accounts).sort();
+      assignedAllChargeCodes = Array.from(chargeCodes).sort();
+
+      renderAssignedPropertyList();
+      renderAssignedVendorList();
+      renderAssignedAccountList();
+      renderAssignedChargeCodeList();
+    }
+
+    function renderAssignedPropertyList(filter = '') {
+      const list = document.getElementById('listAssignedProperty');
+      const filtered = filter ? assignedAllProperties.filter(p => p.toLowerCase().includes(filter.toLowerCase())) : assignedAllProperties;
+      list.innerHTML = filtered.map(p => `
+        <label><input type="checkbox" name="assignedProperties" value="${p}" ${assignedFilters.properties.includes(p) ? 'checked' : ''} onchange="applyAssignedFilters()"> ${p}</label>
+      `).join('');
+    }
+
+    function renderAssignedVendorList(filter = '') {
+      const list = document.getElementById('listAssignedVendor');
+      const filtered = filter ? assignedAllVendors.filter(v => v.toLowerCase().includes(filter.toLowerCase())) : assignedAllVendors;
+      list.innerHTML = filtered.map(v => `
+        <label><input type="checkbox" name="assignedVendors" value="${v}" ${assignedFilters.vendors.includes(v) ? 'checked' : ''} onchange="applyAssignedFilters()"> ${v}</label>
+      `).join('');
+    }
+
+    function renderAssignedAccountList(filter = '') {
+      const list = document.getElementById('listAssignedAccount');
+      const filtered = filter ? assignedAllAccounts.filter(a => a.toLowerCase().includes(filter.toLowerCase())) : assignedAllAccounts;
+      list.innerHTML = filtered.map(a => `
+        <label><input type="checkbox" name="assignedAccounts" value="${a}" ${assignedFilters.accounts.includes(a) ? 'checked' : ''} onchange="applyAssignedFilters()"> ${a}</label>
+      `).join('');
+    }
+
+    function renderAssignedChargeCodeList(filter = '') {
+      const list = document.getElementById('listAssignedChargeCode');
+      const filtered = filter ? assignedAllChargeCodes.filter(c => c.toLowerCase().includes(filter.toLowerCase())) : assignedAllChargeCodes;
+      list.innerHTML = filtered.map(c => `
+        <label><input type="checkbox" name="assignedChargeCodes" value="${c}" ${assignedFilters.chargeCodes.includes(c) ? 'checked' : ''} onchange="applyAssignedFilters()"> ${c}</label>
+      `).join('');
+    }
+
+    function filterAssignedPropertyList() {
+      const q = document.getElementById('qAssignedProperty').value;
+      renderAssignedPropertyList(q);
+    }
+
+    function filterAssignedVendorList() {
+      const q = document.getElementById('qAssignedVendor').value;
+      renderAssignedVendorList(q);
+    }
+
+    function filterAssignedAccountList() {
+      const q = document.getElementById('qAssignedAccount').value;
+      renderAssignedAccountList(q);
+    }
+
+    function filterAssignedChargeCodeList() {
+      const q = document.getElementById('qAssignedChargeCode').value;
+      renderAssignedChargeCodeList(q);
+    }
+
+    function applyAssignedFilters() {
+      // Get property filters
+      assignedFilters.properties = Array.from(document.querySelectorAll('input[name="assignedProperties"]:checked')).map(cb => cb.value);
+
+      // Get vendor filters
+      assignedFilters.vendors = Array.from(document.querySelectorAll('input[name="assignedVendors"]:checked')).map(cb => cb.value);
+
+      // Get account filters
+      assignedFilters.accounts = Array.from(document.querySelectorAll('input[name="assignedAccounts"]:checked')).map(cb => cb.value);
+
+      // Get charge code filters
+      assignedFilters.chargeCodes = Array.from(document.querySelectorAll('input[name="assignedChargeCodes"]:checked')).map(cb => cb.value);
+
+      // Re-render with filters
+      renderAssignedBills();
+    }
+
+    function clearAllAssignedFilters() {
+      assignedFilters = {
+        properties: [],
+        vendors: [],
+        accounts: [],
+        chargeCodes: []
+      };
+
+      // Uncheck all checkboxes in assigned drawer
+      document.querySelectorAll('#assignedFilterDrawer input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+      // Clear search inputs
+      document.querySelectorAll('#assignedFilterDrawer .search input').forEach(input => input.value = '');
+
+      // Re-render
+      renderAssignedBills();
+
+      showToast('Filters cleared', 'ok');
+    }
+
+    // Generate UBI periods (MM/YYYY format)
+    function generateUbiPeriods() {
+      const periods = [];
+      const startDate = new Date(2025, 0, 1);
+      const today = new Date();
+      const monthsFromStart = (today.getFullYear() - startDate.getFullYear()) * 12 + (today.getMonth() - startDate.getMonth());
+      const totalMonths = monthsFromStart + 24;
+
+      for (let i = 0; i < totalMonths; i++) {
+        const date = new Date(2025, i, 1);
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const periodLabel = `${month}/${year}`;
+        periods.push(periodLabel);
+      }
+      return periods;
+    }
+
+    ubiPeriods = generateUbiPeriods();
+
+    // Selected periods for multi-select
+    let selectedPeriods = [];
+
+    // Populate UBI period dropdowns and checkboxes
+    function populateUbiPeriodDropdowns() {
+      const assignedFilter = document.getElementById('assignedPeriodFilter');
+      const periodCheckboxList = document.getElementById('periodCheckboxList');
+
+      assignedFilter.innerHTML = '<option value="">-- Select Period --</option>';
+      periodCheckboxList.innerHTML = '';
+
+      ubiPeriods.forEach(period => {
+        // Assigned filter dropdown
+        const opt2 = document.createElement('option');
+        opt2.value = period;
+        opt2.textContent = period;
+        assignedFilter.appendChild(opt2);
+
+        // Period checkbox
+        const label = document.createElement('label');
+        label.style.display = 'block';
+        label.style.padding = '6px 8px';
+        label.style.cursor = 'pointer';
+        label.style.borderRadius = '4px';
+        label.innerHTML = `
+          <input type="checkbox" value="${period}" onchange="updateSelectedPeriods()" style="margin-right:8px" />
+          ${period}
+        `;
+        label.onmouseover = () => label.style.background = '#f9fafb';
+        label.onmouseout = () => label.style.background = 'transparent';
+        periodCheckboxList.appendChild(label);
+      });
+    }
+
+    // Toggle period picker panel
+    function togglePeriodPicker() {
+      const panel = document.getElementById('periodPickerPanel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // Close period picker when clicking outside
+    document.addEventListener('click', function(e) {
+      const picker = document.getElementById('periodPickerBtn');
+      const panel = document.getElementById('periodPickerPanel');
+      if (picker && panel && !picker.contains(e.target) && !panel.contains(e.target)) {
+        panel.style.display = 'none';
+      }
+    });
+
+    // Update selected periods from checkboxes
+    function updateSelectedPeriods() {
+      const checkboxes = document.querySelectorAll('#periodCheckboxList input[type="checkbox"]:checked');
+      selectedPeriods = Array.from(checkboxes).map(cb => cb.value);
+
+      const label = document.getElementById('selectedPeriodsLabel');
+      if (selectedPeriods.length === 0) {
+        label.textContent = 'No periods selected';
+      } else if (selectedPeriods.length === 1) {
+        label.textContent = selectedPeriods[0];
+      } else {
+        label.textContent = `${selectedPeriods.length} periods selected`;
+      }
+    }
+
+    // Clear period selection
+    function clearPeriodSelection() {
+      const checkboxes = document.querySelectorAll('#periodCheckboxList input[type="checkbox"]');
+      checkboxes.forEach(cb => cb.checked = false);
+      updateSelectedPeriods();
+    }
+
+    // Load UBI config
+    let isLoadingConfig = false;
+    async function loadUbiConfig() {
+      if (isLoadingConfig) {
+        console.log('Config refresh already in progress, skipping');
+        return;
+      }
+
+      isLoadingConfig = true;
+      try {
+        const [acctResp, ubiResp, chargeCodesResp, glAccountsResp, glMappingResp] = await Promise.all([
+          fetch('/api/config/accounts-to-track'),
+          fetch('/api/config/ubi-mapping'),
+          fetch('/api/config/charge-codes'),
+          fetch('/api/catalog/gl-accounts'),
+          fetch('/api/config/gl-charge-code-mapping')
+        ]);
+        const acctData = await acctResp.json();
+        const ubiData = await ubiResp.json();
+        const chargeCodesData = await chargeCodesResp.json();
+        const glAccountsData = await glAccountsResp.json();
+        const glMappingData = await glMappingResp.json();
+        accountsToTrack = acctData.items || [];
+        ubiMapping = ubiData.items || [];
+        chargeCodes = chargeCodesData.items || [];
+        glAccounts = glAccountsData.items || [];
+        glCodeMappings = glMappingData.items || [];
+
+        showToast('UBI config refreshed', 'ok');
+
+        // Reload bills to reflect updated config
+        if (ubiUnassignedBills.length > 0) {
+          renderUnassignedBills();
+        }
+      } catch (e) {
+        console.error('Error loading UBI config:', e);
+        showToast('Error loading UBI config', 'err');
+      } finally {
+        isLoadingConfig = false;
+      }
+    }
+
+    // Check if account is UBI tracked (must match both account AND vendor)
+    function isUbiTracked(accountNumber, vendorName) {
+      if (!accountNumber) return false;
+      const acctStr = String(accountNumber).trim();
+      const vendorStr = String(vendorName || '').trim();
+      const acct = accountsToTrack.find(a => {
+        const configAcct = String(a.accountNumber || a.account_number || '').trim();
+        const configVendor = String(a.vendorName || a.vendor_name || '').trim();
+        return configAcct === acctStr && configVendor === vendorStr;
+      });
+      // Check new field name (is_ubi) and fallback to old field name (ubi_tracking)
+      return acct && (acct.is_ubi === true || acct.ubi_tracking === true);
+    }
+
+    // Check if account is in tracker (regardless of UBI status) - must match both account AND vendor
+    function isInTracker(accountNumber, vendorName) {
+      if (!accountNumber) return false;
+      const acctStr = String(accountNumber).trim();
+      const vendorStr = String(vendorName || '').trim();
+      return accountsToTrack.some(a => {
+        // Support both camelCase and snake_case field names
+        const configAcct = String(a.accountNumber || a.account_number || '').trim();
+        const configVendor = String(a.vendorName || a.vendor_name || '').trim();
+        // Check new field name (is_tracked) and fallback to presence in array
+        return configAcct === acctStr && configVendor === vendorStr && (a.is_tracked === true || a.is_tracked === undefined);
+      });
+    }
+
+    // Get comment for account (must match both account AND vendor)
+    function getAccountComment(accountNumber, vendorName) {
+      if (!accountNumber) return '';
+      const acctStr = String(accountNumber).trim();
+      const vendorStr = String(vendorName || '').trim();
+      const acct = accountsToTrack.find(a => {
+        const configAcct = String(a.accountNumber || a.account_number || '').trim();
+        const configVendor = String(a.vendorName || a.vendor_name || '').trim();
+        return configAcct === acctStr && configVendor === vendorStr;
+      });
+      return acct ? (acct.comment || '') : '';
+    }
+
+    // Update account in local cache
+    function updateAccountInCache(accountNumber, vendorName, propertyName, vendorId, propertyId, updates) {
+      const acctStr = String(accountNumber).trim();
+      const vendorStr = String(vendorName || '').trim();
+
+      // Find existing account
+      const existingIndex = accountsToTrack.findIndex(a => {
+        const configAcct = String(a.accountNumber || a.account_number || '').trim();
+        const configVendor = String(a.vendorName || a.vendor_name || '').trim();
+        return configAcct === acctStr && configVendor === vendorStr;
+      });
+
+      if (existingIndex >= 0) {
+        // Update existing account
+        accountsToTrack[existingIndex] = {
+          ...accountsToTrack[existingIndex],
+          ...updates
+        };
+      } else {
+        // Add new account
+        accountsToTrack.push({
+          account_number: accountNumber,
+          accountNumber: accountNumber,
+          vendor_name: vendorName,
+          vendorName: vendorName,
+          property_name: propertyName,
+          propertyName: propertyName,
+          vendor_id: vendorId,
+          vendorId: vendorId,
+          property_id: propertyId,
+          propertyId: propertyId,
+          ...updates
+        });
+      }
+    }
+
+    // Refresh badges for a specific account without reloading all bills
+    function refreshBadgesForAccount(accountNumber, vendorName) {
+      const acctStr = String(accountNumber).trim();
+      const vendorStr = String(vendorName || '').trim();
+
+      // Find all bill groups with this account
+      const billGroups = document.querySelectorAll('.bill-group');
+      billGroups.forEach(group => {
+        const billHeader = group.querySelector('.bill-header');
+        if (!billHeader) return;
+
+        // Check if this is the matching account
+        const headerText = billHeader.textContent;
+        if (headerText.includes(acctStr) && headerText.includes(vendorStr)) {
+          const inTracker = isInTracker(acctStr, vendorStr);
+          const hasUbi = isUbiTracked(acctStr, vendorStr);
+
+          // Update tracker badge
+          const trackerBadges = group.querySelectorAll('span.badge');
+          trackerBadges.forEach(badge => {
+            if (badge.textContent.includes('TRACKED') || badge.textContent.includes('NOT TRACKED')) {
+              if (inTracker) {
+                badge.style.background = '#10b981';
+                badge.style.color = '#fff';
+                badge.style.border = 'none';
+                badge.textContent = 'TRACKED';
+              } else {
+                badge.style.background = 'rgba(239,68,68,0.15)';
+                badge.style.color = '#b91c1c';
+                badge.style.border = '1px solid #000';
+                badge.textContent = 'NOT TRACKED';
+              }
+            }
+
+            if (badge.textContent.includes('UBI') || badge.textContent.includes('NOT UBI')) {
+              if (hasUbi) {
+                badge.style.background = '#10b981';
+                badge.style.color = '#fff';
+                badge.style.border = 'none';
+                badge.textContent = 'UBI';
+              } else {
+                badge.style.background = 'rgba(239,68,68,0.15)';
+                badge.style.color = '#b91c1c';
+                badge.style.border = '1px solid #000';
+                badge.textContent = 'NOT UBI';
+              }
+            }
+          });
+        }
+      });
+    }
+
+    // Check if account has UBI mapping (must match both account AND vendor)
+    function hasUbiMapping(accountNumber, vendorName) {
+      if (!accountNumber) return false;
+      const acctStr = String(accountNumber).trim();
+      const vendorStr = String(vendorName || '').trim();
+      return ubiMapping.some(m => {
+        // Support both camelCase and snake_case field names
+        const configAcct = String(m.accountNumber || m.account_number || '').trim();
+        const configVendor = String(m.vendorName || m.vendor_name || '').trim();
+        return configAcct === acctStr && configVendor === vendorStr;
+      });
+    }
+
+    // Get charge code for account from UBI mapping
+    // NEW: 4-field composite key lookup for charge codes
+    function getChargeCodeMapping(vendorId, accountNumber, propertyId, glAccountNumber) {
+      if (!vendorId || !accountNumber || !propertyId || !glAccountNumber) return null;
+
+      const vendorIdStr = String(vendorId).trim();
+      const acctStr = String(accountNumber).trim();
+      const propertyIdStr = String(propertyId).trim();
+      const glAcctStr = String(glAccountNumber).trim();
+
+      const mapping = ubiMapping.find(m => {
+        const configVendorId = String(m.vendorId || '').trim();
+        const configAcct = String(m.accountNumber || '').trim();
+        const configPropertyId = String(m.propertyId || '').trim();
+        const configGl = String(m.glAccountNumber || '').trim();
+
+        return configVendorId === vendorIdStr &&
+               configAcct === acctStr &&
+               configPropertyId === propertyIdStr &&
+               configGl === glAcctStr;
+      });
+
+      // Return full mapping object with chargeCode, utilityName, glAccountName for display
+      return mapping;
+    }
+
+    // Switch between Unassigned and Assigned tabs
+    function switchUbiTab(tab) {
+      const unassignedTab = document.getElementById('unassignedTab');
+      const assignedTab = document.getElementById('assignedTab');
+      const unassignedContent = document.getElementById('unassignedContent');
+      const assignedContent = document.getElementById('assignedContent');
+
+      // Reset all tabs
+      unassignedTab.classList.remove('active');
+      assignedTab.classList.remove('active');
+      unassignedContent.style.display = 'none';
+      assignedContent.style.display = 'none';
+
+      if (tab === 'unassigned') {
+        unassignedTab.classList.add('active');
+        unassignedContent.style.display = 'block';
+      } else if (tab === 'assigned') {
+        assignedTab.classList.add('active');
+        assignedContent.style.display = 'block';
+        // Don't auto-load - show message to select period first
+        const billsContainer = document.getElementById('assignedBills');
+        if (!billsContainer.innerHTML || billsContainer.innerHTML.includes('Select a period')) {
+          billsContainer.innerHTML = '<div class="loading">Select a period and click Load to load assigned bills</div>';
+        }
+      }
+    }
+
+    // Load unassigned bills - loads ALL pages with server-side sorting
+    async function loadUnassignedBills() {
+      const loading = document.getElementById('unassignedLoading');
+      const billsContainer = document.getElementById('unassignedBills');
+
+      loading.style.display = 'block';
+      loading.innerHTML = '<span class="spinner"></span> Loading unassigned bills...';
+      billsContainer.style.display = 'none';
+
+      // Load config first
+      await loadUbiConfig();
+
+      try {
+        // Get current sort selection
+        const sortSelect = document.getElementById('ubiSortSelect');
+        const sortBy = sortSelect ? sortSelect.value : 'property_asc';
+
+        // Get server-side filters from ubiFilters
+        // If a single property/vendor/GL is selected, pass it to server for filtering
+        const propertyFilter = ubiFilters.properties.length === 1 ? ubiFilters.properties[0] : '';
+        const vendorFilter = ubiFilters.vendors.length === 1 ? ubiFilters.vendors[0] : '';
+        const glFilter = ubiFilters.glCodes.length === 1 ? ubiFilters.glCodes[0] : '';
+
+        // Build base URL with server-side filters
+        let baseUrl = `/api/billback/ubi/unassigned?page_size=100&sort=${sortBy}`;
+        if (propertyFilter) baseUrl += `&property_filter=${encodeURIComponent(propertyFilter)}`;
+        if (vendorFilter) baseUrl += `&vendor_filter=${encodeURIComponent(vendorFilter)}`;
+        if (glFilter) baseUrl += `&gl_filter=${encodeURIComponent(glFilter)}`;
+
+        // Show what filters are being applied
+        const filterMsg = [propertyFilter && `Property: ${propertyFilter}`, vendorFilter && `Vendor: ${vendorFilter}`, glFilter && `GL: ${glFilter}`].filter(Boolean).join(', ');
+        if (filterMsg) {
+          loading.innerHTML = `<span class="spinner"></span> Loading with filters: ${filterMsg}...`;
+        }
+
+        // Load all pages with server-side sorting and filtering
+        ubiUnassignedBills = [];
+        let page = 1;
+        let hasMore = true;
+        let totalPages = 1;
+        let initialTotalBills = 0;  // Capture from first page only (avoids race condition display issues)
+
+        while (hasMore) {
+          // Show progress - use initial total to avoid confusing count mismatches from concurrent changes
+          if (initialTotalBills > 0) {
+            loading.innerHTML = `<span class="spinner"></span> Loading page ${page} of ${totalPages}... (${ubiUnassignedBills.length} loaded)`;
+          } else {
+            loading.innerHTML = `<span class="spinner"></span> Loading page ${page}...`;
+          }
+
+          const url = `${baseUrl}&page=${page}`;
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('Failed to load unassigned bills');
+
+          const data = await response.json();
+          const bills = data.bills || [];
+          ubiUnassignedBills = ubiUnassignedBills.concat(bills);
+          hasMore = data.has_more || false;
+          totalPages = data.total_pages || 1;
+          // Only capture total from first page to avoid race condition display issues
+          if (page === 1) {
+            initialTotalBills = data.total_bills || 0;
+          }
+          page++;
+
+          console.log(`Loaded page ${data.page}/${totalPages} (${ubiUnassignedBills.length} loaded, server reported ${data.total_bills} total)`);
+        }
+
+        loading.style.display = 'none';
+        billsContainer.style.display = 'block';
+
+        // Log if loaded count differs from initial estimate (normal if bills were assigned/archived during load)
+        if (ubiUnassignedBills.length !== initialTotalBills) {
+          console.log(`[UBI] Note: Loaded ${ubiUnassignedBills.length} bills but first page estimated ${initialTotalBills}. This is normal if bills were assigned/archived during loading.`);
+        }
+
+        renderUnassignedBills();
+        showToast(`Loaded ${ubiUnassignedBills.length} bills` + (filterMsg ? ` (filtered)` : ''), 'ok');
+      } catch (e) {
+        console.error('Error loading unassigned bills:', e);
+        loading.innerHTML = 'Error loading bills. Please try again.';
+        showToast('Error loading unassigned bills', 'err');
+      }
+    }
+
+    // Render unassigned bills with multi-month support and detailed line info
+    // Helper function to get currently filtered bills (respects all active filters)
+    function getFilteredBills() {
+      return ubiUnassignedBills.filter(bill => {
+        const firstLine = bill.unassigned_lines[0];
+        if (!firstLine) return false;
+        const ld = firstLine.line_data;
+
+        const property = ld['EnrichedPropertyName'] || ld['Property Name'] || 'N/A';
+        const vendor = ld['EnrichedVendorName'] || ld['Vendor Name'] || bill.vendor;
+        const account = ld['Account Number'] || bill.account;
+        const inTracker = isInTracker(account, vendor);
+        const hasUbi = isUbiTracked(account, vendor);
+
+        // Tracker status filter
+        if (ubiFilters.trackerStatus.length > 0) {
+          const matchesTracker = ubiFilters.trackerStatus.some(status => {
+            if (status === 'tracked' && !inTracker) return false;
+            if (status === 'not-tracked' && inTracker) return false;
+            return true;
+          });
+          if (!matchesTracker) return false;
+        }
+
+        // UBI status filter
+        if (ubiFilters.ubiStatus.length > 0) {
+          const matchesUbi = ubiFilters.ubiStatus.some(status => {
+            if (status === 'ubi' && !hasUbi) return false;
+            if (status === 'not-ubi' && hasUbi) return false;
+            return true;
+          });
+          if (!matchesUbi) return false;
+        }
+
+        // Utility type filter - check if any line matches selected utility types
+        if (ubiFilters.utilityTypes.length > 0) {
+          const hasMatchingUtility = bill.unassigned_lines.some(line => {
+            const lineData = line.line_data;
+            // Check various fields where utility type might be stored
+            const utilityType = lineData['Utility Type'] || lineData['utility_type'] ||
+                               lineData['Mapped Utility Name'] || lineData['mapped_utility_name'] || '';
+            // Also check charge code for utility hints
+            const chargeCode = (lineData['Charge Code'] || lineData['charge_code'] || '').toUpperCase();
+
+            // Match against selected utility types
+            return ubiFilters.utilityTypes.some(ut => {
+              const utLower = ut.toLowerCase();
+              const utilityLower = utilityType.toLowerCase();
+              const ccLower = chargeCode.toLowerCase();
+
+              // Direct match on utility type
+              if (utilityLower.includes(utLower)) return true;
+
+              // Check charge code patterns
+              if (ut === 'Electric' && (ccLower.includes('elec') || ccLower.includes('power'))) return true;
+              if (ut === 'Gas' && ccLower.includes('gas')) return true;
+              if (ut === 'Water' && ccLower.includes('water')) return true;
+              if (ut === 'Sewer' && ccLower.includes('sewer')) return true;
+              if (ut === 'Trash' && (ccLower.includes('trash') || ccLower.includes('refuse') || ccLower.includes('waste'))) return true;
+              if (ut === 'Storm' && ccLower.includes('storm')) return true;
+
+              return false;
+            });
+          });
+          if (!hasMatchingUtility) return false;
+        }
+
+        // Property filter
+        if (ubiFilters.properties.length > 0 && !ubiFilters.properties.includes(property)) {
+          return false;
+        }
+
+        // Vendor filter
+        if (ubiFilters.vendors.length > 0 && !ubiFilters.vendors.includes(vendor)) {
+          return false;
+        }
+
+        // Account filter
+        if (ubiFilters.accounts.length > 0 && !ubiFilters.accounts.includes(account)) {
+          return false;
+        }
+
+        // GL Code filter - show invoice if ANY line matches selected GL codes
+        if (ubiFilters.glCodes.length > 0) {
+          const hasMatchingGL = bill.unassigned_lines.some(line => {
+            const lineData = line.line_data;
+            const glCode = lineData['EnrichedGLAccountNumber'] || lineData['GL Account Number'] || '';
+            return ubiFilters.glCodes.includes(glCode);
+          });
+          if (!hasMatchingGL) {
+            return false;
+          }
+        }
+
+        // Service Start Month filter
+        if (ubiFilters.serviceStartMonth) {
+          const serviceStart = ld['Bill Period Start'] || ld['Service Period Start'] || '';
+          if (!serviceStart) return false;
+          const parts = serviceStart.split('/');
+          if (parts.length >= 3) {
+            const monthNum = parseInt(parts[0], 10);
+            let year = parseInt(parts[2], 10);
+            if (!isNaN(year) && year < 100) {
+              year = year + 2000;
+            }
+            const serviceMonth = `${String(monthNum).padStart(2, '0')}/${year}`;
+            if (serviceMonth !== ubiFilters.serviceStartMonth) {
+              return false;
+            }
+          } else {
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    function renderUnassignedBills() {
+      const container = document.getElementById('unassignedBills');
+
+      if (ubiUnassignedBills.length === 0) {
+        container.innerHTML = '<div class="loading">No unassigned bills found</div>';
+        return;
+      }
+
+      // Apply filters using helper function
+      let filteredBills = getFilteredBills();
+
+      if (filteredBills.length === 0) {
+        container.innerHTML = '<div class="loading">No bills match the selected filters</div>';
+        return;
+      }
+
+      let html = '';
+      filteredBills.forEach(bill => {
+        // Get bill-level info from first line
+        const firstLine = bill.unassigned_lines[0];
+        const lineData = firstLine ? firstLine.line_data : {};
+        const property = lineData['EnrichedPropertyName'] || lineData['Property Name'] || 'N/A';
+        const vendor = lineData['EnrichedVendorName'] || lineData['Vendor Name'] || bill.vendor;
+        const account = lineData['Account Number'] || bill.account;
+        const propertyId = lineData['EnrichedPropertyID'] || lineData['Property ID'] || lineData['propertyId'] || '';
+        const vendorId = lineData['EnrichedVendorID'] || lineData['Vendor ID'] || lineData['vendorId'] || '';
+        const serviceStart = lineData['Bill Period Start'] || '';
+        const serviceEnd = lineData['Bill Period End'] || '';
+        const servicePeriod = serviceStart && serviceEnd ? `${serviceStart} - ${serviceEnd}` : 'N/A';
+        const pdfKey = lineData['source_input_key'] || lineData['PDF_LINK'] || '';
+
+        const inTracker = isInTracker(account, vendor);
+        const hasUbi = isUbiTracked(account, vendor);
+        const accountComment = getAccountComment(account, vendor);
+
+        const trackerBadge = inTracker
+          ? '<span class="badge" style="background:#10b981;color:#fff;margin-left:8px;font-size:10px;padding:2px 6px">TRACKED</span>'
+          : '<span class="badge" style="background:rgba(239,68,68,0.15);color:#b91c1c;border:1px solid #000;margin-left:8px;font-size:10px;padding:2px 6px">NOT TRACKED</span>';
+
+        const ubiBadge = hasUbi
+          ? '<span class="badge" style="background:#10b981;color:#fff;margin-left:4px;font-size:10px;padding:2px 6px">UBI</span>'
+          : '<span class="badge" style="background:rgba(239,68,68,0.15);color:#b91c1c;border:1px solid #000;margin-left:4px;font-size:10px;padding:2px 6px">NOT UBI</span>';
+
+        const pdfButton = pdfKey ? `
+          <button class="btn small" onclick="viewPdf('${pdfKey.replace(/'/g, "\\'")}')"
+                  style="background:rgba(14,165,233,0.15);color:#0284c7;border:1px solid #000;margin-left:8px;font-size:10px;padding:2px 8px">
+            View PDF
+          </button>
+        ` : '';
+
+        const configButtons = `
+          <button class="btn small" onclick="addAccountToTracker('${escapeJs(account)}', '${escapeJs(vendor)}', '${escapeJs(property)}', '${escapeJs(vendorId)}', '${escapeJs(propertyId)}')"
+                  style="background:#f3f4f6;color:#000;border:1px solid #000;margin-left:8px;font-size:10px;padding:2px 8px">
+            Add to Tracker
+          </button>
+          <button class="btn small" onclick="addAccountToUBI('${escapeJs(account)}', '${escapeJs(vendor)}', '${escapeJs(property)}', '${escapeJs(vendorId)}', '${escapeJs(propertyId)}')"
+                  style="background:#f3f4f6;color:#000;border:1px solid #000;margin-left:4px;font-size:10px;padding:2px 8px">
+            Add to UBI
+          </button>
+          <button class="btn small" onclick="openAccountCommentModal('${escapeJs(account)}', '${escapeJs(vendor)}', '${escapeJs(property)}')"
+                  style="background:#f3f4f6;color:#000;border:1px solid #000;margin-left:4px;font-size:10px;padding:2px 8px">
+            Add Comment
+          </button>
+          <button class="btn small" onclick="sendBillToPost('${escapeJs(bill.s3_key)}')"
+                  style="background:#f3f4f6;color:#000;border:1px solid #000;margin-left:8px;font-size:10px;padding:2px 8px">
+            Send to POST
+          </button>
+          ${pdfButton}
+        `;
+
+        html += `
+          <div class="bill-group">
+            <div class="bill-header" style="display:block;padding:12px;border-bottom:2px solid #e5e7eb">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="flex:1">
+                  <div style="font-size:13px;font-weight:600;margin-bottom:4px">
+                    <input type="checkbox" class="bill-checkbox-unassigned" onchange="toggleBillSelection('${bill.s3_key}')" id="bill_${bill.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}" />
+                    ${property} | ${vendor} | ${account} ${trackerBadge} ${ubiBadge} ${configButtons}
+                  </div>
+                  <div style="font-size:11px;color:#64748b">
+                    Service Period: ${servicePeriod} | ${bill.line_count} lines | $${bill.total_amount.toFixed(2)}${bill.last_modified ? ` | <span style="color:#9ca3af">Posted: ${bill.last_modified}</span>` : ''}${bill.submitter ? ` | <span style="color:#6366f1;font-weight:600">${escapeHtml(bill.submitter)}</span>` : ''}${accountComment ? ` | <span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px" title="${escapeHtml(accountComment)}">📝 ${escapeHtml(accountComment.length > 30 ? accountComment.substring(0, 30) + '...' : accountComment)}</span>` : ''}
+                    ${bill.duplicate_warning ? `
+                      <span style="margin-left:12px;padding:3px 8px;background:#fecaca;border-radius:4px;color:#991b1b;font-weight:700;border:1px solid #ef4444">
+                        POSSIBLE DUPLICATE (already assigned to ${escapeHtml(bill.duplicate_warning)})
+                      </span>
+                    ` : ''}
+                    ${bill.prior_period_suggestion ? `
+                      <span style="margin-left:12px;padding:3px 8px;background:#fef3c7;border-radius:4px;color:#92400e;font-weight:600;border:1px solid #f59e0b">
+                        Prior Period: ${escapeHtml(bill.prior_period_suggestion)}
+                      </span>
+                    ` : ''}
+                    ${bill.suggested_period ? `
+                      <span style="margin-left:12px;padding:3px 8px;background:#dbeafe;border-radius:4px;color:#1e40af;font-weight:600">
+                        Suggest: ${bill.suggested_period}
+                      </span>
+                      <span style="color:#94a3b8;margin-left:4px">(Last svc: ${bill.last_assigned_service || '?'} &rarr; UBI: ${bill.last_assigned_period || '?'})</span>
+                      <button class="btn small" onclick="acceptSuggestion('${escapeJs(bill.s3_key)}', '${escapeJs(bill.suggested_period)}')"
+                              style="margin-left:8px;background:#22c55e;color:#fff;border:none;font-size:9px;padding:2px 8px">
+                        Accept
+                      </button>
+                    ` : ''}
+                  </div>
+                </div>
+                <div style="display:flex;gap:12px;align-items:center">
+                  <div>
+                    <label style="font-size:11px;color:#64748b;display:block">Months</label>
+                    <input type="number" min="1" max="12" value="1" id="months_${bill.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}"
+                           onchange="updateMonthDivision('${bill.s3_key}')"
+                           style="width:50px;padding:4px;border:1px solid #e5e7eb;border-radius:4px;text-align:center" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="lines_${bill.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}">
+        `;
+
+        bill.unassigned_lines.forEach((line, lineIndex) => {
+          const ld = line.line_data;
+          const existingNotes = ld['Notes'] || '';
+          const lineId = `${bill.s3_key}_${line.line_hash}`.replace(/[^a-zA-Z0-9]/g, '_');
+
+          // Extract fields
+          const propertyId = ld['Property ID'] || ld['propertyId'] || ld['EnrichedPropertyId'] || '';
+          const glAccountId = ld['EnrichedGLAccountID'] || ld['GL Account ID'] || ld['glAccountId'] || '';
+          const glAccountNumber = ld['EnrichedGLAccountNumber'] || ld['GL Account Number'] || ld['glAccountNumber'] || ld['GL Code'] || '';
+          const glAccountName = ld['GL Account Name'] || ld['glAccountName'] || '';
+          const lineDesc = ld['Line Item Description'] || 'N/A';
+
+          // Debug logging for GL mapping - log only first line to avoid spam
+          if (lineIndex === 0) {
+            console.log('[Line Data Debug] Available fields:', Object.keys(ld));
+            console.log('[Line Data Debug] Extracted values:', { propertyId, glAccountId, glAccountNumber, glAccountName });
+          }
+
+          // Check if line has override data
+          const chargeCodeOverridden = ld['charge_code_overridden'] === true || ld['charge_code_overridden'] === 'true';
+          const chargeCodeOverrideReason = ld['charge_code_override_reason'] || '';
+          const amountOverridden = ld['amount_overridden'] === true || ld['amount_overridden'] === 'true';
+          const amountOverrideReason = ld['amount_override_reason'] || '';
+          const isExcluded = ld['is_excluded_from_ubi'] === 1 || ld['is_excluded_from_ubi'] === '1';
+          const exclusionReason = ld['exclusion_reason'] || '';
+
+          // Determine charge code
+          let chargeCode = ld['Charge Code'] || ld['charge_code'] || '';
+          let chargeCodeSource = ld['charge_code_source'] || '';
+          let displayChargeCode = '';
+          let chargeCodeBadge = '';
+
+          // If no charge code, try GL mapping lookup
+          if (!chargeCode || chargeCode === 'N/A' || String(chargeCode).trim() === '') {
+            // lookupChargeCode expects (propertyId, glAccountId, glCode)
+            // glAccountId is the EnrichedGLAccountID like "375937"
+            // glCode is the GL Account Number like "5720-0000"
+            const mapping = lookupChargeCode(propertyId, glAccountId, glAccountNumber);
+            if (mapping) {
+              chargeCode = mapping.charge_code || '';
+              chargeCodeSource = 'mapping';
+              chargeCodeBadge = '<span class="badge" style="background:#3b82f6;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px">MAPPED</span>';
+            }
+          }
+
+          // If charge code was overridden, show override badge
+          if (chargeCodeOverridden) {
+            chargeCodeBadge = `<span class="badge" style="background:#f59e0b;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px" title="${chargeCodeOverrideReason}">OVERRIDDEN</span>`;
+          }
+
+          // Get utility name - prefer mapped value, then GL lookup, then charge codes config
+          let utilityName = '';
+          if (chargeCode && chargeCode !== 'N/A') {
+            // First check if we have a stored mapped_utility_name from GL mapping
+            // Backend stores as "Mapped Utility Name", local updates use "mapped_utility_name"
+            if (ld['Mapped Utility Name'] || ld['mapped_utility_name']) {
+              utilityName = ld['Mapped Utility Name'] || ld['mapped_utility_name'];
+            }
+            // If charge code came from a mapping lookup, use that mapping's utility_name
+            else if (chargeCodeSource === 'mapping') {
+              const glMapping = lookupChargeCode(propertyId, glAccountId, glAccountNumber);
+              if (glMapping && glMapping.utility_name) {
+                utilityName = glMapping.utility_name;
+              }
+            }
+            // Fallback to charge codes config (may be wrong for duplicate chargeCode entries!)
+            if (!utilityName) {
+              const chargeCodeObj = chargeCodes.find(cc => cc.chargeCode === chargeCode);
+              utilityName = chargeCodeObj ? (chargeCodeObj.utilityName || '') : '';
+            }
+          }
+
+          // Display charge code with utility name
+          if (chargeCode && chargeCode !== 'N/A') {
+            displayChargeCode = chargeCode + (utilityName ? ' - ' + utilityName : '');
+          } else {
+            displayChargeCode = 'N/A';
+          }
+
+          // Display GL Account info
+          const glInfo = glAccountNumber
+            ? `GL ${glAccountNumber}${glAccountName ? ' - ' + glAccountName : ''}`
+            : '';
+
+          // Amount
+          const currentAmount = parseFloat(ld['current_amount'] || line.charge || 0);
+          const amountBadge = amountOverridden
+            ? `<span class="badge" style="background:#f59e0b;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px" title="${amountOverrideReason}">OVERRIDDEN</span>`
+            : '';
+
+          // Exclusion badge
+          const excludedBadge = isExcluded
+            ? `<span class="badge" style="background:#ef4444;color:#fff;font-size:9px;padding:2px 6px;margin-left:4px" title="${exclusionReason}">EXCLUDED</span>`
+            : '';
+
+          // Escape quotes for onclick attributes
+          const escapeQuotes = (str) => String(str).replace(/'/g, "\\'");
+
+          // Line item styling - strikethrough if excluded
+          const lineStyle = isExcluded ? 'opacity:0.5;text-decoration:line-through' : '';
+
+          html += `
+            <div class="line-item" style="padding:8px 12px;border-bottom:1px solid #f9fafb;display:flex;align-items:center;gap:8px;${lineStyle}">
+              <input type="checkbox" class="line-checkbox"
+                     data-line-hash="${line.line_hash}"
+                     data-s3-key="${bill.s3_key}"
+                     onchange="updateUbiSelectedCount()" />
+              <div style="flex:1;font-size:12px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <span onclick="openChargeCodeOverrideModal('${bill.s3_key}', ${lineIndex}, '${escapeQuotes(chargeCode)}', '${escapeQuotes(chargeCodeOverrideReason)}')"
+                        style="cursor:pointer;text-decoration:underline;color:#0ea5e9;font-weight:600"
+                        title="Click to override charge code">
+                    ${displayChargeCode}
+                  </span>
+                  ${chargeCodeBadge}
+                  ${excludedBadge}
+                </div>
+                <div style="color:#64748b;font-size:11px">
+                  ${glInfo ? glInfo + ' | ' : ''}${lineDesc}
+                </div>
+              </div>
+              <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#64748b;white-space:nowrap">
+                <input type="checkbox" ${isExcluded ? 'checked' : ''}
+                       onchange="toggleExclusion('${bill.s3_key}', ${lineIndex}, this.checked, event)"
+                       style="margin:0" />
+                Exclude
+              </label>
+              <button class="zero-btn" onclick="quickZeroAmount('${bill.s3_key}', ${lineIndex}, event)" title="Zero this amount">$0</button>
+              <input type="number" step="0.01"
+                     id="amt_${lineId}"
+                     data-original="${line.charge}"
+                     data-override-reason="${escapeQuotes(amountOverrideReason)}"
+                     value="${currentAmount.toFixed(2)}"
+                     onblur="if(this.value !== this.getAttribute('data-original')) openAmountOverrideModal('${bill.s3_key}', ${lineIndex}, parseFloat(this.getAttribute('data-original')), this.getAttribute('data-override-reason') || '')"
+                     placeholder="Amount"
+                     style="width:100px;padding:4px 6px;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;text-align:right" />
+              ${amountBadge}
+              <input type="text"
+                     id="notes_${lineId}"
+                     value="${existingNotes}"
+                     placeholder="Notes"
+                     style="width:200px;padding:4px 6px;border:1px solid #e5e7eb;border-radius:4px;font-size:12px" />
+            </div>
+          `;
+        });
+
+        html += `
+            </div>
+          </div>
+        `;
+      });
+
+      container.innerHTML = html;
+      updateUbiSelectedCount();
+    }
+
+    // Archive selected line items
+    async function archiveSelectedLines() {
+      const selectedCheckboxes = document.querySelectorAll('.line-checkbox:checked');
+      if (selectedCheckboxes.length === 0) {
+        showToast('Please select at least one line item to archive', 'err');
+        return;
+      }
+
+      if (!confirm(`Archive ${selectedCheckboxes.length} line items? This will remove them from the unassigned list.`)) {
+        return;
+      }
+
+      // Group line hashes by s3_key (API requires s3_key parameter)
+      const byS3Key = {};
+      selectedCheckboxes.forEach(cb => {
+        const s3Key = cb.getAttribute('data-s3-key');
+        const lineHash = cb.getAttribute('data-line-hash');
+        if (!byS3Key[s3Key]) byS3Key[s3Key] = [];
+        byS3Key[s3Key].push(lineHash);
+      });
+
+      const totalBills = Object.keys(byS3Key).length;
+      let processedBills = 0;
+      showLoading('Archiving line items...', `0 of ${totalBills} bills processed`);
+
+      try {
+        let totalArchived = 0;
+        const errors = [];
+        const successfulS3Keys = new Set();  // Track only successful archives
+
+        // Make separate API calls for each s3_key
+        for (const [s3Key, lineHashes] of Object.entries(byS3Key)) {
+          const fd = new FormData();
+          fd.append('line_hashes', lineHashes.join(','));
+          fd.append('s3_key', s3Key);
+
+          const response = await fetch('/api/billback/ubi/archive', {
+            method: 'POST',
+            body: fd
+          });
+
+          processedBills++;
+          updateLoadingProgress(processedBills, totalBills);
+
+          if (!response.ok) {
+            // Get the actual error message from the response
+            let errorMsg = 'Unknown error';
+            try {
+              const errData = await response.json();
+              errorMsg = errData.error || `HTTP ${response.status}`;
+            } catch {
+              errorMsg = `HTTP ${response.status}`;
+            }
+            // Extract filename from s3_key for clearer error
+            const fileName = s3Key.split('/').pop();
+            errors.push(`${fileName}: ${errorMsg}`);
+            continue;
+          }
+
+          const data = await response.json();
+          totalArchived += data.archived || 0;
+          successfulS3Keys.add(s3Key);  // Only mark as successful after API returns ok
+        }
+
+        hideLoading();
+
+        if (errors.length > 0) {
+          // Show detailed error messages
+          const errorDetails = errors.join('\n');
+          console.error('Archive errors:', errorDetails);
+          showToast(`Archived ${totalArchived} items, but ${errors.length} failed:\n${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`, 'err');
+        } else {
+          showToast(`Archived ${totalArchived} line items`, 'ok');
+        }
+
+        // Only remove SUCCESSFULLY archived bills from local cache (not failed ones!)
+        ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
+
+        // Re-render the list from cache
+        renderUnassignedBills();
+        updateUbiSelectedCount();
+      } catch (e) {
+        hideLoading();
+        console.error('Error archiving lines:', e);
+        showToast('Error archiving line items', 'err');
+      }
+    }
+
+    // ============================================================================
+    // FLAG FOR REVIEW FUNCTIONS
+    // ============================================================================
+
+    let flagItemsData = []; // Store items being flagged for the modal
+
+    function openFlagModal() {
+      const selectedCheckboxes = document.querySelectorAll('.line-checkbox:checked');
+      if (selectedCheckboxes.length === 0) {
+        showToast('Please select at least one line item to flag', 'err');
+        return;
+      }
+
+      // Group selected items by invoice (s3_key)
+      const invoiceMap = {};
+      selectedCheckboxes.forEach(cb => {
+        const s3Key = cb.getAttribute('data-s3-key');
+        const lineHash = cb.getAttribute('data-line-hash');
+        const bill = ubiUnassignedBills.find(b => b.s3_key === s3Key);
+        if (bill) {
+          if (!invoiceMap[s3Key]) {
+            invoiceMap[s3Key] = {
+              s3_key: s3Key,
+              vendor: bill.vendor || 'Unknown',
+              property: bill.property_name || 'Unknown',
+              account: bill.account || 'N/A',
+              invoice_no: bill.invoice_no || '',
+              total_amount: bill.total_amount || 0,
+              line_count: bill.line_count || 0,
+              selected_lines: [],
+              submitter: bill.submitter || 'Unknown'
+            };
+          }
+          const line = bill.unassigned_lines.find(l => l.line_hash === lineHash);
+          if (line) {
+            invoiceMap[s3Key].selected_lines.push({
+              line_hash: lineHash,
+              charge: line.charge || 0
+            });
+          }
+        }
+      });
+
+      // Convert to array for rendering
+      flagItemsData = Object.values(invoiceMap);
+
+      // Render invoices (not individual lines) with one note per invoice
+      const listEl = document.getElementById('flagItemsList');
+      listEl.innerHTML = flagItemsData.map((invoice, idx) => {
+        const selectedAmount = invoice.selected_lines.reduce((sum, l) => sum + (l.charge || 0), 0);
+        const allLinesSelected = invoice.selected_lines.length === invoice.line_count;
+        return `
+        <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px;background:#fafafa">
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <strong style="font-size:14px">${escapeHtml(invoice.vendor)}</strong>
+            <span style="color:#059669;font-weight:600">$${selectedAmount.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:4px">
+            ${escapeHtml(invoice.property)} | Acct: ${escapeHtml(invoice.account)}
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-bottom:8px">
+            ${allLinesSelected ? `All ${invoice.line_count} lines selected` : `${invoice.selected_lines.length} of ${invoice.line_count} lines selected`}
+            ${invoice.invoice_no ? ` | Invoice #${escapeHtml(invoice.invoice_no)}` : ''}
+          </div>
+          <textarea id="flagNote_${idx}" placeholder="Add note for this invoice (required)..."
+                 style="width:calc(100% - 20px);padding:8px 10px;border:1px solid #fca5a5;border-radius:6px;font-size:12px;background:#fff;min-height:50px;resize:vertical"></textarea>
+        </div>
+      `}).join('');
+
+      document.getElementById('flagReason').value = '';
+      document.getElementById('flagModal').classList.add('show');
+    }
+
+    function closeFlagModal() {
+      document.getElementById('flagModal').classList.remove('show');
+      flagItemsData = [];
+    }
+
+    async function submitFlag() {
+      if (flagItemsData.length === 0) {
+        showToast('No invoices to flag', 'err');
+        return;
+      }
+
+      const generalReason = document.getElementById('flagReason').value.trim() || 'Flagged for review';
+
+      // Collect per-invoice notes and build the data to send
+      // flagItemsData is now an array of invoices, each with selected_lines array
+      const invoicesToFlag = [];
+      for (let idx = 0; idx < flagItemsData.length; idx++) {
+        const invoice = flagItemsData[idx];
+        const noteInput = document.getElementById('flagNote_' + idx);
+        const note = noteInput ? noteInput.value.trim() : '';
+
+        // Get all line hashes for this invoice
+        const lineHashes = invoice.selected_lines.map(l => l.line_hash);
+
+        // Create line_notes object where all lines get the same invoice-level note
+        const lineNotes = {};
+        if (note) {
+          lineHashes.forEach(hash => { lineNotes[hash] = note; });
+        }
+
+        invoicesToFlag.push({
+          s3_key: invoice.s3_key,
+          hashes: lineHashes,
+          submitter: invoice.submitter,
+          lineNotes: lineNotes
+        });
+      }
+
+      closeFlagModal();
+
+      const totalBills = invoicesToFlag.length;
+      let processedBills = 0;
+      showLoading('Flagging invoices for review...', `0 of ${totalBills} invoices processed`);
+
+      try {
+        let totalFlagged = 0;
+        const errors = [];
+        const successfulS3Keys = new Set();
+
+        for (const invoice of invoicesToFlag) {
+          const fd = new FormData();
+          fd.append('line_hashes', invoice.hashes.join(','));
+          fd.append('s3_key', invoice.s3_key);
+          fd.append('reason', generalReason);
+          fd.append('submitter', invoice.submitter);
+          fd.append('line_notes', JSON.stringify(invoice.lineNotes));
+
+          const response = await fetch('/api/billback/flag', {
+            method: 'POST',
+            body: fd
+          });
+
+          processedBills++;
+          updateLoadingProgress(processedBills, totalBills);
+
+          if (!response.ok) {
+            let errorMsg = 'Unknown error';
+            try {
+              const errData = await response.json();
+              errorMsg = errData.error || `HTTP ${response.status}`;
+            } catch {
+              errorMsg = `HTTP ${response.status}`;
+            }
+            const fileName = invoice.s3_key.split('/').pop();
+            errors.push(`${fileName}: ${errorMsg}`);
+            continue;
+          }
+
+          const respData = await response.json();
+          totalFlagged += respData.flagged || 0;
+          successfulS3Keys.add(invoice.s3_key);
+        }
+
+        hideLoading();
+
+        if (errors.length > 0) {
+          showToast(`Flagged ${totalFlagged} items, but ${errors.length} failed`, 'err');
+        } else {
+          showToast(`Flagged ${totalFlagged} items for review`, 'ok');
+        }
+
+        // Remove successfully flagged bills from local cache
+        ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
+
+        renderUnassignedBills();
+        updateUbiSelectedCount();
+      } catch (e) {
+        hideLoading();
+        console.error('Error flagging items:', e);
+        showToast('Error flagging items', 'err');
+      }
+    }
+
+    // ============================================================================
+    // ACCOUNT COMMENT FUNCTIONS
+    // ============================================================================
+
+    let currentCommentAccount = null;
+    let currentCommentVendor = null;
+
+    function openAccountCommentModal(accountNumber, vendorName, propertyName) {
+      currentCommentAccount = accountNumber;
+      currentCommentVendor = vendorName;
+
+      // Check if account is in tracker
+      if (!isInTracker(accountNumber, vendorName)) {
+        showToast('Account must be in tracker to add comments. Add to tracker first.', 'err');
+        return;
+      }
+
+      // Get existing comment
+      const existingComment = getAccountComment(accountNumber, vendorName);
+
+      // Update modal info
+      document.getElementById('accountCommentInfo').innerHTML = `
+        <strong>Account:</strong> ${escapeHtml(accountNumber)}<br>
+        <strong>Vendor:</strong> ${escapeHtml(vendorName)}<br>
+        <strong>Property:</strong> ${escapeHtml(propertyName)}
+      `;
+      document.getElementById('accountCommentText').value = existingComment;
+      document.getElementById('accountCommentModal').classList.add('show');
+    }
+
+    function closeAccountCommentModal() {
+      document.getElementById('accountCommentModal').classList.remove('show');
+      currentCommentAccount = null;
+      currentCommentVendor = null;
+    }
+
+    async function saveAccountComment() {
+      if (!currentCommentAccount || !currentCommentVendor) {
+        showToast('No account selected', 'err');
+        return;
+      }
+
+      const comment = document.getElementById('accountCommentText').value.trim();
+
+      try {
+        const fd = new FormData();
+        fd.append('account_number', currentCommentAccount);
+        fd.append('vendor_name', currentCommentVendor);
+        fd.append('comment', comment);
+
+        const response = await fetch('/api/config/account-comment', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          showToast(errData.error || 'Failed to save comment', 'err');
+          return;
+        }
+
+        // Update local cache
+        const acct = accountsToTrack.find(a => {
+          const configAcct = String(a.accountNumber || a.account_number || '').trim();
+          const configVendor = String(a.vendorName || a.vendor_name || '').trim();
+          return configAcct === currentCommentAccount && configVendor === currentCommentVendor;
+        });
+        if (acct) {
+          acct.comment = comment;
+        }
+
+        showToast(comment ? 'Comment saved' : 'Comment removed', 'ok');
+        closeAccountCommentModal();
+
+        // Re-render to show updated comment
+        renderUnassignedBills();
+      } catch (e) {
+        console.error('Error saving comment:', e);
+        showToast('Error saving comment', 'err');
+      }
+    }
+
+    // Update amount division when months change
+    function updateMonthDivision(s3_key) {
+      const monthsInput = document.getElementById('months_' + s3_key.replace(/[^a-zA-Z0-9]/g, '_'));
+      const months = parseInt(monthsInput.value) || 1;
+
+      // Find all line items for this bill
+      const bill = ubiUnassignedBills.find(b => b.s3_key === s3_key);
+      if (!bill) return;
+
+      bill.unassigned_lines.forEach(line => {
+        const lineId = `${s3_key}_${line.line_hash}`.replace(/[^a-zA-Z0-9]/g, '_');
+        const amtInput = document.getElementById('amt_' + lineId);
+        if (amtInput) {
+          const original = parseFloat(amtInput.getAttribute('data-original')) || 0;
+          const perPeriod = original / months;
+          amtInput.value = perPeriod.toFixed(2);
+        }
+      });
+    }
+
+    // Toggle all lines in a bill
+    function toggleBillSelection(s3_key) {
+      const billCheckbox = document.getElementById('bill_' + s3_key.replace(/[^a-zA-Z0-9]/g, '_'));
+      const lineCheckboxes = document.querySelectorAll(`.line-checkbox[data-s3-key="${s3_key}"]`);
+
+      lineCheckboxes.forEach(cb => {
+        cb.checked = billCheckbox.checked;
+      });
+
+      updateUbiSelectedCount();
+    }
+
+    // Update selected count
+    function updateUbiSelectedCount() {
+      const selectedLines = document.querySelectorAll('.line-checkbox:checked').length;
+      const totalLines = document.querySelectorAll('.line-checkbox').length;
+      const selectedInvoices = document.querySelectorAll('.bill-checkbox-unassigned:checked').length;
+      const totalInvoices = document.querySelectorAll('.bill-checkbox-unassigned').length;
+      const countSpan = document.getElementById('ubiSelectedCount');
+      const assignBtn = document.getElementById('assignBtn');
+      const archiveBtn = document.getElementById('archiveBtn');
+      const flagBtn = document.getElementById('flagBtn');
+      const selectAllCheckbox = document.getElementById('selectAllUnassigned');
+
+      if (countSpan) countSpan.textContent = `${selectedLines} lines / ${selectedInvoices} invoices selected`;
+      if (assignBtn) assignBtn.disabled = selectedLines === 0;
+      if (archiveBtn) archiveBtn.disabled = selectedLines === 0;
+      if (flagBtn) flagBtn.disabled = selectedLines === 0;
+
+      // Update select all checkbox state
+      if (selectAllCheckbox) {
+        selectAllCheckbox.checked = totalLines > 0 && selectedLines === totalLines;
+        selectAllCheckbox.indeterminate = selectedLines > 0 && selectedLines < totalLines;
+      }
+    }
+
+    // Toggle select all unassigned lines
+    function toggleSelectAllUnassigned() {
+      const selectAllCheckbox = document.getElementById('selectAllUnassigned');
+      const allLineCheckboxes = document.querySelectorAll('.line-checkbox');
+      const isChecked = selectAllCheckbox.checked;
+
+      allLineCheckboxes.forEach(cb => {
+        cb.checked = isChecked;
+      });
+
+      // Update bill-level checkboxes too
+      const billCheckboxes = document.querySelectorAll('.bill-checkbox-unassigned');
+      billCheckboxes.forEach(cb => {
+        cb.checked = isChecked;
+      });
+
+      updateUbiSelectedCount();
+    }
+
+    // Assign selected lines to UBI period(s) with multi-month support
+    async function assignSelectedToUbi() {
+      // Check if periods are selected
+      if (selectedPeriods.length === 0) {
+        showToast('Please select at least one period', 'err');
+        return;
+      }
+
+      const selectedCheckboxes = document.querySelectorAll('.line-checkbox:checked');
+      if (selectedCheckboxes.length === 0) {
+        showToast('Please select at least one line item', 'err');
+        return;
+      }
+
+      // Group by S3 key and collect line details
+      const byS3Key = {};
+      selectedCheckboxes.forEach(cb => {
+        const s3Key = cb.getAttribute('data-s3-key');
+        const lineHash = cb.getAttribute('data-line-hash');
+        const lineId = `${s3Key}_${lineHash}`.replace(/[^a-zA-Z0-9]/g, '_');
+
+        // Get edited amount and notes
+        const amtInput = document.getElementById('amt_' + lineId);
+        const notesInput = document.getElementById('notes_' + lineId);
+        const amount = amtInput ? parseFloat(amtInput.value) : 0;
+        const notes = notesInput ? notesInput.value : '';
+
+        if (!byS3Key[s3Key]) byS3Key[s3Key] = [];
+        byS3Key[s3Key].push({
+          lineHash: lineHash,
+          amount: amount,
+          notes: notes
+        });
+      });
+
+      // Validate that selected periods count matches MONTHS for all bills
+      for (const s3Key of Object.keys(byS3Key)) {
+        const monthsInput = document.getElementById('months_' + s3Key.replace(/[^a-zA-Z0-9]/g, '_'));
+        const months = parseInt(monthsInput.value) || 1;
+
+        if (selectedPeriods.length !== months) {
+          showToast(`Error: Bill requires ${months} period(s) but you selected ${selectedPeriods.length}. Number of selected periods must match MONTHS value.`, 'err');
+          return;
+        }
+      }
+
+      const totalBills = Object.keys(byS3Key).length;
+      let processedBills = 0;
+      let totalAssigned = 0;
+      showLoading('Assigning to UBI periods...', `0 of ${totalBills} bills processed`);
+
+      try {
+        for (const [s3Key, lineDetails] of Object.entries(byS3Key)) {
+          // Get months value for this bill
+          const monthsInput = document.getElementById('months_' + s3Key.replace(/[^a-zA-Z0-9]/g, '_'));
+          const months = parseInt(monthsInput.value) || 1;
+
+          // Send ALL periods in a single request (fixes multi-period assignment bug)
+          const fd = new FormData();
+          fd.append('ubi_periods', selectedPeriods.join(','));  // All periods at once
+          fd.append('s3_key', s3Key);
+          fd.append('line_hashes', lineDetails.map(l => l.lineHash).join(','));
+          fd.append('amounts', lineDetails.map(l => l.amount).join(','));
+          fd.append('notes', lineDetails.map(l => l.notes).join('|||'));
+          fd.append('months_total', months.toString());
+
+          const response = await fetch('/api/billback/ubi/assign', {
+            method: 'POST',
+            body: fd
+          });
+
+          processedBills++;
+          updateLoadingProgress(processedBills, totalBills);
+
+          if (!response.ok) throw new Error('Failed to assign');
+
+          const data = await response.json();
+          totalAssigned += data.assigned || 0;
+        }
+
+        hideLoading();
+        showToast(`Assigned ${totalAssigned} line items across ${selectedPeriods.length} period(s): ${selectedPeriods.join(', ')}`, 'ok');
+
+        // Clear period selection
+        clearPeriodSelection();
+
+        // Remove assigned bills from local cache instead of reloading everything
+        const assignedS3Keys = Object.keys(byS3Key);
+        ubiUnassignedBills = ubiUnassignedBills.filter(bill => !assignedS3Keys.includes(bill.s3_key));
+
+        // Re-render the list from cache
+        renderUnassignedBills();
+        updateUbiSelectedCount();
+      } catch (e) {
+        hideLoading();
+        console.error('Error assigning lines:', e);
+        showToast(`Error assigning lines: ${e.message}`, 'err');
+      }
+    }
+
+    // Accept smart suggestion - quickly assign all lines of a bill to suggested period
+    async function acceptSuggestion(s3Key, suggestedPeriod) {
+      // Find the bill in our cache
+      const bill = ubiUnassignedBills.find(b => b.s3_key === s3Key);
+      if (!bill) {
+        showToast('Bill not found', 'err');
+        return;
+      }
+
+      // Get all unassigned lines for this bill
+      const lineDetails = bill.unassigned_lines.map(line => ({
+        lineHash: line.line_hash,
+        amount: parseFloat(line.line_data['Current Charges'] || line.line_data['Amount'] || 0),
+        notes: line.line_data['Notes'] || ''
+      }));
+
+      if (lineDetails.length === 0) {
+        showToast('No lines to assign', 'err');
+        return;
+      }
+
+      // Get months value (default to 1)
+      const monthsInput = document.getElementById('months_' + s3Key.replace(/[^a-zA-Z0-9]/g, '_'));
+      const months = monthsInput ? parseInt(monthsInput.value) || 1 : 1;
+
+      // Generate the periods starting from suggested period
+      const periods = generateMultiMonthPeriods(suggestedPeriod, months);
+
+      try {
+        const fd = new FormData();
+        fd.append('ubi_periods', periods.join(','));
+        fd.append('s3_key', s3Key);
+        fd.append('line_hashes', lineDetails.map(l => l.lineHash).join(','));
+        fd.append('amounts', lineDetails.map(l => l.amount).join(','));
+        fd.append('notes', lineDetails.map(l => l.notes).join('|||'));
+        fd.append('months_total', months.toString());
+
+        const response = await fetch('/api/billback/ubi/assign', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Failed to assign');
+        }
+
+        const data = await response.json();
+        showToast(`Assigned ${data.assigned} lines to ${periods.join(', ')}`, 'ok');
+
+        // Remove assigned bill from local cache
+        ubiUnassignedBills = ubiUnassignedBills.filter(b => b.s3_key !== s3Key);
+
+        // Re-render
+        renderUnassignedBills();
+        updateUbiSelectedCount();
+      } catch (e) {
+        console.error('Error accepting suggestion:', e);
+        showToast(`Error: ${e.message}`, 'err');
+      }
+    }
+
+    // Generate list of periods for multi-month bills
+    function generateMultiMonthPeriods(startPeriod, months) {
+      const [month, year] = startPeriod.split('/').map(Number);
+      const periods = [];
+
+      for (let i = 0; i < months; i++) {
+        const date = new Date(year, month - 1 + i, 1);
+        const m = (date.getMonth() + 1).toString().padStart(2, '0');
+        const y = date.getFullYear();
+        periods.push(`${m}/${y}`);
+      }
+
+      return periods;
+    }
+
+    // Load assigned bills
+    async function loadAssignedBills() {
+      const period = document.getElementById('assignedPeriodFilter').value;
+      const loading = document.getElementById('assignedLoading');
+      const billsContainer = document.getElementById('assignedBills');
+
+      // Require period selection before loading
+      if (!period) {
+        billsContainer.innerHTML = '<div class="loading">Select a period and click Load to load assigned bills</div>';
+        billsContainer.style.display = 'block';
+        loading.style.display = 'none';
+        return;
+      }
+
+      loading.style.display = 'block';
+      loading.textContent = 'Loading assigned bills...';
+      billsContainer.style.display = 'none';
+
+      try {
+        const url = period ? `/api/billback/ubi/assigned?period=${encodeURIComponent(period)}` : '/api/billback/ubi/assigned';
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to load assigned bills');
+
+        const data = await response.json();
+        ubiAssignedData = data.periods || [];
+
+        loading.style.display = 'none';
+        billsContainer.style.display = 'block';
+
+        renderAssignedBills();
+      } catch (e) {
+        console.error('Error loading assigned bills:', e);
+        loading.textContent = 'Error loading bills. Please try again.';
+        showToast('Error loading assigned bills', 'err');
+      }
+    }
+
+    // Render assigned bills
+    function renderAssignedBills() {
+      const container = document.getElementById('assignedBills');
+
+      if (ubiAssignedData.length === 0) {
+        container.innerHTML = '<div class="loading">No assigned bills found</div>';
+        return;
+      }
+
+      // Check if any filters are active
+      const hasFilters = assignedFilters.properties.length > 0 ||
+                         assignedFilters.vendors.length > 0 ||
+                         assignedFilters.accounts.length > 0 ||
+                         assignedFilters.chargeCodes.length > 0;
+
+      let html = '';
+      let totalFilteredLines = 0;
+      let totalFilteredAmount = 0;
+
+      // Get sort preference
+      const sortBy = document.getElementById('assignedSortBy')?.value || 'vendor';
+
+      ubiAssignedData.forEach(periodData => {
+        // Filter bills and lines within this period
+        let periodFilteredLines = 0;
+        let periodFilteredAmount = 0;
+        let billsHtml = '';
+
+        // Sort bills based on selected option
+        const sortedBills = [...periodData.bills].sort((a, b) => {
+          if (sortBy === 'date_newest') {
+            return (b.assigned_date || '').localeCompare(a.assigned_date || '');
+          } else if (sortBy === 'date_oldest') {
+            return (a.assigned_date || '').localeCompare(b.assigned_date || '');
+          } else if (sortBy === 'amount') {
+            const aAmount = a.assigned_lines.reduce((sum, l) => sum + (l.charge || 0), 0);
+            const bAmount = b.assigned_lines.reduce((sum, l) => sum + (l.charge || 0), 0);
+            return bAmount - aAmount;
+          } else {
+            // Default: vendor
+            const aVendor = (a.assigned_lines[0]?.line_data?.['EnrichedVendorName'] || a.vendor || '').toLowerCase();
+            const bVendor = (b.assigned_lines[0]?.line_data?.['EnrichedVendorName'] || b.vendor || '').toLowerCase();
+            return aVendor.localeCompare(bVendor);
+          }
+        });
+
+        sortedBills.forEach(bill => {
+          const vendor = bill.vendor || 'Unknown';
+          const account = bill.account || 'Unknown';
+
+          // Check bill-level filters (vendor, account)
+          if (assignedFilters.vendors.length > 0 && !assignedFilters.vendors.includes(vendor)) {
+            return;
+          }
+          if (assignedFilters.accounts.length > 0 && !assignedFilters.accounts.includes(account)) {
+            return;
+          }
+
+          // Filter lines within this bill
+          const filteredLines = bill.assigned_lines.filter(line => {
+            const ld = line.line_data || {};
+            const property = ld['EnrichedPropertyName'] || ld['Property Name'] || 'Unknown';
+            const chargeCode = ld['Charge Code'] || 'N/A';
+
+            if (assignedFilters.properties.length > 0 && !assignedFilters.properties.includes(property)) {
+              return false;
+            }
+            if (assignedFilters.chargeCodes.length > 0 && !assignedFilters.chargeCodes.includes(chargeCode)) {
+              return false;
+            }
+            return true;
+          });
+
+          if (filteredLines.length === 0) return;
+
+          periodFilteredLines += filteredLines.length;
+          const billAmount = filteredLines.reduce((sum, l) => sum + (l.charge || 0), 0);
+          periodFilteredAmount += billAmount;
+
+          // Get enriched vendor name from first line if available
+          const firstLineData = bill.assigned_lines[0]?.line_data || {};
+          const enrichedVendor = firstLineData['EnrichedVendorName'] || firstLineData['Vendor Name'] || bill.vendor;
+
+          const billId = `bill_${bill.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}`;
+          // Format assigned date for display
+          let assignedDateStr = '';
+          if (bill.assigned_date) {
+            const d = new Date(bill.assigned_date);
+            assignedDateStr = d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+          }
+          billsHtml += `
+            <div class="bill-group" data-bill-id="${billId}" data-assigned-date="${bill.assigned_date || ''}">
+              <div class="bill-header">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <input type="checkbox" class="bill-checkbox-assigned" data-bill-id="${billId}" onchange="toggleAssignedBillSelection('${billId}')" style="width:18px;height:18px;cursor:pointer" title="Select all lines in this invoice" />
+                  <div>
+                    <div class="bill-title">${enrichedVendor} - ${bill.account}</div>
+                    <div class="bill-meta">${filteredLines.length} assigned lines${assignedDateStr ? ` | <span style="color:#6b7280">Assigned: ${assignedDateStr}</span>` : ''} | <a href="/review?date=${bill.review_date || ''}&pdf_id=${bill.pdf_id || ''}" target="_blank" style="color:#0ea5e9">View Invoice</a></div>
+                  </div>
+                </div>
+              </div>
+          `;
+
+          filteredLines.forEach(line => {
+            const lineData = line.line_data;
+            const notes = lineData['Notes'] || '';
+            billsHtml += `
+              <div class="line-item">
+                <div style="flex:1">
+                  <input type="checkbox" class="line-checkbox-assigned" data-assignment-id="${line.assignment_id}" data-bill-id="${billId}" onchange="updateAssignedSelectedCount(); updateBillCheckboxState('${billId}')" />
+                  <span style="font-weight:600">${lineData['Charge Code'] || 'N/A'}</span> - ${lineData['Line Item Description'] || 'N/A'}
+                  ${notes ? `<div class="notes" style="margin-left:24px;margin-top:2px">${notes}</div>` : ''}
+                </div>
+                <div style="text-align:right;font-weight:600;color:#0ea5e9">$${line.charge.toFixed(2)}</div>
+              </div>
+            `;
+          });
+
+          billsHtml += `</div>`;
+        });
+
+        // Only show period if it has matching bills
+        if (periodFilteredLines > 0) {
+          totalFilteredLines += periodFilteredLines;
+          totalFilteredAmount += periodFilteredAmount;
+
+          html += `
+            <div style="margin-bottom:24px">
+              <h3 style="background:#f3f4f6;padding:12px;border-radius:8px;margin:0 0 12px 0">
+                Period: ${periodData.ubi_period} | ${periodFilteredLines} lines | $${periodFilteredAmount.toFixed(2)}
+              </h3>
+          `;
+          html += billsHtml;
+          html += `</div>`;
+        }
+      });
+
+      if (html === '' && hasFilters) {
+        container.innerHTML = '<div class="loading">No bills match the selected filters</div>';
+        return;
+      }
+
+      container.innerHTML = html;
+      updateAssignedSelectedCount();
+    }
+
+    // Update assigned selected count
+    function updateAssignedSelectedCount() {
+      const selectedLines = document.querySelectorAll('.line-checkbox-assigned:checked').length;
+      const totalLines = document.querySelectorAll('.line-checkbox-assigned').length;
+      const countSpan = document.getElementById('assignedSelectedCount');
+      const unassignBtn = document.getElementById('unassignBtn');
+      const reassignBtn = document.getElementById('reassignBtn');
+      const selectAllCheckbox = document.getElementById('selectAllAssigned');
+
+      if (countSpan) countSpan.textContent = `${selectedLines} lines selected`;
+      if (unassignBtn) unassignBtn.disabled = selectedLines === 0;
+      if (reassignBtn) reassignBtn.disabled = selectedLines === 0;
+
+      // Update select all checkbox state
+      if (selectAllCheckbox) {
+        selectAllCheckbox.checked = totalLines > 0 && selectedLines === totalLines;
+        selectAllCheckbox.indeterminate = selectedLines > 0 && selectedLines < totalLines;
+      }
+    }
+
+    // Toggle select all assigned lines
+    function toggleSelectAllAssigned() {
+      const selectAllCheckbox = document.getElementById('selectAllAssigned');
+      const allLineCheckboxes = document.querySelectorAll('.line-checkbox-assigned');
+      const allBillCheckboxes = document.querySelectorAll('.bill-checkbox-assigned');
+
+      allLineCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+      allBillCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+
+      updateAssignedSelectedCount();
+    }
+
+    // Toggle all lines within a bill/invoice (for assigned tab)
+    function toggleAssignedBillSelection(billId) {
+      const billCheckbox = document.querySelector(`.bill-checkbox-assigned[data-bill-id="${billId}"]`);
+      const lineCheckboxes = document.querySelectorAll(`.line-checkbox-assigned[data-bill-id="${billId}"]`);
+
+      lineCheckboxes.forEach(cb => cb.checked = billCheckbox.checked);
+      updateAssignedSelectedCount();
+    }
+
+    // Update bill checkbox state based on line selections
+    function updateBillCheckboxState(billId) {
+      const billCheckbox = document.querySelector(`.bill-checkbox-assigned[data-bill-id="${billId}"]`);
+      const lineCheckboxes = document.querySelectorAll(`.line-checkbox-assigned[data-bill-id="${billId}"]`);
+
+      if (!billCheckbox || lineCheckboxes.length === 0) return;
+
+      const checkedCount = Array.from(lineCheckboxes).filter(cb => cb.checked).length;
+      billCheckbox.checked = checkedCount === lineCheckboxes.length;
+      billCheckbox.indeterminate = checkedCount > 0 && checkedCount < lineCheckboxes.length;
+    }
+
+    // Unassign selected lines
+    async function unassignSelected() {
+      const selectedCheckboxes = document.querySelectorAll('.line-checkbox-assigned:checked');
+      if (selectedCheckboxes.length === 0) {
+        showToast('Please select at least one line item to unassign', 'err');
+        return;
+      }
+
+      if (!confirm(`Unassign ${selectedCheckboxes.length} line items?`)) {
+        return;
+      }
+
+      const assignmentIds = Array.from(selectedCheckboxes).map(cb => cb.getAttribute('data-assignment-id'));
+
+      // Debug: Check for invalid assignment IDs
+      const invalidIds = assignmentIds.filter(id => !id || id === 'undefined' || !id.includes('||'));
+      if (invalidIds.length > 0) {
+        console.error('Invalid assignment IDs found:', invalidIds);
+        console.log('All assignment IDs:', assignmentIds);
+        showToast(`Error: ${invalidIds.length} items have invalid IDs. Check console.`, 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('assignment_ids', assignmentIds.join(','));
+
+        console.log('Sending unassign request with IDs:', assignmentIds.join(',').substring(0, 200) + '...');
+
+        const response = await fetch('/api/billback/ubi/unassign', {
+          method: 'POST',
+          body: fd
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          console.error('Unassign failed:', data);
+          throw new Error(data.error || 'Failed to unassign');
+        }
+
+        showToast(`Unassigned ${data.unassigned} line items`, 'ok');
+
+        // Reload assigned bills
+        setTimeout(() => loadAssignedBills(), 1000);
+      } catch (e) {
+        console.error('Error unassigning lines:', e);
+        showToast('Error: ' + e.message, 'err');
+      }
+    }
+
+    // Reassign modal functions
+    function openReassignModal() {
+      const selectedCheckboxes = document.querySelectorAll('.line-checkbox-assigned:checked');
+      if (selectedCheckboxes.length === 0) {
+        showToast('Please select at least one line item to reassign', 'err');
+        return;
+      }
+
+      // Populate period dropdown
+      const periodSelect = document.getElementById('reassignPeriodSelect');
+      const currentPeriodFilter = document.getElementById('assignedPeriodFilter').value;
+      periodSelect.innerHTML = '<option value="">-- Select Period --</option>';
+
+      ubiPeriods.forEach(period => {
+        // Show all periods except the current filter (if any)
+        const opt = document.createElement('option');
+        opt.value = period;
+        opt.textContent = period;
+        if (period === currentPeriodFilter) {
+          opt.textContent += ' (current)';
+        }
+        periodSelect.appendChild(opt);
+      });
+
+      // Update summary
+      const summaryDiv = document.getElementById('reassignSummary');
+      summaryDiv.textContent = `${selectedCheckboxes.length} line item(s) will be reassigned to the new period.`;
+
+      // Show modal
+      document.getElementById('reassignModal').classList.add('show');
+    }
+
+    function closeReassignModal() {
+      document.getElementById('reassignModal').classList.remove('show');
+    }
+
+    async function submitReassign() {
+      const newPeriod = document.getElementById('reassignPeriodSelect').value;
+      if (!newPeriod) {
+        showToast('Please select a period', 'err');
+        return;
+      }
+
+      const selectedCheckboxes = document.querySelectorAll('.line-checkbox-assigned:checked');
+      const assignmentIds = Array.from(selectedCheckboxes).map(cb => cb.dataset.assignmentId);
+
+      if (assignmentIds.length === 0) {
+        showToast('No items selected', 'err');
+        return;
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append('assignment_ids', assignmentIds.join(','));
+        formData.append('new_period', newPeriod);
+
+        const response = await fetch('/api/billback/ubi/reassign', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) throw new Error('Failed to reassign');
+
+        const data = await response.json();
+        showToast(`Reassigned ${data.reassigned} line items to ${newPeriod}`, 'ok');
+
+        closeReassignModal();
+        // Reload assigned bills
+        setTimeout(() => loadAssignedBills(), 1000);
+      } catch (e) {
+        console.error('Error reassigning lines:', e);
+        showToast('Error reassigning line items', 'err');
+      }
+    }
+
+    let toastTimeout = null;
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      // Clear any existing timeout to prevent old dismiss from firing
+      if (toastTimeout) {
+        clearTimeout(toastTimeout);
+        toastTimeout = null;
+      }
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      // Auto-dismiss after 4 seconds (longer for readability)
+      toastTimeout = setTimeout(() => {
+        t.classList.remove('show');
+        toastTimeout = null;
+      }, 4000);
+    }
+
+    function showLoading(msg, progress) {
+      document.getElementById('loadingText').textContent = msg || 'Processing...';
+      document.getElementById('loadingProgress').textContent = progress || '';
+      document.getElementById('loadingOverlay').classList.add('show');
+    }
+
+    function updateLoadingProgress(current, total) {
+      document.getElementById('loadingProgress').textContent = `${current} of ${total} completed`;
+    }
+
+    function hideLoading() {
+      document.getElementById('loadingOverlay').classList.remove('show');
+      document.getElementById('loadingProgress').textContent = '';
+    }
+
+    function showImproveToast(msg, type){
+      const t = document.getElementById('improveToast');
+      t.textContent = msg;
+      t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // IMPROVE modal functionality
+    (function(){
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return;
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+
+    // Charge Code Override modal event handlers
+    (function(){
+      const modal = document.getElementById('chargeCodeOverrideModal');
+      const cancelBtn = document.getElementById('cancelChargeCodeOverride');
+      const submitBtn = document.getElementById('submitChargeCodeOverride');
+
+      if (!modal) return;
+
+      cancelBtn.addEventListener('click', closeChargeCodeOverrideModal);
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          closeChargeCodeOverrideModal();
+        }
+      });
+
+      submitBtn.addEventListener('click', submitChargeCodeOverride);
+    })();
+
+    // Amount Override modal event handlers
+    (function(){
+      const modal = document.getElementById('amountOverrideModal');
+      const cancelBtn = document.getElementById('cancelAmountOverride');
+      const submitBtn = document.getElementById('submitAmountOverride');
+
+      if (!modal) return;
+
+      cancelBtn.addEventListener('click', closeAmountOverrideModal);
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          closeAmountOverrideModal();
+        }
+      });
+
+      submitBtn.addEventListener('click', submitAmountOverride);
+    })();
+
+    // Exclusion modal event handlers
+    (function(){
+      const modal = document.getElementById('exclusionModal');
+      const cancelBtn = document.getElementById('cancelExclusion');
+      const submitBtn = document.getElementById('submitExclusion');
+
+      if (!modal) return;
+
+      cancelBtn.addEventListener('click', closeExclusionModal);
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          closeExclusionModal();
+        }
+      });
+
+      submitBtn.addEventListener('click', submitExclusion);
+    })();
+
+    // -------- Smart UBI Suggestions --------
+    // Initialize
+    populateUbiPeriodDropdowns();
+    loadUbiConfig();
+  </script>
+</body>
+</html>

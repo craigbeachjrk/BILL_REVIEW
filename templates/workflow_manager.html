@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WORKFLOW - Manager View</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 20px}
+    h1{margin:0 0 8px 0;color:#fff}
+    .subtitle{color:rgba(255,255,255,.8);margin-bottom:20px;font-size:14px}
+
+    /* Summary Cards */
+    .summary-row{display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+    .summary-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:16px 24px;min-width:140px;cursor:pointer;transition:transform .1s}
+    .summary-card:hover{transform:translateY(-2px)}
+    .summary-card.active{outline:3px solid #fff}
+    .summary-card .count{font-size:32px;font-weight:700;display:block;color:#0f172a}
+    .summary-card .label{font-size:13px;color:#475569}
+
+    /* Table */
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden;margin-bottom:24px}
+    .card-header{padding:16px 20px;border-bottom:1px solid rgba(0,0,0,.1);display:flex;justify-content:space-between;align-items:center}
+    .card-header h2{margin:0;font-size:16px}
+    .tableWrap{overflow:auto;max-height:500px}
+    table{width:100%;border-collapse:collapse;background:#fff}
+    th,td{padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px}
+    th{background:#f8fafc;font-weight:600;position:sticky;top:0;z-index:5}
+    tr:hover{background:rgba(14,165,233,0.05)}
+
+    /* Reason badge */
+    .reason-badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;background:#fef3c7;color:#92400e}
+
+    /* Empty state */
+    .empty{text-align:center;padding:40px;color:#64748b}
+
+    /* Export */
+    .export-btn{margin-left:8px}
+
+    /* Toast */
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:60;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <a class="btn" href="/workflow">AP View</a>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>WORKFLOW - Manager View</h1>
+    <div class="subtitle">Aggregated view of all workflow notes by reason code</div>
+
+    <div class="summary-row" id="summaryRow">
+      <!-- Summary cards populated by JS -->
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Notes by Reason Code <span id="noteCount">(0)</span></h2>
+        <div>
+          <button class="btn secondary export-btn" id="exportCsv">Export CSV</button>
+          <button class="btn secondary" id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+      <div class="tableWrap">
+        <table id="notesTable">
+          <thead>
+            <tr>
+              <th style="width:120px">Reason Code</th>
+              <th>Property</th>
+              <th>Vendor</th>
+              <th>Account #</th>
+              <th>AP Rep</th>
+              <th>Custom Note</th>
+              <th style="width:100px">Added By</th>
+              <th style="width:140px">Date Added</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="8" class="empty">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allData = [];
+    let notesData = [];
+    let selectedReason = null;
+
+    async function fetchJSON(url) {
+      const r = await fetch(url, {credentials: 'same-origin'});
+      if (!r.ok) throw new Error('fetch failed');
+      return r.json();
+    }
+
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function fmtDate(s) {
+      if (!s) return '-';
+      const d = new Date(s);
+      if (isNaN(d)) return s;
+      return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+    }
+
+    async function loadData(refresh = false) {
+      try {
+        const url = refresh ? '/api/workflow?refresh=1' : '/api/workflow';
+        const data = await fetchJSON(url);
+        allData = data.rows || [];
+
+        // Extract notes and join with account data
+        notesData = allData
+          .filter(r => r.hasNote && r.note)
+          .map(r => ({
+            ...r.note,
+            propertyName: r.propertyName,
+            vendorName: r.vendorName,
+            accountNumber: r.accountNumber,
+            apName: r.apName
+          }));
+
+        // Build summary by reason code
+        const reasonCounts = {};
+        notesData.forEach(n => {
+          const rc = n.reasonCode || '(No Reason)';
+          reasonCounts[rc] = (reasonCounts[rc] || 0) + 1;
+        });
+
+        // Render summary cards
+        const summaryRow = document.getElementById('summaryRow');
+        const reasons = Object.keys(reasonCounts).sort((a, b) => reasonCounts[b] - reasonCounts[a]);
+
+        summaryRow.innerHTML = `
+          <div class="summary-card ${!selectedReason ? 'active' : ''}" data-reason="">
+            <span class="count">${notesData.length}</span>
+            <span class="label">All Notes</span>
+          </div>
+        ` + reasons.map(rc => `
+          <div class="summary-card ${selectedReason === rc ? 'active' : ''}" data-reason="${rc}">
+            <span class="count">${reasonCounts[rc]}</span>
+            <span class="label">${rc}</span>
+          </div>
+        `).join('');
+
+        // Bind click handlers
+        summaryRow.querySelectorAll('.summary-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const reason = card.dataset.reason;
+            selectedReason = reason || null;
+            summaryRow.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+            card.classList.add('active');
+            renderTable();
+          });
+        });
+
+        renderTable();
+      } catch (e) {
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="8" class="empty">Error loading data</td></tr>';
+      }
+    }
+
+    function renderTable() {
+      let rows = [...notesData];
+
+      // Filter by selected reason
+      if (selectedReason) {
+        rows = rows.filter(n => (n.reasonCode || '(No Reason)') === selectedReason);
+      }
+
+      // Sort by date (newest first)
+      rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+      document.getElementById('noteCount').textContent = `(${rows.length})`;
+
+      const tbody = document.getElementById('tableBody');
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No notes found</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = rows.map(n => `
+        <tr>
+          <td><span class="reason-badge">${n.reasonCode || '-'}</span></td>
+          <td>${n.propertyName || '-'}</td>
+          <td>${n.vendorName || '-'}</td>
+          <td>${n.accountNumber || '-'}</td>
+          <td>${n.apName || '-'}</td>
+          <td>${n.customNote || '-'}</td>
+          <td>${n.createdBy || '-'}</td>
+          <td>${fmtDate(n.createdAt)}</td>
+        </tr>
+      `).join('');
+    }
+
+    // Export CSV
+    document.getElementById('exportCsv').addEventListener('click', () => {
+      let rows = [...notesData];
+      if (selectedReason) {
+        rows = rows.filter(n => (n.reasonCode || '(No Reason)') === selectedReason);
+      }
+
+      const headers = ['Reason Code', 'Property', 'Vendor', 'Account #', 'AP Rep', 'Custom Note', 'Added By', 'Date Added'];
+      const csvRows = [headers.join(',')];
+
+      rows.forEach(n => {
+        csvRows.push([
+          `"${(n.reasonCode || '').replace(/"/g, '""')}"`,
+          `"${(n.propertyName || '').replace(/"/g, '""')}"`,
+          `"${(n.vendorName || '').replace(/"/g, '""')}"`,
+          `"${(n.accountNumber || '').replace(/"/g, '""')}"`,
+          `"${(n.apName || '').replace(/"/g, '""')}"`,
+          `"${(n.customNote || '').replace(/"/g, '""')}"`,
+          `"${(n.createdBy || '').replace(/"/g, '""')}"`,
+          `"${(n.createdAt || '').replace(/"/g, '""')}"`
+        ].join(','));
+      });
+
+      const csvContent = csvRows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `workflow_notes_${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      showToast('CSV exported', 'ok');
+    });
+
+    // Refresh
+    document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
+
+    // Initial load
+    loadData();
+  </script>
+</body>
+</html>

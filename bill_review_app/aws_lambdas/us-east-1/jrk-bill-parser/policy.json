@@ -1,0 +1,4 @@
+﻿{
+    "Policy":  "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"s3-invoke\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"s3.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:789814232318:function:jrk-bill-parser\",\"Condition\":{\"StringEquals\":{\"AWS:SourceAccount\":\"789814232318\"},\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:s3:::jrk-analytics-billing\"}}}]}",
+    "RevisionId":  "4ddd4235-1e77-480e-bed4-8739e6f725d2"
+}

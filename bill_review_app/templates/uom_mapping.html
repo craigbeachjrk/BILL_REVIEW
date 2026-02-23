@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CONFIG · UOM (Unit of Measure) Mapping</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); --cell-pad:10px; --font-size:14px; }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:fixed}
+    th,td{padding:var(--cell-pad);border-bottom:1px solid #e5e7eb;text-align:center}
+    thead th[data-col]{ cursor:pointer }
+    input,select{width:100%;padding:8px 10px;border-radius:8px;border:1px solid #e5e7eb}
+    .row-actions{display:flex;gap:8px;justify-content:center}
+    .toast-wrap{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px}
+    .toast{min-width:260px;max-width:520px;background:#111827;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    th{white-space:nowrap}
+    #mapTable col.orig{width:25%}
+    #mapTable col.util{width:20%}
+    #mapTable col.factor{width:20%}
+    #mapTable col.target{width:25%}
+    #mapTable col.act{width:10%}
+    .help-text{font-size:13px;color:#64748b;margin-top:8px;line-height:1.5}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button id="submitBtn" class="btn">Submit</button>
+      <a class="btn secondary" href="/config">Back</a>
+    </div>
+  <button class="btn secondary" id="improveBtn">IMPROVE</button>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div id="toastWrap" class="toast-wrap" aria-live="polite"></div>
+  <div class="wrap">
+    <div class="card">
+      <h1 style="margin:0 0 8px 0">UOM (Unit of Measure) Conversion Mapping</h1>
+      <p class="help-text">
+        Configure unit conversions to standardize consumption values. Examples: CCF → 748 Gallons, Hundreds of Gals → 100 Gallons, Therms → Therms (1.0).
+        Leave Utility Type blank for universal conversions, or specify "water", "gas", or "electricity" for type-specific conversions.
+      </p>
+      <div style="overflow:auto;border-radius:12px;border:1px solid #e5e7eb;margin-top:16px">
+        <table id="mapTable">
+          <colgroup>
+            <col class="orig" />
+            <col class="util" />
+            <col class="factor" />
+            <col class="target" />
+            <col class="act" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th data-col="original_uom">Original UOM</th>
+              <th data-col="utility_type">Utility Type</th>
+              <th data-col="conversion_factor">Conversion Factor</th>
+              <th data-col="target_uom">Target UOM</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px">
+        <button id="addRow" class="btn">Add Row</button>
+        <button id="addDefaults" class="btn secondary" style="margin-left:8px">Add Default Conversions</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const state = { items: [], sort: { col: '', dir: 1 } };
+
+    const defaultConversions = [
+      {original_uom: 'CCF', utility_type: 'water', conversion_factor: 748, target_uom: 'Gallons'},
+      {original_uom: 'CF', utility_type: 'water', conversion_factor: 7.48052, target_uom: 'Gallons'},
+      {original_uom: 'Cubic Feet', utility_type: 'water', conversion_factor: 7.48052, target_uom: 'Gallons'},
+      {original_uom: 'KGAL', utility_type: 'water', conversion_factor: 1000, target_uom: 'Gallons'},
+      {original_uom: 'Thousand Gallons', utility_type: 'water', conversion_factor: 1000, target_uom: 'Gallons'},
+      {original_uom: 'Hundreds of Gals', utility_type: 'water', conversion_factor: 100, target_uom: 'Gallons'},
+      {original_uom: 'Gallons', utility_type: 'water', conversion_factor: 1, target_uom: 'Gallons'},
+      {original_uom: 'Therms', utility_type: 'gas', conversion_factor: 1, target_uom: 'Therms'},
+      {original_uom: 'CCF', utility_type: 'gas', conversion_factor: 1.037, target_uom: 'Therms'},
+      {original_uom: 'kWh', utility_type: 'electricity', conversion_factor: 1, target_uom: 'kWh'},
+      {original_uom: 'kWH', utility_type: 'electricity', conversion_factor: 1, target_uom: 'kWh'},
+    ];
+
+    function showToast(message, type){
+      const wrap = document.getElementById('toastWrap');
+      const el = document.createElement('div');
+      el.className = 'toast ' + (type==='ok'?'ok':'err');
+      el.textContent = message;
+      wrap.appendChild(el);
+      setTimeout(()=>{ el.style.transition='opacity .3s'; el.style.opacity='0'; setTimeout(()=> wrap.removeChild(el), 300); }, 2200);
+    }
+
+    function bindSorting(){
+      document.querySelectorAll('#mapTable thead th[data-col]').forEach(th=>{
+        th.addEventListener('click', ()=>{
+          const col = th.getAttribute('data-col');
+          if (state.sort.col === col) state.sort.dir *= -1; else { state.sort.col = col; state.sort.dir = 1; }
+          render();
+        });
+      });
+    }
+
+    async function fetchJSON(url){ const r = await fetch(url, {credentials:'same-origin'}); if(!r.ok) throw new Error('http '+r.status); return r.json(); }
+
+    async function loadAll(){
+      const data = await fetchJSON('/api/config/uom-mapping');
+      state.items = (data.items||[]);
+      render();
+    }
+
+    function render(){
+      const tb = document.getElementById('tbody');
+      tb.innerHTML = '';
+      // apply sort
+      if (state.sort.col){
+        const c = state.sort.col, d = state.sort.dir;
+        state.items.sort((a,b)=>{
+          const av = String(a[c] ?? '').toLowerCase();
+          const bv = String(b[c] ?? '').toLowerCase();
+          if (av < bv) return -1*d; if (av > bv) return 1*d; return 0;
+        });
+      }
+      for(const r of state.items){
+        const tr = document.createElement('tr');
+
+        // Original UOM
+        const tdOrig = document.createElement('td');
+        const inpOrig = document.createElement('input');
+        inpOrig.type = 'text';
+        inpOrig.placeholder = 'e.g., CCF';
+        inpOrig.value = r.original_uom||'';
+        inpOrig.oninput = ()=> r.original_uom = inpOrig.value;
+        tdOrig.appendChild(inpOrig);
+        tr.appendChild(tdOrig);
+
+        // Utility Type
+        const tdUtil = document.createElement('td');
+        const selUtil = document.createElement('select');
+        selUtil.innerHTML = '<option value="">(any)</option><option value="water">Water</option><option value="gas">Gas</option><option value="electricity">Electricity</option>';
+        selUtil.value = r.utility_type||'';
+        selUtil.onchange = ()=> r.utility_type = selUtil.value;
+        tdUtil.appendChild(selUtil);
+        tr.appendChild(tdUtil);
+
+        // Conversion Factor
+        const tdFactor = document.createElement('td');
+        const inpFactor = document.createElement('input');
+        inpFactor.type = 'number';
+        inpFactor.step = 'any';
+        inpFactor.placeholder = 'e.g., 748';
+        inpFactor.value = r.conversion_factor||'';
+        inpFactor.oninput = ()=> r.conversion_factor = parseFloat(inpFactor.value)||1;
+        tdFactor.appendChild(inpFactor);
+        tr.appendChild(tdFactor);
+
+        // Target UOM
+        const tdTarget = document.createElement('td');
+        const inpTarget = document.createElement('input');
+        inpTarget.type = 'text';
+        inpTarget.placeholder = 'e.g., Gallons';
+        inpTarget.value = r.target_uom||'';
+        inpTarget.oninput = ()=> r.target_uom = inpTarget.value;
+        tdTarget.appendChild(inpTarget);
+        tr.appendChild(tdTarget);
+
+        // Actions
+        const tdA = document.createElement('td');
+        tdA.className='row-actions';
+        const bDel = document.createElement('button');
+        bDel.className='btn secondary';
+        bDel.textContent='Del';
+        bDel.onclick = ()=>{ const i = state.items.indexOf(r); if(i>=0){ state.items.splice(i,1); render(); } };
+        tdA.appendChild(bDel);
+        tr.appendChild(tdA);
+
+        tb.appendChild(tr);
+      }
+    }
+
+    function addRow(){
+      state.items.push({original_uom:'', utility_type:'', conversion_factor:1, target_uom:''});
+      render();
+    }
+
+    function addDefaults(){
+      // Add defaults that don't already exist
+      for (const def of defaultConversions){
+        const exists = state.items.some(x =>
+          (x.original_uom||'').toLowerCase() === def.original_uom.toLowerCase() &&
+          (x.utility_type||'').toLowerCase() === def.utility_type.toLowerCase()
+        );
+        if (!exists){
+          state.items.push({...def});
+        }
+      }
+      render();
+      showToast('Added default conversions (skipped duplicates)', 'ok');
+    }
+
+    async function submitAll(){
+      const payload = {
+        items: state.items.map(x=>({
+          original_uom: (x.original_uom||'').trim(),
+          utility_type: (x.utility_type||'').trim(),
+          conversion_factor: parseFloat(x.conversion_factor)||1,
+          target_uom: (x.target_uom||'').trim()
+        }))
+      };
+      const r = await fetch('/api/config/uom-mapping', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        credentials:'same-origin',
+        body: JSON.stringify(payload)
+      });
+      if(!r.ok){
+        let body='';
+        try{body=await r.text()}catch{};
+        try{const j=JSON.parse(body); showToast('Save failed: '+(j.error||''), 'err');}catch{showToast('Save failed','err');}
+        return;
+      }
+      const j = await r.json();
+      showToast('Saved '+(j.saved||0)+' UOM mappings','ok');
+    }
+
+    document.getElementById('addRow').addEventListener('click', addRow);
+    document.getElementById('addDefaults').addEventListener('click', addDefaults);
+    document.getElementById('submitBtn').addEventListener('click', submitAll);
+    bindSorting();
+    loadAll().catch(()=> showToast('Load failed','err'));
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

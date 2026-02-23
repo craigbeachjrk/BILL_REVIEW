@@ -1,0 +1,291 @@
+================================================================================
+BILL REVIEW APP - CHANGES LOG - 2025-11-22
+================================================================================
+
+SESSION SUMMARY:
+This session addressed multiple critical bugs and upgraded the big bill parser model:
+1. Parse page submit broken ("no matching originals" error)
+2. Big bill parser returning too few line items
+3. Gemini model upgrade to version 3
+4. Billback exclude line item triggering full page reload (UX fix)
+5. Tracker status not persisting on page refresh (S3 backup fix)
+6. Exclude visual feedback not showing (data structure bug)
+
+================================================================================
+FIX 1: PARSE PAGE SUBMIT BROKEN - "no matching originals" ERROR
+================================================================================
+
+SYMPTOM:
+- Users could not submit bills on the Parse/Review page
+- Error message: "Submission Failed. no matching originals"
+- Affected bills with S3 filenames containing commas
+
+ROOT CAUSE:
+- S3 filenames can contain commas (e.g., "10-25, 11-25, 12-25 APX WS 2.jsonl")
+- The __id__ format is: {s3_key}#{idx} which includes the full S3 path with commas
+- Frontend (review.html) joined IDs with comma: allOrigIds.join(',')
+- Backend (main.py) split IDs by comma: ids.split(',')
+- When IDs contain commas, they get corrupted during join/split cycle
+
+FIX:
+Changed delimiter from ',' to '|||' in both frontend and backend.
+
+Files Modified:
+1. templates/review.html (lines 1340, 1348):
+   - Changed: document.getElementById('idsField').value = allOrigIds.join(',');
+   - To:      document.getElementById('idsField').value = allOrigIds.join('|||');
+
+   - Changed: delField.value = deletedIds.join(',');
+   - To:      delField.value = deletedIds.join('|||');
+
+2. main.py (lines 5844-5845):
+   - Changed: id_list = [x for x in ids.split(',') if x]
+   - To:      id_list = [x for x in ids.split('|||') if x]
+
+   - Changed: deleted_set = set([x for x in (deleted_ids or "").split(',') if x])
+   - To:      deleted_set = set([x for x in (deleted_ids or "").split('|||') if x])
+
+
+================================================================================
+FIX 2: BIG BILL PARSER RETURNING TOO FEW LINE ITEMS
+================================================================================
+
+SYMPTOM:
+- PG&E bill with expected ~50+ line items only returned 18 summary rows
+- Chunk processor logs showed most chunks returning 0 rows or "EMPTY"
+
+ROOT CAUSE:
+- Model was too conservative, returning EMPTY for pages with charge details
+- Prompt lacked PG&E-specific guidance
+
+FIX:
+Enhanced the PROMPT_TEMPLATE in lambda_chunk_processor.py:
+
+1. Added PG&E-specific guidance:
+   - Electric/Gas generation charges
+   - Electric/Gas delivery charges
+   - Baseline vs over-baseline rates
+   - Time-of-use rate tiers
+   - Public purpose programs
+   - Each of these should be a SEPARATE row
+
+2. Changed EMPTY handling:
+   - From: "ONLY output EMPTY if blank"
+   - To:   "NEVER return EMPTY if you see ANY dollar amounts on the page"
+
+3. Added handling for pages with only totals:
+   - "if the page ONLY shows a total with no breakdown, extract the total
+      as a single line item rather than returning EMPTY"
+
+4. Added logging for dropped rows (wrong column count):
+   - Logs first 3 dropped rows with preview
+   - Logs total dropped count per chunk
+
+File Modified:
+- aws_lambdas/us-east-1/jrk-bill-chunk-processor/code/lambda_chunk_processor.py
+
+
+================================================================================
+UPDATE 3: GEMINI MODEL UPGRADE TO VERSION 3
+================================================================================
+
+CHANGE:
+Upgraded big bill parser to use the new Google Gemini 3 model.
+
+MODEL CHANGE:
+- From: gemini-2.5-pro
+- To:   gemini-3-pro-preview
+
+File Modified:
+- aws_lambdas/us-east-1/jrk-bill-chunk-processor/code/lambda_chunk_processor.py
+  Line 29: MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3-pro-preview")
+
+NOTE: The model can still be overridden via Lambda environment variable MODEL_NAME
+if you need to switch back to gemini-2.5-pro or try another model.
+
+
+================================================================================
+FIX 4: BILLBACK EXCLUDE LINE ITEM TRIGGERS FULL PAGE RELOAD
+================================================================================
+
+SYMPTOM:
+- Clicking "Exclude this line item" in Billback Review triggered full page reload
+- This was a terrible user experience, especially when working with large bills
+- After reload, tracker status was lost (see Fix 5 below)
+
+ROOT CAUSE:
+- submitExclusion() function called await loadUnassignedBills() after saving
+- loadUnassignedBills() fetches ALL data from server, causing full refresh
+
+FIX:
+Changed submitExclusion() to update local data array and re-render instead:
+- Instead of calling loadUnassignedBills(), update the bill object directly
+- Call renderUnassignedBills() to refresh the UI without network request
+
+File Modified:
+- templates/billback.html (submitExclusion function, lines 638-669)
+
+Before:
+  await loadUnassignedBills();
+
+After:
+  // Update local data instead of full reload - much better UX
+  const bill = ubiUnassignedBills.find(b => b.s3_key === currentOverrideBillId);
+  if (bill && bill.line_items && bill.line_items[currentOverrideLineIndex]) {
+    bill.line_items[currentOverrideLineIndex].is_excluded_from_ubi = 1;
+    bill.line_items[currentOverrideLineIndex].exclusion_reason = reason;
+  }
+  renderUnassignedBills();  // Just re-render, no network call
+
+
+================================================================================
+FIX 5: TRACKER STATUS NOT PERSISTING (is_tracked LOST ON REFRESH)
+================================================================================
+
+SYMPTOM:
+- Users add bills to TRACKER and UBI
+- After page refresh, tracker status is lost
+- Line items marked as "tracked" don't show as tracked after refresh
+
+ROOT CAUSE:
+- /api/ubi/add-to-tracker and /api/ubi/add-to-ubi endpoints only saved to DynamoDB
+- They did NOT save to S3 as backup (unlike other config endpoints)
+- When reading config, if DynamoDB fails/returns None, falls back to S3
+- S3 had old data without is_tracked fields
+
+FIX:
+Added S3 backup save to both endpoints after DynamoDB write:
+
+main.py lines 2930-2935 (add-to-tracker):
+  # Also save to S3 as backup (critical for persistence)
+  try:
+      _s3_put_json(CONFIG_BUCKET, ACCOUNTS_TRACK_KEY, arr)
+      print(f"[ADD TO TRACKER] Saved to S3 backup: {ACCOUNTS_TRACK_KEY}")
+  except Exception as s3_err:
+      print(f"[ADD TO TRACKER] S3 backup error (non-fatal): {s3_err}")
+
+main.py lines 3045-3050 (add-to-ubi):
+  # Also save to S3 as backup (critical for persistence)
+  try:
+      _s3_put_json(CONFIG_BUCKET, ACCOUNTS_TRACK_KEY, arr)
+      print(f"[ADD TO UBI] Saved to S3 backup: {ACCOUNTS_TRACK_KEY}")
+  except Exception as s3_err:
+      print(f"[ADD TO UBI] S3 backup error (non-fatal): {s3_err}")
+
+File Modified:
+- main.py
+
+
+================================================================================
+FIX 6: EXCLUDE VISUAL FEEDBACK NOT SHOWING (DATA STRUCTURE BUG)
+================================================================================
+
+SYMPTOM:
+- After clicking "Exclude this line item" and entering reason, nothing visually changed
+- The exclusion was saved to the backend but UI didn't reflect it
+
+ROOT CAUSE:
+- submitExclusion() was updating bill.line_items[...]
+- But renderUnassignedBills() reads from bill.unassigned_lines[...].line_data
+- These are different data structures, so the update never reached the render
+
+FIX:
+Changed submitExclusion() to update the correct data structure:
+
+Before:
+  bill.line_items[currentOverrideLineIndex].is_excluded_from_ubi = 1;
+  bill.line_items[currentOverrideLineIndex].exclusion_reason = reason;
+
+After:
+  bill.unassigned_lines[currentOverrideLineIndex].line_data.is_excluded_from_ubi = 1;
+  bill.unassigned_lines[currentOverrideLineIndex].line_data.exclusion_reason = reason;
+
+Now after exclusion, line items show:
+- Red "EXCLUDED" badge
+- 50% opacity + strikethrough styling
+- Tooltip with exclusion reason on hover
+
+File Modified:
+- templates/billback.html (lines 665-668)
+
+
+================================================================================
+DEPLOYMENT TIMES
+================================================================================
+
+1. AppRunner (main app with submit fix):
+   - CodeBuild started: ~21:30 PT
+   - ECR push complete: ~21:40 PT
+
+2. Lambda chunk processor (prompt enhancement):
+   - Deployed: 21:48:06 PT
+
+3. Lambda chunk processor (Gemini 3 model):
+   - Deployed: 21:52:40 PT
+
+4. AppRunner (exclude reload + tracker persistence fixes):
+   - Build ID: jrk-bill-review-build:17ad7442-424d-4fa5-869b-a6020070dcdd
+
+5. AppRunner (exclude visual feedback fix):
+   - Build ID: jrk-bill-review-build:bf3635a4-bc41-4b60-a1da-40daee0a98a1
+
+
+================================================================================
+TESTING NOTES
+================================================================================
+
+After these changes:
+1. Test submit functionality with bills that have commas in filename
+2. Reprocess a PG&E big bill to verify more line items are extracted
+3. Monitor chunk processor logs for any issues with Gemini 3 model
+4. Test exclude line item - should NOT trigger full page reload
+5. Test tracker persistence:
+   a. Add a bill to TRACKER
+   b. Refresh the page
+   c. Verify the bill still shows as tracked
+6. Test exclude visual feedback:
+   a. Click "Exclude this line item" on a bill
+   b. Enter a reason and submit
+   c. Line should immediately show: red "EXCLUDED" badge, faded + strikethrough
+
+To rollback Gemini 3 model:
+- Set Lambda env var MODEL_NAME=gemini-2.5-pro
+- Or redeploy from git history
+
+
+================================================================================
+FIX 7: UBI MULTI-MONTH ASSIGNMENT NOT DIVIDING AMOUNT
+================================================================================
+
+SYMPTOM:
+- User assigns $15,725.77 bill to 12 months
+- Expected: Each period gets $15,725.77 / 12 = $1,310.48
+- Actual: Each period was getting the FULL $15,725.77
+
+ROOT CAUSE:
+- /api/billback/ubi/assign endpoint receives `months_total` parameter
+- But it was not dividing the amount by months_total before saving
+- Line 1618: `amount = amounts[idx] if idx < len(amounts) else 0.0`
+- This saved the full amount to each of the 12 periods
+
+FIX:
+Added amount division logic after getting the amount:
+
+main.py (lines 1620-1624):
+  # Divide by months_total for multi-month assignments
+  # e.g., if user assigns $12000 to 12 months, each period gets $1000
+  months_count = int(months_total) if months_total else 1
+  if months_count > 1:
+      amount = amount / months_count
+
+Now when assigning $12,000 to 12 months:
+- Each period receives: $12,000 / 12 = $1,000
+- months_total field is still stored as 12 for reference
+
+File Modified:
+- main.py (lines 1620-1624)
+
+
+================================================================================
+END OF CHANGELOG
+================================================================================

@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UBI Master Bills · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .btn.success{background:#10b981}
+    .btn.danger{background:#ef4444}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    select,input[type="date"]{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:auto}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0;z-index:100}
+    th.sortable{cursor:pointer;user-select:none}
+    th.sortable:hover{background:#e5e7eb}
+    th .sort-indicator{margin-left:4px;font-size:10px;color:#94a3b8}
+    tr:hover{background:#f9fafb}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.draft{background:#fef3c7;color:#92400e}
+    .badge.overridden{background:#fee2e2;color:#991b1b}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:800px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto;max-height:80vh;overflow-y:auto}
+    .modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .line-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:12px}
+    .line-item:last-child{border-bottom:none}
+    .line-item:hover{background:#f9fafb}
+    /* Completion Tracker Styles */
+    .tracker-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px;margin-bottom:20px}
+    .tracker-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .tracker-header h2{margin:0;font-size:16px}
+    .overall-progress{display:flex;align-items:center;gap:16px}
+    .progress-ring{width:80px;height:80px}
+    .progress-text{font-size:24px;font-weight:700}
+    .progress-bar{height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-top:4px}
+    .progress-fill{height:100%;border-radius:4px;transition:width .3s}
+    .progress-green{background:#10b981}
+    .progress-yellow{background:#f59e0b}
+    .progress-red{background:#ef4444}
+    .property-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;max-height:400px;overflow-y:auto}
+    .property-card{background:#fff;border-radius:10px;padding:12px;border:1px solid #e5e7eb;cursor:pointer;transition:all .2s}
+    .property-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1);transform:translateY(-1px)}
+    .property-card.complete{border-color:#10b981;background:#f0fdf4}
+    .property-card.partial{border-color:#f59e0b;background:#fffbeb}
+    .property-card.missing{border-color:#ef4444;background:#fef2f2}
+    .property-name{font-weight:600;font-size:13px;margin-bottom:4px}
+    .property-stats{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#64748b}
+    .account-list{margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb;display:none}
+    .account-list.show{display:block}
+    .account-item{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px}
+    .account-item.has-bill{color:#10b981}
+    .account-item.no-bill{color:#ef4444}
+    .check-icon{color:#10b981}
+    .x-icon{color:#ef4444}
+    /* Account grouping in modal */
+    .account-group{margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+    .account-group-header{background:#f9fafb;padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:13px}
+    .account-group-header:hover{background:#f3f4f6}
+    .account-group-lines{display:none;padding:0}
+    .account-group-lines.show{display:block}
+    .expand-icon{transition:transform .2s}
+    .expand-icon.rotated{transform:rotate(180deg)}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · UBI Master Bills</a></div>
+    <div class="logout">
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>UBI Master Bills</h1>
+
+    <!-- Completion Tracker Section -->
+    <div class="tracker-card">
+      <div class="tracker-header">
+        <h2>UBI Completion Tracker</h2>
+        <div style="display:flex;gap:12px;align-items:center">
+          <label style="font-size:13px">Period:</label>
+          <select id="trackerPeriod" onchange="loadCompletionTracker()" style="padding:6px 10px;border-radius:6px;border:1px solid #e5e7eb;font-size:13px">
+            <option value="">-- Select Period --</option>
+          </select>
+          <button class="btn small" onclick="loadCompletionTracker()">Refresh</button>
+        </div>
+      </div>
+      <div id="trackerContent">
+        <div class="loading" style="padding:20px;text-align:center;color:#64748b">Select a period to view completion status</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <button class="btn success" onclick="generateMasterBills()">Refresh Data</button>
+        <span id="lastRefreshed" style="font-size:11px;color:#64748b;margin-left:8px"></span>
+        <div style="flex:1"></div>
+        <label>Filter by Period:</label>
+        <select id="filterStartPeriod">
+          <option value="">Start Month</option>
+        </select>
+        <span>to</span>
+        <select id="filterEndPeriod">
+          <option value="">End Month</option>
+        </select>
+        <button class="btn" onclick="applyDateFilter()">Apply Filter</button>
+        <button class="btn secondary" onclick="clearFilter()">Clear</button>
+      </div>
+
+      <div class="summary" id="summary" style="display:none">
+        <div class="summary-item">
+          <div class="summary-label">Total Master Bills</div>
+          <div class="summary-value" id="totalCount">0</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">Total Amount</div>
+          <div class="summary-value" id="totalAmount">$0.00</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">Properties</div>
+          <div class="summary-value" id="propertiesCount">0</div>
+        </div>
+      </div>
+
+      <div id="loading" class="loading">Click "Refresh Data" to load current master bills</div>
+
+      <div id="masterBillsTable" style="display:none;max-height:600px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal-box">
+      <h2 id="modalTitle">Master Bill Detail</h2>
+      <div id="modalContent"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let masterBills = [];
+    let sortColumn = 'property_name';
+    let sortDirection = 'asc';
+
+    // LocalStorage cache functions
+    function saveFiltersToCache() {
+      const filters = {
+        trackerPeriod: document.getElementById('trackerPeriod').value,
+        filterStartPeriod: document.getElementById('filterStartPeriod').value,
+        filterEndPeriod: document.getElementById('filterEndPeriod').value
+      };
+      localStorage.setItem('masterBillsFilters', JSON.stringify(filters));
+    }
+
+    function loadFiltersFromCache() {
+      try {
+        const cached = localStorage.getItem('masterBillsFilters');
+        if (cached) {
+          return JSON.parse(cached);
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    async function generateMasterBills() {
+      const loading = document.getElementById('loading');
+      const table = document.getElementById('masterBillsTable');
+      const summary = document.getElementById('summary');
+
+      loading.style.display = 'block';
+      loading.textContent = 'Generating master bills...';
+      table.style.display = 'none';
+      summary.style.display = 'none';
+
+      try {
+        const startPeriod = document.getElementById('filterStartPeriod').value;
+        const endPeriod = document.getElementById('filterEndPeriod').value;
+
+        const payload = {
+          start_period: startPeriod || "",
+          end_period: endPeriod || ""
+        };
+
+        const response = await fetch('/api/master-bills/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error('Failed to generate master bills');
+
+        const data = await response.json();
+        showToast(`Generated ${data.count} master bills (Total: $${data.total_amount.toFixed(2)})`, 'ok');
+
+        // Load the generated master bills
+        await loadMasterBills();
+        updateLastRefreshed();
+      } catch (e) {
+        console.error('Error generating master bills:', e);
+        loading.textContent = 'Error generating master bills. Please try again.';
+        showToast('Error generating master bills', 'err');
+      }
+    }
+
+    function updateLastRefreshed() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      document.getElementById('lastRefreshed').textContent = `Last refreshed: ${timeStr}`;
+    }
+
+    async function loadMasterBills() {
+      const loading = document.getElementById('loading');
+      const table = document.getElementById('masterBillsTable');
+      const summary = document.getElementById('summary');
+
+      loading.style.display = 'block';
+      loading.textContent = 'Loading master bills...';
+      table.style.display = 'none';
+
+      try {
+        const response = await fetch('/api/master-bills/list');
+        if (!response.ok) throw new Error('Failed to load master bills');
+
+        const data = await response.json();
+        masterBills = data.items || [];
+
+        loading.style.display = 'none';
+
+        if (masterBills.length === 0) {
+          table.innerHTML = '<div class="loading">No master bills found. Click "Generate Master Bills" to create them.</div>';
+          table.style.display = 'block';
+          return;
+        }
+
+        renderMasterBills();
+        updateSummary();
+        summary.style.display = 'flex';
+        table.style.display = 'block';
+      } catch (e) {
+        console.error('Error loading master bills:', e);
+        loading.textContent = 'Error loading master bills. Please try again.';
+        showToast('Error loading master bills', 'err');
+      }
+    }
+
+    function getSortIndicator(col) {
+      if (sortColumn === col) {
+        return `<span class="sort-indicator">${sortDirection === 'asc' ? '&#9650;' : '&#9660;'}</span>`;
+      }
+      return '<span class="sort-indicator">&#9650;&#9660;</span>';
+    }
+
+    function sortBy(col) {
+      if (sortColumn === col) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortColumn = col;
+        sortDirection = 'asc';
+      }
+      renderMasterBills();
+    }
+
+    function getSortedMasterBills() {
+      return [...masterBills].sort((a, b) => {
+        let aVal = a[sortColumn] || '';
+        let bVal = b[sortColumn] || '';
+
+        // Handle numeric sorting for amount
+        if (sortColumn === 'utility_amount') {
+          aVal = Number(aVal) || 0;
+          bVal = Number(bVal) || 0;
+          return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+
+        // String sorting
+        aVal = String(aVal).toLowerCase();
+        bVal = String(bVal).toLowerCase();
+        if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    function renderMasterBills() {
+      const container = document.getElementById('masterBillsTable');
+      const sortedBills = getSortedMasterBills();
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th class="sortable" onclick="sortBy('property_name')">Property ${getSortIndicator('property_name')}</th>
+              <th class="sortable" onclick="sortBy('ar_code_mapping')">Charge Code ${getSortIndicator('ar_code_mapping')}</th>
+              <th class="sortable" onclick="sortBy('utility_name')">Utility ${getSortIndicator('utility_name')}</th>
+              <th class="sortable" onclick="sortBy('billback_month_start')">Period Start ${getSortIndicator('billback_month_start')}</th>
+              <th class="sortable" onclick="sortBy('billback_month_end')">Period End ${getSortIndicator('billback_month_end')}</th>
+              <th class="sortable" onclick="sortBy('utility_amount')">Amount ${getSortIndicator('utility_amount')}</th>
+              <th>Source Lines</th>
+              <th>Overrides</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      sortedBills.forEach(mb => {
+        const hasOverrides = mb.source_line_items && mb.source_line_items.some(line => line.overridden);
+        const overrideBadge = hasOverrides ? '<span class="badge overridden">OVERRIDDEN</span>' : '';
+        const sourceCount = mb.source_line_items ? mb.source_line_items.length : 0;
+
+        html += `
+          <tr>
+            <td>${mb.property_name || 'N/A'}</td>
+            <td>${mb.ar_code_mapping || 'N/A'}</td>
+            <td>${mb.utility_name || 'N/A'}</td>
+            <td>${mb.billback_month_start || 'N/A'}</td>
+            <td>${mb.billback_month_end || 'N/A'}</td>
+            <td style="font-weight:600;color:#0ea5e9">$${(mb.utility_amount || 0).toFixed(2)}</td>
+            <td>${sourceCount}</td>
+            <td>${overrideBadge}</td>
+            <td>
+              <button class="btn small" onclick="viewDetail('${mb.master_bill_id.replace(/'/g, "\\'")}')">View Detail</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+      container.innerHTML = html;
+    }
+
+    function updateSummary() {
+      const totalCount = masterBills.length;
+      const totalAmount = masterBills.reduce((sum, mb) => sum + (mb.utility_amount || 0), 0);
+      const properties = new Set(masterBills.map(mb => mb.property_id));
+
+      document.getElementById('totalCount').textContent = totalCount;
+      document.getElementById('totalAmount').textContent = `$${totalAmount.toFixed(2)}`;
+      document.getElementById('propertiesCount').textContent = properties.size;
+    }
+
+    async function viewDetail(masterBillId) {
+      try {
+        const response = await fetch(`/api/master-bills/detail?id=${encodeURIComponent(masterBillId)}`);
+        if (!response.ok) throw new Error('Failed to load detail');
+
+        const mb = await response.json();
+
+        let html = `
+          <div style="background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:16px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
+              <div><strong>Property:</strong> ${mb.property_name || 'N/A'}</div>
+              <div><strong>Charge Code:</strong> ${mb.ar_code_mapping || 'N/A'}</div>
+              <div><strong>Utility:</strong> ${mb.utility_name || 'N/A'}</div>
+              <div><strong>Amount:</strong> $${(mb.utility_amount || 0).toFixed(2)}</div>
+              <div><strong>Period:</strong> ${mb.billback_month_start} to ${mb.billback_month_end}</div>
+              <div><strong>Status:</strong> <span class="badge draft">${mb.status || 'draft'}</span></div>
+            </div>
+          </div>
+
+          <h3 style="margin:20px 0 12px 0;font-size:14px;font-weight:600">Source Line Items (${mb.source_line_items ? mb.source_line_items.length : 0})</h3>
+          <div style="max-height:400px;overflow-y:auto">
+        `;
+
+        if (mb.source_line_items && mb.source_line_items.length > 0) {
+          // Group line items by account_number
+          const accountGroups = {};
+          mb.source_line_items.forEach(line => {
+            const acct = line.account_number || 'Unknown Account';
+            if (!accountGroups[acct]) {
+              accountGroups[acct] = {
+                vendor_name: line.vendor_name || '',
+                lines: [],
+                total: 0
+              };
+            }
+            accountGroups[acct].lines.push(line);
+            accountGroups[acct].total += (line.amount || 0);
+          });
+
+          // Render account groups
+          const accounts = Object.keys(accountGroups).sort();
+          accounts.forEach((acct, idx) => {
+            const group = accountGroups[acct];
+            const groupId = `acct-group-${idx}`;
+            const displayName = group.vendor_name ? `${group.vendor_name} - ${acct}` : acct;
+
+            // Check if any line in this account has overrides
+            const hasOverrides = group.lines.some(l => l.overridden);
+            const accountOverrideBadge = hasOverrides ? '<span class="badge overridden" style="margin-left:8px">OVERRIDDEN</span>' : '';
+
+            html += `
+              <div class="account-group">
+                <div class="account-group-header" onclick="toggleAccountGroup('${groupId}')">
+                  <div>
+                    <span>${displayName}</span>
+                    <span style="margin-left:12px;color:#64748b;font-weight:400">(${group.lines.length} line items)</span>
+                    ${accountOverrideBadge}
+                  </div>
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <span style="color:#0ea5e9;font-weight:600">$${group.total.toFixed(2)}</span>
+                    <span class="expand-icon" id="icon-${groupId}">&#9660;</span>
+                  </div>
+                </div>
+                <div class="account-group-lines" id="${groupId}">
+            `;
+
+            group.lines.forEach(line => {
+              // Build override info showing what it was changed to
+              let overrideInfo = '';
+              if (line.overridden) {
+                // utility_name is what the GL was mapped/changed to (e.g., SEWER, Gas, Water)
+                const changedTo = line.utility_name || line.gl_code_name || 'N/A';
+                overrideInfo = `<span class="badge overridden">OVERRIDDEN</span>
+                  <div style="font-size:10px;color:#991b1b;margin-top:2px">Mapped to: <strong>${changedTo}</strong></div>`;
+              }
+
+              html += `
+                <div class="line-item">
+                  <div style="flex:1">
+                    <div style="font-size:11px;color:#64748b">
+                      <strong>GL:</strong> ${line.gl_code} - ${line.gl_code_name || 'N/A'}
+                      ${line.utility_name ? `<span style="margin-left:8px;color:#0ea5e9">(<strong>${line.utility_name}</strong>)</span>` : ''}
+                    </div>
+                    <div style="font-size:11px;color:#64748b;margin-top:2px">
+                      <strong>Description:</strong> ${line.description || 'N/A'}
+                    </div>
+                    ${line.override_reason ? `<div style="font-size:11px;color:#991b1b;margin-top:2px"><strong>Override Reason:</strong> ${line.override_reason}</div>` : ''}
+                  </div>
+                  <div style="text-align:right">
+                    <div style="font-weight:600;color:#0ea5e9">$${(line.amount || 0).toFixed(2)}</div>
+                    ${overrideInfo}
+                  </div>
+                </div>
+              `;
+            });
+
+            html += `
+                </div>
+              </div>
+            `;
+          });
+        } else {
+          html += '<div class="loading">No source line items found</div>';
+        }
+
+        html += '</div>';
+
+        document.getElementById('modalTitle').textContent = `Master Bill Detail - ${mb.ar_code_mapping}`;
+        document.getElementById('modalContent').innerHTML = html;
+        document.getElementById('detailModal').classList.add('show');
+      } catch (e) {
+        console.error('Error loading detail:', e);
+        showToast('Error loading detail', 'err');
+      }
+    }
+
+    function closeDetailModal() {
+      document.getElementById('detailModal').classList.remove('show');
+    }
+
+    function toggleAccountGroup(groupId) {
+      const el = document.getElementById(groupId);
+      const icon = document.getElementById(`icon-${groupId}`);
+      if (el) {
+        el.classList.toggle('show');
+        if (icon) {
+          icon.classList.toggle('rotated');
+        }
+      }
+    }
+
+    function applyDateFilter() {
+      const startPeriod = document.getElementById('filterStartPeriod').value;
+      const endPeriod = document.getElementById('filterEndPeriod').value;
+
+      if (!startPeriod && !endPeriod) {
+        showToast('Please select at least one period', 'err');
+        return;
+      }
+
+      saveFiltersToCache();
+      generateMasterBills();
+    }
+
+    function clearFilter() {
+      document.getElementById('filterStartPeriod').value = '';
+      document.getElementById('filterEndPeriod').value = '';
+      saveFiltersToCache();
+      generateMasterBills();
+    }
+
+    function populatePeriodDropdowns() {
+      const startSelect = document.getElementById('filterStartPeriod');
+      const endSelect = document.getElementById('filterEndPeriod');
+
+      // Generate options for the past 24 months and next 12 months
+      const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+
+      const now = new Date();
+      const options = [];
+
+      // Past 24 months + next 12 months
+      for (let i = -24; i <= 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const mm = months[d.getMonth()];
+        const yyyy = d.getFullYear();
+        const value = `${mm}/${yyyy}`;  // MM/YYYY format
+        options.push({ value, sortKey: `${yyyy}-${mm}` });
+      }
+
+      // Sort by date (newest first for easier selection)
+      options.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+      options.forEach(opt => {
+        startSelect.add(new Option(opt.value, opt.value));  // Shows MM/YYYY
+        endSelect.add(new Option(opt.value, opt.value));
+      });
+    }
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // Close modal on overlay click
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+      if (e.target.id === 'detailModal') {
+        closeDetailModal();
+      }
+    });
+
+    // ===== COMPLETION TRACKER FUNCTIONS =====
+    async function loadCompletionTracker() {
+      const period = document.getElementById('trackerPeriod').value;
+      const container = document.getElementById('trackerContent');
+
+      // Save to cache whenever tracker period changes
+      saveFiltersToCache();
+
+      if (!period) {
+        container.innerHTML = '<div class="loading" style="padding:20px;text-align:center;color:#64748b">Select a period to view completion status</div>';
+        return;
+      }
+
+      container.innerHTML = '<div class="loading">Loading completion data...</div>';
+
+      try {
+        const response = await fetch(`/api/master-bills/completion-tracker?period=${encodeURIComponent(period)}`);
+        if (!response.ok) throw new Error('Failed to load completion data');
+
+        const data = await response.json();
+        renderCompletionTracker(data);
+      } catch (e) {
+        console.error('Error loading completion tracker:', e);
+        container.innerHTML = '<div class="loading" style="color:#ef4444">Error loading completion data</div>';
+      }
+    }
+
+    function renderCompletionTracker(data) {
+      const container = document.getElementById('trackerContent');
+      const overall = data.overall || { total: 0, complete: 0, percentage: 0 };
+      const properties = data.properties || [];
+
+      const progressColor = overall.percentage >= 100 ? 'progress-green' :
+                           overall.percentage >= 50 ? 'progress-yellow' : 'progress-red';
+
+      let html = `
+        <div class="overall-progress" style="margin-bottom:20px">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600;margin-bottom:8px">Overall Progress: ${overall.complete} / ${overall.total} accounts</div>
+            <div class="progress-bar" style="width:100%;max-width:400px">
+              <div class="progress-fill ${progressColor}" style="width:${overall.percentage}%"></div>
+            </div>
+          </div>
+          <div class="progress-text" style="color:${overall.percentage >= 100 ? '#10b981' : overall.percentage >= 50 ? '#f59e0b' : '#ef4444'}">
+            ${overall.percentage}%
+          </div>
+        </div>
+
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Properties (${properties.length})</div>
+        <div class="property-grid">
+      `;
+
+      for (const prop of properties) {
+        const statusClass = prop.percentage >= 100 ? 'complete' : prop.percentage > 0 ? 'partial' : 'missing';
+        const statusIcon = prop.percentage >= 100 ? '&#10003;' : prop.percentage > 0 ? '&#9679;' : '&#10007;';
+
+        html += `
+          <div class="property-card ${statusClass}" onclick="togglePropertyAccounts('${prop.property_id}')">
+            <div class="property-name">${prop.property_name || prop.property_id}</div>
+            <div class="property-stats">
+              <span>${prop.complete}/${prop.total} accounts</span>
+              <span style="font-weight:600;color:${prop.percentage >= 100 ? '#10b981' : prop.percentage > 0 ? '#f59e0b' : '#ef4444'}">${prop.percentage}%</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill ${prop.percentage >= 100 ? 'progress-green' : prop.percentage > 0 ? 'progress-yellow' : 'progress-red'}" style="width:${prop.percentage}%"></div>
+            </div>
+            <div class="account-list" id="accounts-${prop.property_id}">
+        `;
+
+        // Sort accounts: incomplete first, then alphabetically
+        const sortedAccounts = (prop.accounts || []).slice().sort((a, b) => {
+          // Incomplete (no bill) first
+          if (a.has_bill !== b.has_bill) return a.has_bill ? 1 : -1;
+          // Then alphabetically by vendor name + account number
+          const nameA = ((a.vendor_name || '') + ' - ' + (a.account_number || '')).toLowerCase();
+          const nameB = ((b.vendor_name || '') + ' - ' + (b.account_number || '')).toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+
+        for (const acc of sortedAccounts) {
+          const accClass = acc.has_bill ? 'has-bill' : 'no-bill';
+          const accIcon = acc.has_bill ? '<span class="check-icon">&#10003;</span>' : '<span class="x-icon">&#10007;</span>';
+          html += `
+            <div class="account-item ${accClass}">
+              <span>${acc.vendor_name || 'Unknown'} - ${acc.account_number}</span>
+              ${accIcon}
+            </div>
+          `;
+        }
+
+        html += `
+            </div>
+          </div>
+        `;
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function togglePropertyAccounts(propertyId) {
+      const el = document.getElementById(`accounts-${propertyId}`);
+      if (el) {
+        el.classList.toggle('show');
+      }
+    }
+
+    function populateTrackerPeriods() {
+      const select = document.getElementById('trackerPeriod');
+      const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+      const now = new Date();
+
+      // Generate options for past 24 months and next 12 months
+      const options = [];
+      for (let i = -24; i <= 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const mm = months[d.getMonth()];
+        const yyyy = d.getFullYear();
+        const value = `${mm}/${yyyy}`;
+        options.push({ value, sortKey: `${yyyy}-${mm}` });
+      }
+
+      // Sort by date (newest first)
+      options.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+      options.forEach(opt => {
+        select.add(new Option(opt.value, opt.value));
+      });
+    }
+
+    // Initialize - populate dropdowns and load master bills on page load
+    populatePeriodDropdowns();
+    populateTrackerPeriods();
+
+    // Restore cached filter values
+    const cachedFilters = loadFiltersFromCache();
+    if (cachedFilters) {
+      if (cachedFilters.trackerPeriod) {
+        document.getElementById('trackerPeriod').value = cachedFilters.trackerPeriod;
+        // Auto-load tracker if period was cached
+        loadCompletionTracker();
+      }
+      if (cachedFilters.filterStartPeriod) {
+        document.getElementById('filterStartPeriod').value = cachedFilters.filterStartPeriod;
+      }
+      if (cachedFilters.filterEndPeriod) {
+        document.getElementById('filterEndPeriod').value = cachedFilters.filterEndPeriod;
+      }
+    }
+
+    loadMasterBills();
+  </script>
+</body>
+</html>

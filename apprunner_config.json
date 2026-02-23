@@ -1,0 +1,24 @@
+{
+  "ImageRepository": {
+    "ImageIdentifier": "789814232318.dkr.ecr.us-east-1.amazonaws.com/jrk-bill-review:latest",
+    "ImageConfiguration": {
+      "RuntimeEnvironmentVariables": {
+        "APP_RUNNER_URL": "billreview.jrkanalytics.com",
+        "AWS_REGION": "us-east-1",
+        "BUCKET": "jrk-analytics-billing",
+        "DISABLE_AUTH": "0",
+        "ENRICH_PREFIX": "Bill_Parser_4_Enriched_Outputs/",
+        "OVERRIDE_PREFIX": "Bill_Parser_5_Overrides/",
+        "REVIEW_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/789814232318/jrk-bill-process",
+        "REVIEW_TABLE": "jrk-bill-review"
+      },
+      "StartCommand": "uvicorn main:app --host 0.0.0.0 --port 8080",
+      "Port": "8080"
+    },
+    "ImageRepositoryType": "ECR"
+  },
+  "AutoDeploymentsEnabled": true,
+  "AuthenticationConfiguration": {
+    "AccessRoleArn": "arn:aws:iam::789814232318:role/jrk-bill-review-apprunner-ecr"
+  }
+}

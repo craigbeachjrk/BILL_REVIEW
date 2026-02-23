@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Performance Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .wrap{max-width:1400px;margin:20px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:8px 8px;border-bottom:1px solid #e5e7eb;text-align:left}
+    th{background:rgba(2,132,199,0.08);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+    tr:hover{background:rgba(2,132,199,0.04)}
+    .muted{opacity:.7;font-size:12px}
+    .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px}
+    .stat-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+    .stat-value{font-size:28px;font-weight:700;color:#0f172a}
+    .stat-label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px}
+    .stat-card.warn .stat-value{color:#d97706}
+    .stat-card.danger .stat-value{color:#dc2626}
+    .stat-card.good .stat-value{color:#059669}
+    .chart-wrap{position:relative;height:300px;margin-bottom:20px}
+    .tab-bar{display:flex;gap:4px;margin-bottom:16px}
+    .tab-bar button{padding:8px 16px;border:none;border-radius:8px 8px 0 0;background:rgba(255,255,255,.4);color:#0f172a;font-family:inherit;font-weight:600;cursor:pointer;font-size:13px}
+    .tab-bar button.active{background:var(--glass);box-shadow:0 -2px 10px rgba(0,0,0,.08)}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+    .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.fast{background:#dcfce7;color:#166534}
+    .badge.medium{background:#fef3c7;color:#92400e}
+    .badge.slow{background:#fee2e2;color:#991b1b}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    .controls select,.controls input{padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit}
+    .auto-refresh{display:flex;align-items:center;gap:6px;font-size:12px;color:#64748b}
+    .pulse{width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .empty{text-align:center;padding:30px;color:#64748b}
+    .mono{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px}
+    td.num{text-align:right;font-variant-numeric:tabular-nums}
+    th.num{text-align:right}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="auto-refresh"><span class="pulse"></span> Auto-refresh 30s</span>
+      <a class="btn secondary" href="/">Home</a>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <h1 style="color:#0f172a;margin:0 0 4px 0">PERFORMANCE MONITOR</h1>
+    <p class="muted" style="margin:0 0 16px 0">Server-side request timing &mdash; last updated <span id="lastUpdated">never</span></p>
+
+    <!-- Live Stats -->
+    <div class="stat-grid" id="statsGrid">
+      <div class="stat-card"><div class="stat-value" id="statRequests">--</div><div class="stat-label">Requests (1h)</div></div>
+      <div class="stat-card"><div class="stat-value" id="statAvg">--</div><div class="stat-label">Avg (ms)</div></div>
+      <div class="stat-card"><div class="stat-value" id="statP50">--</div><div class="stat-label">P50 (ms)</div></div>
+      <div class="stat-card"><div class="stat-value" id="statP95">--</div><div class="stat-label">P95 (ms)</div></div>
+      <div class="stat-card"><div class="stat-value" id="statP99">--</div><div class="stat-label">P99 (ms)</div></div>
+      <div class="stat-card"><div class="stat-value" id="statErrors">--</div><div class="stat-label">Error Rate</div></div>
+      <div class="stat-card"><div class="stat-value" id="statUsers">--</div><div class="stat-label">Active Users</div></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tab-bar">
+      <button class="active" onclick="switchTab('endpoints')">Endpoints</button>
+      <button onclick="switchTab('timeline')">Timeline</button>
+      <button onclick="switchTab('slow')">Slow Requests</button>
+      <button onclick="switchTab('users')">By User</button>
+    </div>
+
+    <!-- Endpoints Tab -->
+    <div id="tab-endpoints" class="tab-content active">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0;font-size:16px">Endpoint Performance</h2>
+          <div class="controls">
+            <select id="endpointMinutes" onchange="loadLive()">
+              <option value="15">Last 15 min</option>
+              <option value="60" selected>Last 1 hour</option>
+              <option value="240">Last 4 hours</option>
+              <option value="1440">Last 24 hours</option>
+            </select>
+          </div>
+        </div>
+        <div id="endpointTable"><div class="empty">Loading...</div></div>
+      </div>
+    </div>
+
+    <!-- Timeline Tab -->
+    <div id="tab-timeline" class="tab-content">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0;font-size:16px">Response Time Timeline</h2>
+          <div class="controls">
+            <select id="timelineDays" onchange="loadRollups()">
+              <option value="1" selected>Last 24h</option>
+              <option value="3">Last 3 days</option>
+              <option value="7">Last 7 days</option>
+            </select>
+            <select id="timelineEndpoint" onchange="updateTimelineChart()">
+              <option value="__all__">All Endpoints</option>
+            </select>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="timelineChart"></canvas></div>
+        <div class="chart-wrap"><canvas id="volumeChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Slow Requests Tab -->
+    <div id="tab-slow" class="tab-content">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0;font-size:16px">Slow Requests</h2>
+          <div class="controls">
+            <label style="font-size:12px;color:#64748b">Threshold (ms):</label>
+            <input type="number" id="slowThreshold" value="3000" style="width:80px" onchange="loadSlow()">
+            <select id="slowMinutes" onchange="loadSlow()">
+              <option value="60" selected>Last 1 hour</option>
+              <option value="240">Last 4 hours</option>
+              <option value="1440">Last 24 hours</option>
+            </select>
+          </div>
+        </div>
+        <div id="slowTable"><div class="empty">Loading...</div></div>
+      </div>
+    </div>
+
+    <!-- Users Tab -->
+    <div id="tab-users" class="tab-content">
+      <div class="card">
+        <h2 style="margin:0 0 12px 0;font-size:16px">Per-User Performance</h2>
+        <div id="userTable"><div class="empty">Loading...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let liveData = null;
+    let rollupsData = null;
+    let timelineChart = null;
+    let volumeChart = null;
+
+    function esc(s) {
+      const el = document.createElement('span');
+      el.textContent = String(s || '');
+      return el.innerHTML;
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-bar button').forEach((b, i) => {
+        const tabs = ['endpoints','timeline','slow','users'];
+        b.classList.toggle('active', tabs[i] === tab);
+      });
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      if (tab === 'timeline' && !rollupsData) loadRollups();
+      if (tab === 'slow') loadSlow();
+    }
+
+    function speedBadge(ms) {
+      if (ms < 500) return `<span class="badge fast">${Math.round(ms)}ms</span>`;
+      if (ms < 2000) return `<span class="badge medium">${Math.round(ms)}ms</span>`;
+      return `<span class="badge slow">${Math.round(ms)}ms</span>`;
+    }
+
+    function fmtMs(ms) { return ms < 1000 ? Math.round(ms) + 'ms' : (ms/1000).toFixed(1) + 's'; }
+
+    function fmtTime(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+    }
+
+    async function loadLive() {
+      try {
+        const minutes = document.getElementById('endpointMinutes').value;
+        const resp = await fetch(`/api/perf/live?minutes=${minutes}`);
+        liveData = await resp.json();
+        renderStats(liveData.summary);
+        renderEndpoints(liveData.summary.slowest || []);
+        renderUsers(liveData.requests || []);
+        document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+      } catch (e) {
+        console.error('Error loading live data:', e);
+      }
+    }
+
+    function renderStats(s) {
+      document.getElementById('statRequests').textContent = s.total_requests.toLocaleString();
+      document.getElementById('statAvg').textContent = fmtMs(s.avg_ms);
+      document.getElementById('statP50').textContent = fmtMs(s.p50_ms);
+      document.getElementById('statP95').textContent = fmtMs(s.p95_ms);
+      document.getElementById('statP99').textContent = fmtMs(s.p99_ms || 0);
+      document.getElementById('statErrors').textContent = (s.error_rate * 100).toFixed(1) + '%';
+      document.getElementById('statUsers').textContent = s.active_users;
+
+      // Color coding
+      const p95El = document.getElementById('statP95').parentElement;
+      p95El.className = 'stat-card ' + (s.p95_ms < 1000 ? 'good' : s.p95_ms < 3000 ? 'warn' : 'danger');
+      const errEl = document.getElementById('statErrors').parentElement;
+      errEl.className = 'stat-card ' + (s.error_rate < 0.01 ? 'good' : s.error_rate < 0.05 ? 'warn' : 'danger');
+    }
+
+    function renderEndpoints(endpoints) {
+      if (!endpoints.length) {
+        document.getElementById('endpointTable').innerHTML = '<div class="empty">No data yet</div>';
+        return;
+      }
+      let html = `<table>
+        <thead><tr>
+          <th>Endpoint</th><th class="num">Hits</th><th class="num">Avg</th>
+          <th class="num">P50</th><th class="num">P95</th><th class="num">P99</th>
+          <th class="num">Max</th><th class="num">Errors</th>
+        </tr></thead><tbody>`;
+      for (const ep of endpoints) {
+        html += `<tr>
+          <td class="mono">${esc(ep.path)}</td>
+          <td class="num">${ep.count}</td>
+          <td class="num">${speedBadge(ep.avg_ms)}</td>
+          <td class="num">${fmtMs(ep.p50_ms)}</td>
+          <td class="num">${speedBadge(ep.p95_ms)}</td>
+          <td class="num">${fmtMs(ep.p99_ms || 0)}</td>
+          <td class="num">${fmtMs(ep.max_ms)}</td>
+          <td class="num">${ep.errors > 0 ? '<span class="badge slow">' + ep.errors + '</span>' : '0'}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('endpointTable').innerHTML = html;
+    }
+
+    function renderUsers(requests) {
+      const byUser = {};
+      for (const r of requests) {
+        const u = r.user || '(anonymous)';
+        if (!byUser[u]) byUser[u] = {count: 0, sum: 0, times: [], errors: 0};
+        byUser[u].count++;
+        byUser[u].sum += r.ms;
+        byUser[u].times.push(r.ms);
+        if (r.status >= 500) byUser[u].errors++;
+      }
+      const users = Object.entries(byUser).map(([user, s]) => {
+        s.times.sort((a,b) => a-b);
+        const n = s.times.length;
+        return {
+          user, count: s.count,
+          avg: s.sum / n,
+          p50: s.times[Math.floor(n/2)] || 0,
+          p95: s.times[Math.floor(n*0.95)] || 0,
+          max: s.times[n-1] || 0,
+          errors: s.errors,
+        };
+      }).sort((a,b) => b.count - a.count);
+
+      if (!users.length) {
+        document.getElementById('userTable').innerHTML = '<div class="empty">No data yet</div>';
+        return;
+      }
+      let html = `<table><thead><tr>
+        <th>User</th><th class="num">Requests</th><th class="num">Avg</th>
+        <th class="num">P50</th><th class="num">P95</th><th class="num">Max</th><th class="num">Errors</th>
+      </tr></thead><tbody>`;
+      for (const u of users) {
+        html += `<tr>
+          <td>${esc(u.user)}</td><td class="num">${u.count}</td>
+          <td class="num">${speedBadge(u.avg)}</td>
+          <td class="num">${fmtMs(u.p50)}</td>
+          <td class="num">${speedBadge(u.p95)}</td>
+          <td class="num">${fmtMs(u.max)}</td>
+          <td class="num">${u.errors > 0 ? '<span class="badge slow">' + u.errors + '</span>' : '0'}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('userTable').innerHTML = html;
+    }
+
+    async function loadSlow() {
+      try {
+        const threshold = document.getElementById('slowThreshold').value;
+        const minutes = document.getElementById('slowMinutes').value;
+        const resp = await fetch(`/api/perf/slow?threshold_ms=${threshold}&minutes=${minutes}`);
+        const data = await resp.json();
+        renderSlow(data.requests || []);
+      } catch (e) {
+        console.error('Error loading slow requests:', e);
+      }
+    }
+
+    function renderSlow(requests) {
+      if (!requests.length) {
+        document.getElementById('slowTable').innerHTML = '<div class="empty">No slow requests in this window</div>';
+        return;
+      }
+      let html = `<table><thead><tr>
+        <th>Time</th><th>User</th><th>Method</th><th>Endpoint</th>
+        <th class="num">Duration</th><th class="num">Status</th>
+      </tr></thead><tbody>`;
+      for (const r of requests) {
+        const statusBadge = r.status >= 500 ? `<span class="badge slow">${r.status}</span>` :
+                           r.status >= 400 ? `<span class="badge medium">${r.status}</span>` :
+                           `<span class="badge fast">${r.status}</span>`;
+        html += `<tr>
+          <td class="muted">${fmtTime(r.ts)}</td>
+          <td>${esc(r.user || '-')}</td>
+          <td><span class="badge fast">${esc(r.method)}</span></td>
+          <td class="mono">${esc(r.path)}</td>
+          <td class="num">${speedBadge(r.ms)}</td>
+          <td class="num">${statusBadge}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('slowTable').innerHTML = html;
+    }
+
+    async function loadRollups() {
+      try {
+        const days = document.getElementById('timelineDays').value;
+        const resp = await fetch(`/api/perf/rollups?days=${days}`);
+        rollupsData = await resp.json();
+        populateEndpointFilter();
+        updateTimelineChart();
+      } catch (e) {
+        console.error('Error loading rollups:', e);
+      }
+    }
+
+    function populateEndpointFilter() {
+      if (!rollupsData) return;
+      const endpoints = new Set();
+      for (const h of rollupsData.hours) {
+        for (const ep of Object.keys(h.endpoints || {})) endpoints.add(ep);
+      }
+      const sel = document.getElementById('timelineEndpoint');
+      const current = sel.value;
+      sel.innerHTML = '<option value="__all__">All Endpoints</option>';
+      for (const ep of [...endpoints].sort()) {
+        const opt = document.createElement('option');
+        opt.value = ep;
+        opt.textContent = ep;
+        if (ep === current) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function updateTimelineChart() {
+      if (!rollupsData) return;
+      const endpoint = document.getElementById('timelineEndpoint').value;
+      const hours = rollupsData.hours || [];
+
+      const labels = hours.map(h => {
+        const d = new Date(h.hour + ':00:00Z');
+        return d.toLocaleString('en-US', {month:'short',day:'numeric',hour:'numeric',hour12:true});
+      });
+
+      const p50Data = [];
+      const p95Data = [];
+      const volumeData = [];
+
+      for (const h of hours) {
+        if (endpoint === '__all__') {
+          // Aggregate across all endpoints
+          let totalMs = 0, totalCount = 0;
+          for (const stats of Object.values(h.endpoints || {})) {
+            totalCount += stats.count;
+            totalMs += stats.sum_ms || 0;
+          }
+          p50Data.push(totalCount ? Math.round(totalMs / totalCount) : 0);
+          // Use max of endpoint p95s as overall p95
+          const maxP95 = Math.max(0, ...Object.values(h.endpoints || {}).map(s => s.p95_ms || 0));
+          p95Data.push(Math.round(maxP95));
+          volumeData.push(totalCount);
+        } else {
+          const stats = (h.endpoints || {})[endpoint];
+          p50Data.push(stats ? Math.round(stats.p50_ms) : 0);
+          p95Data.push(stats ? Math.round(stats.p95_ms) : 0);
+          volumeData.push(stats ? stats.count : 0);
+        }
+      }
+
+      // Response time chart
+      if (timelineChart) timelineChart.destroy();
+      const ctx1 = document.getElementById('timelineChart').getContext('2d');
+      timelineChart = new Chart(ctx1, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {label: 'P50 (ms)', data: p50Data, borderColor: '#0ea5e9', backgroundColor: 'rgba(14,165,233,0.1)', fill: true, tension: 0.3, pointRadius: 2},
+            {label: 'P95 (ms)', data: p95Data, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3, pointRadius: 2},
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {title: {display: true, text: 'Response Time (ms)'}},
+          scales: {y: {beginAtZero: true, title: {display: true, text: 'ms'}}}
+        }
+      });
+
+      // Volume chart
+      if (volumeChart) volumeChart.destroy();
+      const ctx2 = document.getElementById('volumeChart').getContext('2d');
+      volumeChart = new Chart(ctx2, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{label: 'Requests', data: volumeData, backgroundColor: 'rgba(14,165,233,0.5)', borderRadius: 4}]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {title: {display: true, text: 'Request Volume'}},
+          scales: {y: {beginAtZero: true, title: {display: true, text: 'Requests'}}}
+        }
+      });
+    }
+
+    // Initial load + auto-refresh
+    loadLive();
+    setInterval(loadLive, 30000);
+  </script>
+</body>
+</html>

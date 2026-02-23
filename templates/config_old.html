@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CONFIG · Accounts To Track</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); --cell-pad:10px; --font-size:14px; }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none}
+    .btn.secondary{background:#64748b}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px}
+    h1{margin:0 0 12px 0}
+    .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:visible;table-layout:fixed}
+    th,td{padding:var(--cell-pad);border-bottom:1px solid #e5e7eb;text-align:center;vertical-align:middle}
+    td input, td select { width:100%; padding:8px 10px; font-size:var(--font-size); text-align:center; }
+    td select { text-align-last:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    /* Choices.js centering + compact size */
+    .choices{ font-size:var(--font-size); }
+    .choices__inner{ min-height:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center; }
+    .choices[data-type*=select-one] .choices__inner{ padding-bottom:6px; }
+    .choices__list .choices__item{ margin:0; text-align:center; }
+    .choices__list--dropdown{ z-index:10000; overflow:visible; }
+    .choices__list--dropdown .choices__item{ white-space:nowrap; }
+    th{background:#f8fafc;cursor:pointer;position:sticky;top:0}
+    tr:hover{background:rgba(2,132,199,0.06)}
+    select,input{padding:8px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#fff}
+    .filters input{width:100%;box-sizing:border-box}
+    .row-actions{display:flex;gap:8px}
+    td .btn{font-size:12px;padding:6px 10px}
+    .grid{display:grid;grid-template-columns:minmax(0,2fr) 420px;column-gap:20px;row-gap:16px;margin:12px 0;align-items:start}
+    .grid > div{min-width:0}
+    textarea{width:100%;min-height:120px;border-radius:10px;border:1px solid #e5e7eb;padding:10px;resize:vertical;box-sizing:border-box}
+    .pasteActions{margin-top:10px}
+    .tipsBox{max-height:180px;overflow:auto}
+    .muted{opacity:.8;font-size:13px}
+    .tableWrap{overflow-x:auto;overflow-y:visible;border-radius:12px;border:1px solid #e5e7eb;padding-right:8px}
+    #cfgTable{min-width:1100px}
+    th{white-space:nowrap}
+    .h-short{display:none}
+    /* Toasts */
+    .toast-wrap{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px}
+    .toast{min-width:260px;max-width:520px;background:#111827;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    /* Responsive: progressively compress table and allow wrapping of long headers */
+    @media (max-width: 1400px){
+      :root { --cell-pad:9px; --font-size:13px; }
+      #cfgTable col:nth-child(8){ width:8% } /* Days */
+      #cfgTable col:nth-child(9){ width:6% } /* Actions */
+    }
+    @media (max-width: 1250px){
+      :root { --cell-pad:8px; --font-size:12px; }
+      th{ white-space:normal }
+      .h-full{display:none}
+      .h-short{display:inline}
+      /* Rebalance widths to preserve Days/Actions space */
+      #cfgTable col:nth-child(2){ width:17% } /* Vendor Name */
+      #cfgTable col:nth-child(3){ width:11% } /* Account Number */
+      #cfgTable col:nth-child(5){ width:17% } /* Property Name */
+      #cfgTable col:nth-child(7){ width:13% } /* GL Name */
+      #cfgTable col:nth-child(8){ width:9% }  /* Days */
+      #cfgTable col:nth-child(9){ width:6% }  /* Actions */
+    }
+    @media (max-width: 1100px){
+      .grid{grid-template-columns:1fr}
+      .tipsBox{max-height:none}
+      #cfgTable{min-width:1200px}
+      :root { --cell-pad:7px; --font-size:12px; }
+      #cfgTable col:nth-child(1){ width:7% }
+      #cfgTable col:nth-child(2){ width:16% }
+      #cfgTable col:nth-child(3){ width:11% }
+      #cfgTable col:nth-child(4){ width:8% }
+      #cfgTable col:nth-child(5){ width:16% }
+      #cfgTable col:nth-child(6){ width:12% }
+      #cfgTable col:nth-child(7){ width:13% }
+      #cfgTable col:nth-child(8){ width:10% }
+      #cfgTable col:nth-child(9){ width:7% }
+      /* Keep days input compact */
+      td input[type=number]{ max-width:72px }
+    }
+    @media (max-width: 1000px){
+      :root { --cell-pad:6px; --font-size:11.5px; }
+      #cfgTable{min-width:1120px}
+      #cfgTable col:nth-child(2){ width:15.5% }
+      #cfgTable col:nth-child(5){ width:15.5% }
+      #cfgTable col:nth-child(7){ width:12.5% }
+      #cfgTable col:nth-child(8){ width:10.5% }
+      #cfgTable col:nth-child(9){ width:8% }
+      td .btn{ font-size:11px; padding:4px 8px }
+      td input[type=number]{ max-width:64px }
+    }
+    @media (max-width: 900px){
+      :root { --cell-pad:6px; --font-size:11px; }
+      #cfgTable{min-width:1080px}
+      #cfgTable col:nth-child(9){ width:8.5% }
+    }
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:420px;width:90%;padding:24px}
+    .improve-modal-box h2{margin:0 0 16px 0;font-size:18px}
+    .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
+    .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px}
+    .improve-modal-box textarea{min-height:100px;resize:vertical}
+    .improve-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .improve-toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10001;opacity:0;transition:opacity .3s}
+    .improve-toast.show{opacity:.96}
+    .improve-toast.ok{background:#0f766e}
+    .improve-toast.err{background:#b91c1c}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
+    <div>
+      <button id="submitBtn" class="btn" title="Save Accounts To Track">Submit</button>
+      <a class="btn secondary" href="/">Back</a>
+    </div>
+  <button class="btn secondary" id="improveBtn">IMPROVE</button>
+  </header>
+  <div id="improveToast" class="improve-toast"></div>
+
+  <div id="improveModal" class="improve-modal-overlay">
+    <div class="improve-modal-box">
+      <h2>Report Bug or Enhancement</h2>
+      <label for="reportTitle">Title</label>
+      <input type="text" id="reportTitle" placeholder="Brief summary of issue or enhancement" />
+      <label for="reportDesc">Description</label>
+      <textarea id="reportDesc" placeholder="Detailed description of what you'd like improved"></textarea>
+      <div class="improve-modal-actions">
+        <button class="btn secondary" id="cancelReport">Cancel</button>
+        <button class="btn" id="submitReport">Submit</button>
+      </div>
+    </div>
+  </div>
+  <div id="toastWrap" class="toast-wrap" aria-live="polite"></div>
+  <div class="wrap">
+    <div class="card">
+      <div class="topbar">
+        <h1>CONFIG</h1>
+      </div>
+
+      <h2 style="margin-top:0">Accounts To Track</h2>
+      <div class="grid">
+        <div>
+          <label for="pasteArea" class="muted">Paste rows from Excel (columns in order): Vendor Name | Account Number | Property Name | GL Account Number | GL Account Name | Days Between Bills</label>
+          <textarea id="pasteArea" placeholder="Paste here..."></textarea>
+          <div class="pasteActions"><button class="btn" id="addPasted">Add Pasted Rows</button></div>
+        </div>
+        <div class="tipsBox">
+          <div class="muted">Tips</div>
+          <ul class="muted">
+            <li>Click headers to sort. Use filter row to filter by column.</li>
+            <li>Vendor, Property, and GL lists are loaded from backend APIs.</li>
+            <li>GL Account Name will auto-fill when you choose a GL Account Number.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="tableWrap">
+        <table id="cfgTable">
+          <colgroup>
+            <col style="width:7%" />   <!-- Vendor ID -->
+            <col style="width:22%" />  <!-- Vendor Name (wider for long names) -->
+            <col style="width:11%" />  <!-- Account Number -->
+            <col style="width:8%" />   <!-- Property ID -->
+            <col style="width:17%" />  <!-- Property Name -->
+            <col style="width:11%" />  <!-- GL # -->
+            <col style="width:13%" />  <!-- GL Name -->
+            <col style="width:9%" />   <!-- Days -->
+            <col style="width:7%" />   <!-- Actions -->
+          </colgroup>
+          <thead>
+            <tr>
+              <th data-col="vendorId">Vendor ID</th>
+              <th data-col="vendorName">Vendor Name</th>
+              <th data-col="accountNumber"><span class="h-full">Account Number</span><span class="h-short">Acct #</span></th>
+              <th data-col="propertyId">Property ID</th>
+              <th data-col="propertyName">Property Name</th>
+              <th data-col="glAccountNumber"><span class="h-full">GL Account Number</span><span class="h-short">GL #</span></th>
+              <th data-col="glAccountName"><span class="h-full">GL Account Name</span><span class="h-short">GL Name</span></th>
+              <th data-col="daysBetweenBills"><span class="h-full">Days Between Bills</span><span class="h-short">Days</span></th>
+              <th>Actions</th>
+            </tr>
+            <tr class="filters">
+              <th><input placeholder="Filter vendor ID"></th>
+              <th><input placeholder="Filter vendor name"></th>
+              <th><input placeholder="Filter acct"></th>
+              <th><input placeholder="Filter property ID"></th>
+              <th><input placeholder="Filter property name"></th>
+              <th><input placeholder="Filter GL#"></th>
+              <th><input placeholder="Filter GL name"></th>
+              <th><input placeholder="Filter days"></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn" id="addRow">Add Row</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      vendors: [], // {id,name,code,locations}
+      properties: [], // {id,name}
+      gls: [], // {number,name}
+      items: [], // working rows {vendorId,vendorName,accountNumber,propertyId,propertyName,glAccountNumber,glAccountName,daysBetweenBills}
+      sort: { col: '', dir: 1 },
+      filters: ['', '', '', '', '', '', '', '']
+    };
+
+    async function fetchJSON(url){
+      const r = await fetch(url, {credentials:'same-origin'});
+      if(!r.ok) throw new Error('fetch failed');
+      return r.json();
+    }
+
+    const _choicesMap = new WeakMap();
+    const _choicesList = [];
+    function destroyAllChoices(){
+      try{ _choicesList.forEach(inst => { try{ inst.destroy(); } catch(_){} }); }catch(_){ }
+      _choicesList.length = 0;
+    }
+    function ensureChoices(sel){
+      try{
+        if(sel && !sel._choicesInit){
+          const inst = new Choices(sel, { searchEnabled: true, shouldSort: true, allowHTML: false, position: 'auto' });
+          _choicesMap.set(sel, inst);
+          _choicesList.push(inst);
+          sel._choicesInit = true;
+        }
+      }catch(_){ }
+    }
+
+    // Cached options HTML (built once after catalogs load)
+    let vendorOptionsHTML = '<option value="">(select vendor)</option>';
+    let propertyOptionsHTML = '<option value="">(select property)</option>';
+    let glNumberOptionsHTML = '<option value="">(select GL #)</option>';
+    let glNameOptionsHTML = '<option value="">(select GL name)</option>';
+
+    // simple debounce
+    function debounce(fn, ms){ let t; return function(){ const ctx=this, args=arguments; clearTimeout(t); t=setTimeout(()=>fn.apply(ctx,args), ms); }; }
+
+    function render(){
+      const tbody = document.getElementById('rows');
+      // Prevent leaks: destroy existing Choices instances before wiping DOM
+      destroyAllChoices();
+      tbody.innerHTML = '';
+      let rows = [...state.items];
+      // filter
+      const [fVendId,fVend,fAcct,fPropId,fProp,fGLN,fGLName,fDays] = state.filters.map(s=>s.toLowerCase());
+      rows = rows.filter(r =>
+        (!fVendId || (r.vendorId||'').toLowerCase().includes(fVendId)) &&
+        (!fVend || (r.vendorName||'').toLowerCase().includes(fVend)) &&
+        (!fAcct || (r.accountNumber||'').toLowerCase().includes(fAcct)) &&
+        (!fPropId || (r.propertyId||'').toLowerCase().includes(fPropId)) &&
+        (!fProp || (r.propertyName||'').toLowerCase().includes(fProp)) &&
+        (!fGLN || (r.glAccountNumber||'').toLowerCase().includes(fGLN)) &&
+        (!fGLName || (r.glAccountName||'').toLowerCase().includes(fGLName)) &&
+        (!fDays || String(r.daysBetweenBills||'').toLowerCase().includes(fDays))
+      );
+      // sort
+      if(state.sort.col){
+        rows.sort((a,b)=>{
+          const av = (a[state.sort.col] ?? '').toString().toLowerCase();
+          const bv = (b[state.sort.col] ?? '').toString().toLowerCase();
+          if(av < bv) return -1*state.sort.dir;
+          if(av > bv) return 1*state.sort.dir;
+          return 0;
+        });
+      }
+      // draw
+      const frag = document.createDocumentFragment();
+      for (let i=0;i<rows.length;i++){
+        const r = rows[i];
+        const tr = document.createElement('tr');
+        // Vendor ID (display text only)
+        const tdVendId = document.createElement('td');
+        const spVendId = document.createElement('span'); spVendId.textContent = r.vendorId || ''; spVendId.className = 'id-cell'; tdVendId.appendChild(spVendId); tr.appendChild(tdVendId);
+        // Vendor Name select (label is just name; sets ID)
+        const tdVend = document.createElement('td');
+        const selVend = document.createElement('select');
+        selVend.innerHTML = vendorOptionsHTML;
+        // set selected
+        if (r.vendorId){ selVend.value = String(r.vendorId); }
+        // Initialize tooltip to current selection label
+        try { selVend.title = selVend.selectedOptions[0]?.getAttribute('title') || ''; } catch(_) {}
+        selVend.onchange = () => { const v = state.vendors.find(x=>String(x.id)===selVend.value); r.vendorId = selVend.value; r.vendorName = v? v.name : ''; spVendId.textContent = r.vendorId || ''; selVend.title = v? (v.name||'') : ''; };
+        tdVend.appendChild(selVend);
+        selVend.addEventListener('pointerdown', ()=> ensureChoices(selVend), { once: true });
+        selVend.addEventListener('focus', ()=> ensureChoices(selVend), { once: true });
+        tr.appendChild(tdVend);
+        // Account Number input
+        const tdAcct = document.createElement('td');
+        const inAcct = document.createElement('input'); inAcct.value = r.accountNumber||''; inAcct.oninput = ()=> r.accountNumber = inAcct.value; tdAcct.appendChild(inAcct); tr.appendChild(tdAcct);
+        // Property ID (display text only)
+        const tdPropId = document.createElement('td');
+        const spPropId = document.createElement('span'); spPropId.textContent = r.propertyId || ''; spPropId.className = 'id-cell'; tdPropId.appendChild(spPropId); tr.appendChild(tdPropId);
+        // Property Name select (label is just name; sets ID)
+        const tdProp = document.createElement('td');
+        const selProp = document.createElement('select');
+        selProp.innerHTML = propertyOptionsHTML;
+        if (r.propertyId){ selProp.value = String(r.propertyId); }
+        selProp.onchange = ()=>{ const p = state.properties.find(x=>String(x.id)===selProp.value); r.propertyId = selProp.value; r.propertyName = p? p.name : ''; spPropId.textContent = r.propertyId || ''; };
+        tdProp.appendChild(selProp); tr.appendChild(tdProp);
+        selProp.addEventListener('pointerdown', ()=> ensureChoices(selProp), { once: true });
+        selProp.addEventListener('focus', ()=> ensureChoices(selProp), { once: true });
+        // GL Number select (formatted only)
+        const tdGLN = document.createElement('td');
+        const selGL = document.createElement('select');
+        selGL.innerHTML = glNumberOptionsHTML;
+        if (r.glAccountNumber){ selGL.value = String(r.glAccountNumber); }
+        selGL.onchange = ()=>{ const g = state.gls.find(x=>String(x.number)===selGL.value); r.glAccountNumber = selGL.value; r.glAccountName = g? g.name : ''; selGLName.value = r.glAccountName || ''; };
+        tdGLN.appendChild(selGL); tr.appendChild(tdGLN);
+        selGL.addEventListener('pointerdown', ()=> ensureChoices(selGL), { once: true });
+        selGL.addEventListener('focus', ()=> ensureChoices(selGL), { once: true });
+        // GL Name select (selectable, updates number)
+        const tdGLName = document.createElement('td');
+        const selGLName = document.createElement('select');
+        selGLName.innerHTML = glNameOptionsHTML;
+        if (r.glAccountName){ selGLName.value = String(r.glAccountName); }
+        selGLName.onchange = ()=>{ const g = state.gls.find(x=>String(x.name||'')===selGLName.value); r.glAccountName = selGLName.value; r.glAccountNumber = g? g.number : r.glAccountNumber; selGL.value = r.glAccountNumber || ''; };
+        tdGLName.appendChild(selGLName); tr.appendChild(tdGLName);
+        selGLName.addEventListener('pointerdown', ()=> ensureChoices(selGLName), { once: true });
+        selGLName.addEventListener('focus', ()=> ensureChoices(selGLName), { once: true });
+        // Days
+        const tdDays = document.createElement('td');
+        const inDays = document.createElement('input'); inDays.type='number'; inDays.min='0'; inDays.value = r.daysBetweenBills ?? ''; inDays.style.maxWidth = '80px'; inDays.style.margin = '0 auto';
+        inDays.oninput = ()=> r.daysBetweenBills = parseInt(inDays.value||'0',10);
+        tdDays.appendChild(inDays); tr.appendChild(tdDays);
+        // Actions
+        const tdAct = document.createElement('td'); tdAct.className='row-actions'; tdAct.style.whiteSpace='nowrap';
+        const btnDel = document.createElement('button'); btnDel.className='btn secondary'; btnDel.style.padding='6px 10px'; btnDel.textContent='Del'; btnDel.title='Delete'; btnDel.onclick = ()=>{ const idx = state.items.indexOf(r); if(idx>=0){ state.items.splice(idx,1); render(); } };
+        const btnDup = document.createElement('button'); btnDup.className='btn'; btnDup.style.padding='6px 10px'; btnDup.textContent='Dup'; btnDup.title='Duplicate'; btnDup.onclick = ()=>{ const copy = {vendorId:r.vendorId||'',vendorName:r.vendorName||'',accountNumber:r.accountNumber||'',propertyId:r.propertyId||'',propertyName:r.propertyName||'',glAccountNumber:r.glAccountNumber||'',glAccountName:r.glAccountName||'',daysBetweenBills:r.daysBetweenBills??0}; state.items.push(copy); appendRow(copy); };
+        tdAct.appendChild(btnDup); tdAct.appendChild(btnDel); tr.appendChild(tdAct);
+        frag.appendChild(tr);
+      }
+      tbody.appendChild(frag);
+    }
+
+    function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+    function showToast(message, type){
+      const wrap = document.getElementById('toastWrap');
+      const el = document.createElement('div');
+      el.className = 'toast ' + (type==='ok'?'ok':'err');
+      el.textContent = message;
+      wrap.appendChild(el);
+      setTimeout(()=>{ el.style.transition='opacity .3s'; el.style.opacity='0'; setTimeout(()=> wrap.removeChild(el), 300); }, 2500);
+    }
+
+    async function loadAll(){
+      const [vend, prop, gl, cfg] = await Promise.all([
+        fetchJSON('/api/catalog/vendors'),
+        fetchJSON('/api/catalog/properties'),
+        fetchJSON('/api/catalog/gl-accounts'),
+        fetchJSON('/api/config/accounts-to-track')
+      ]);
+      const byName = (a,b)=> (String(a.name||'').localeCompare(String(b.name||'')));
+      const byNumber = (a,b)=> (String(a.number||'').localeCompare(String(b.number||'')));
+      state.vendors = (vend.items||[]).sort(byName);
+      state.properties = (prop.items||[]).sort(byName);
+      state.gls = (gl.items||[]).sort(byNumber);
+      state.items = (cfg.items||[]).map(x=>Object.assign({"daysBetweenBills": x.daysBetweenBills ?? 0}, x));
+      // Build and cache option lists once
+      vendorOptionsHTML = '<option value="">(select vendor)</option>' + state.vendors.map(v=>{
+        const name = `${v.name ?? ''}`;
+        return `<option value="${v.id}" title="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+      }).join('');
+      propertyOptionsHTML = '<option value="">(select property)</option>' + state.properties.map(p=>{
+        const label = `${p.name ?? ''}`;
+        return `<option value="${p.id}">${escapeHtml(label)}</option>`;
+      }).join('');
+      glNumberOptionsHTML = '<option value="">(select GL #)</option>' + state.gls.map(g=>{
+        const label = `${g.number ?? ''}`;
+        return `<option value="${g.number}">${escapeHtml(label)}</option>`;
+      }).join('');
+      glNameOptionsHTML = '<option value="">(select GL name)</option>' + state.gls.map(g=>{
+        const label = `${g.name ?? ''}`;
+        return `<option value="${g.name ?? ''}">${escapeHtml(label)}</option>`;
+      }).join('');
+      render();
+    }
+
+    function bindSorting(){
+      document.querySelectorAll('#cfgTable thead tr:first-child th[data-col]').forEach(th => {
+        th.addEventListener('click', ()=>{
+          const col = th.getAttribute('data-col');
+          if(state.sort.col===col){ state.sort.dir *= -1; } else { state.sort.col = col; state.sort.dir = 1; }
+          render();
+        });
+      });
+    }
+
+    function bindFilters(){
+      const debRender = debounce(()=>render(), 200);
+      document.querySelectorAll('#cfgTable thead tr.filters th input').forEach((inp, idx)=>{
+        inp.addEventListener('input', ()=>{ state.filters[idx] = inp.value; debRender(); });
+      });
+    }
+
+    function addEmptyRow(){
+      const r = {vendorId:'',vendorName:'',accountNumber:'',propertyId:'',propertyName:'',glAccountNumber:'',glAccountName:'',daysBetweenBills:0};
+      state.items.push(r);
+      const tbody = document.getElementById('rows');
+      const prev = state.items.length-1;
+      let tmp = document.createElement('tbody');
+      state.items.slice(prev).forEach(x=>{ /* reuse render logic for one row */ });
+      // fallback: create one row using minimal duplication
+      let rowsBak = state.items; state.items = [r];
+      const oldHTML = tbody.innerHTML; // preserve reference
+      const frag = document.createDocumentFragment();
+      (function build(){
+        let rows = [r];
+        for (let i=0;i<rows.length;i++){
+          const rr = rows[i];
+          const tr = document.createElement('tr');
+          const tdVendId = document.createElement('td'); const spVendId = document.createElement('span'); spVendId.textContent = rr.vendorId || ''; spVendId.className = 'id-cell'; tdVendId.appendChild(spVendId); tr.appendChild(tdVendId);
+          const tdVend = document.createElement('td'); const selVend = document.createElement('select'); selVend.innerHTML = vendorOptionsHTML; selVend.onchange = () => { const v = state.vendors.find(x=>String(x.id)===selVend.value); rr.vendorId = selVend.value; rr.vendorName = v? v.name : ''; spVendId.textContent = rr.vendorId || ''; selVend.title = v? (v.name||'') : ''; }; tdVend.appendChild(selVend); selVend.addEventListener('pointerdown', ()=> ensureChoices(selVend), { once: true }); selVend.addEventListener('focus', ()=> ensureChoices(selVend), { once: true }); tr.appendChild(tdVend);
+          const tdAcct = document.createElement('td'); const inAcct = document.createElement('input'); inAcct.value = rr.accountNumber||''; inAcct.oninput = ()=> rr.accountNumber = inAcct.value; tdAcct.appendChild(inAcct); tr.appendChild(tdAcct);
+          const tdPropId = document.createElement('td'); const spPropId = document.createElement('span'); spPropId.textContent = rr.propertyId || ''; spPropId.className = 'id-cell'; tdPropId.appendChild(spPropId); tr.appendChild(tdPropId);
+          const tdProp = document.createElement('td'); const selProp = document.createElement('select'); selProp.innerHTML = propertyOptionsHTML; selProp.onchange = ()=>{ const p = state.properties.find(x=>String(x.id)===selProp.value); rr.propertyId = selProp.value; rr.propertyName = p? p.name : ''; spPropId.textContent = rr.propertyId || ''; }; tdProp.appendChild(selProp); selProp.addEventListener('pointerdown', ()=> ensureChoices(selProp), { once: true }); selProp.addEventListener('focus', ()=> ensureChoices(selProp), { once: true }); tr.appendChild(tdProp);
+          const tdGLN = document.createElement('td'); const selGL = document.createElement('select'); selGL.innerHTML = glNumberOptionsHTML; selGL.onchange = ()=>{ const g = state.gls.find(x=>String(x.number)===selGL.value); rr.glAccountNumber = selGL.value; rr.glAccountName = g? g.name : ''; selGLName.value = rr.glAccountName || ''; }; tdGLN.appendChild(selGL); selGL.addEventListener('pointerdown', ()=> ensureChoices(selGL), { once: true }); selGL.addEventListener('focus', ()=> ensureChoices(selGL), { once: true }); tr.appendChild(tdGLN);
+          const tdGLName = document.createElement('td'); const selGLName = document.createElement('select'); selGLName.innerHTML = glNameOptionsHTML; selGLName.onchange = ()=>{ const g = state.gls.find(x=>String(x.name||'')===selGLName.value); rr.glAccountName = selGLName.value; rr.glAccountNumber = g? g.number : rr.glAccountNumber; selGL.value = rr.glAccountNumber || ''; }; tdGLName.appendChild(selGLName); selGLName.addEventListener('pointerdown', ()=> ensureChoices(selGLName), { once: true }); selGLName.addEventListener('focus', ()=> ensureChoices(selGLName), { once: true }); tr.appendChild(tdGLName);
+          const tdDays = document.createElement('td'); const inDays = document.createElement('input'); inDays.type='number'; inDays.min='0'; inDays.value = rr.daysBetweenBills ?? ''; inDays.style.maxWidth = '80px'; inDays.style.margin = '0 auto'; inDays.oninput = ()=> rr.daysBetweenBills = parseInt(inDays.value||'0',10); tdDays.appendChild(inDays); tr.appendChild(tdDays);
+          const tdAct = document.createElement('td'); tdAct.className='row-actions'; tdAct.style.whiteSpace='nowrap'; const btnDel = document.createElement('button'); btnDel.className='btn secondary'; btnDel.style.padding='6px 10px'; btnDel.textContent='Del'; btnDel.title='Delete'; btnDel.onclick = ()=>{ const idx = state.items.indexOf(rr); if(idx>=0){ state.items.splice(idx,1); render(); } }; const btnDup = document.createElement('button'); btnDup.className='btn'; btnDup.style.padding='6px 10px'; btnDup.textContent='Dup'; btnDup.title='Duplicate'; btnDup.onclick = ()=>{ const copy = {vendorId:rr.vendorId||'',vendorName:rr.vendorName||'',accountNumber:rr.accountNumber||'',propertyId:rr.propertyId||'',propertyName:rr.propertyName||'',glAccountNumber:rr.glAccountNumber||'',glAccountName:rr.glAccountName||'',daysBetweenBills:rr.daysBetweenBills??0}; state.items.push(copy); appendRow(copy); }; tdAct.appendChild(btnDup); tdAct.appendChild(btnDel); tr.appendChild(tdAct);
+          frag.appendChild(tr);
+        }
+      })();
+      tbody.appendChild(frag);
+      state.items = rowsBak;
+    }
+
+    function parsePasted(){
+      const txt = document.getElementById('pasteArea').value || '';
+      const lines = txt.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+      const newItems = [];
+      for(const ln of lines){
+        const parts = ln.split(/\t|,/); // allow tab or comma
+        // Support two orders:
+        // New: Vendor ID | Vendor Name | Account | Property ID | Property Name | GL Number | GL Name | Days
+        // Old: Vendor Name | Account | Property Name | GL Number | GL Name | Days
+        let vendorId='', vendorName='', acct='', propId='', propName='', glNum='', glName='', daysStr='';
+        if (parts.length >= 8) {
+          [vendorId, vendorName, acct, propId, propName, glNum, glName, daysStr] = parts;
+        } else {
+          [vendorName, acct, propName, glNum, glName, daysStr] = [parts[0]||'', parts[1]||'', parts[2]||'', parts[3]||'', parts[4]||'', parts[5]||''];
+        }
+        // lookups
+        let v = null;
+        if (vendorId) v = state.vendors.find(x => String(x.id) === String(vendorId));
+        if (!v && vendorName) v = state.vendors.find(x => (x.name||'').toLowerCase() === vendorName.toLowerCase());
+        let p = null;
+        if (propId) p = state.properties.find(x => String(x.id) === String(propId));
+        if (!p && propName) p = state.properties.find(x => (x.name||'').toLowerCase() === propName.toLowerCase());
+        const g = state.gls.find(x => String(x.number) === String(glNum));
+        const item = {
+          vendorId: v? String(v.id): String(vendorId||''),
+          vendorName: v? v.name: vendorName,
+          accountNumber: acct,
+          propertyId: p? String(p.id): String(propId||''),
+          propertyName: p? p.name: propName,
+          glAccountNumber: g? String(g.number): glNum,
+          glAccountName: g? g.name: glName,
+          daysBetweenBills: parseInt(daysStr||'0',10) || 0
+        };
+        state.items.push(item);
+        newItems.push(item);
+      }
+      document.getElementById('pasteArea').value = '';
+      const tbody = document.getElementById('rows');
+      const frag = document.createDocumentFragment();
+      for(const r of newItems){
+        const tr = document.createElement('tr');
+        const tdVendId = document.createElement('td'); const spVendId = document.createElement('span'); spVendId.textContent = r.vendorId || ''; spVendId.className = 'id-cell'; tdVendId.appendChild(spVendId); tr.appendChild(tdVendId);
+        const tdVend = document.createElement('td'); const selVend = document.createElement('select'); selVend.innerHTML = vendorOptionsHTML; if (r.vendorId){ selVend.value = String(r.vendorId); } selVend.onchange = () => { const v = state.vendors.find(x=>String(x.id)===selVend.value); r.vendorId = selVend.value; r.vendorName = v? v.name : ''; spVendId.textContent = r.vendorId || ''; selVend.title = v? (v.name||'') : ''; }; tdVend.appendChild(selVend); selVend.addEventListener('pointerdown', ()=> ensureChoices(selVend), { once: true }); selVend.addEventListener('focus', ()=> ensureChoices(selVend), { once: true }); tr.appendChild(tdVend);
+        const tdAcct = document.createElement('td'); const inAcct = document.createElement('input'); inAcct.value = r.accountNumber||''; inAcct.oninput = ()=> r.accountNumber = inAcct.value; tdAcct.appendChild(inAcct); tr.appendChild(tdAcct);
+        const tdPropId = document.createElement('td'); const spPropId = document.createElement('span'); spPropId.textContent = r.propertyId || ''; spPropId.className = 'id-cell'; tdPropId.appendChild(spPropId); tr.appendChild(tdPropId);
+        const tdProp = document.createElement('td'); const selProp = document.createElement('select'); selProp.innerHTML = propertyOptionsHTML; if (r.propertyId){ selProp.value = String(r.propertyId); } selProp.onchange = ()=>{ const p = state.properties.find(x=>String(x.id)===selProp.value); r.propertyId = selProp.value; r.propertyName = p? p.name : ''; spPropId.textContent = r.propertyId || ''; }; tdProp.appendChild(selProp); selProp.addEventListener('pointerdown', ()=> ensureChoices(selProp), { once: true }); selProp.addEventListener('focus', ()=> ensureChoices(selProp), { once: true }); tr.appendChild(tdProp);
+        const tdGLN = document.createElement('td'); const selGL = document.createElement('select'); selGL.innerHTML = glNumberOptionsHTML; if (r.glAccountNumber){ selGL.value = String(r.glAccountNumber); } selGL.onchange = ()=>{ const g = state.gls.find(x=>String(x.number)===selGL.value); r.glAccountNumber = selGL.value; r.glAccountName = g? g.name : ''; selGLName.value = r.glAccountName || ''; }; tdGLN.appendChild(selGL); selGL.addEventListener('pointerdown', ()=> ensureChoices(selGL), { once: true }); selGL.addEventListener('focus', ()=> ensureChoices(selGL), { once: true }); tr.appendChild(tdGLN);
+        const tdGLName = document.createElement('td'); const selGLName = document.createElement('select'); selGLName.innerHTML = glNameOptionsHTML; if (r.glAccountName){ selGLName.value = String(r.glAccountName); } selGLName.onchange = ()=>{ const g = state.gls.find(x=>String(x.name||'')===selGLName.value); r.glAccountName = selGLName.value; r.glAccountNumber = g? g.number : r.glAccountNumber; selGL.value = r.glAccountNumber || ''; }; tdGLName.appendChild(selGLName); selGLName.addEventListener('pointerdown', ()=> ensureChoices(selGLName), { once: true }); selGLName.addEventListener('focus', ()=> ensureChoices(selGLName), { once: true }); tr.appendChild(tdGLName);
+        const tdDays = document.createElement('td'); const inDays = document.createElement('input'); inDays.type='number'; inDays.min='0'; inDays.value = r.daysBetweenBills ?? ''; inDays.style.maxWidth = '80px'; inDays.style.margin = '0 auto'; inDays.oninput = ()=> r.daysBetweenBills = parseInt(inDays.value||'0',10); tdDays.appendChild(inDays); tr.appendChild(tdDays);
+        const tdAct = document.createElement('td'); tdAct.className='row-actions'; tdAct.style.whiteSpace='nowrap'; const btnDel = document.createElement('button'); btnDel.className='btn secondary'; btnDel.style.padding='6px 10px'; btnDel.textContent='Del'; btnDel.title='Delete'; btnDel.onclick = ()=>{ const idx = state.items.indexOf(r); if(idx>=0){ state.items.splice(idx,1); render(); } }; const btnDup = document.createElement('button'); btnDup.className='btn'; btnDup.style.padding='6px 10px'; btnDup.textContent='Dup'; btnDup.title='Duplicate'; btnDup.onclick = ()=>{ const copy = {vendorId:r.vendorId||'',vendorName:r.vendorName||'',accountNumber:r.accountNumber||'',propertyId:r.propertyId||'',propertyName:r.propertyName||'',glAccountNumber:r.glAccountNumber||'',glAccountName:r.glAccountName||'',daysBetweenBills:r.daysBetweenBills??0}; state.items.push(copy); appendRow(copy); }; tdAct.appendChild(btnDup); tdAct.appendChild(btnDel); tr.appendChild(tdAct);
+        frag.appendChild(tr);
+      }
+      tbody.appendChild(frag);
+    }
+
+    // helper to append a new row DOM for an existing data object (used by Dup)
+    function appendRow(r){
+      const tbody = document.getElementById('rows');
+      const tr = document.createElement('tr');
+      const tdVendId = document.createElement('td'); const spVendId = document.createElement('span'); spVendId.textContent = r.vendorId || ''; spVendId.className = 'id-cell'; tdVendId.appendChild(spVendId); tr.appendChild(tdVendId);
+      const tdVend = document.createElement('td'); const selVend = document.createElement('select'); selVend.innerHTML = vendorOptionsHTML; if (r.vendorId){ selVend.value = String(r.vendorId); } selVend.onchange = () => { const v = state.vendors.find(x=>String(x.id)===selVend.value); r.vendorId = selVend.value; r.vendorName = v? v.name : ''; spVendId.textContent = r.vendorId || ''; selVend.title = v? (v.name||'') : ''; }; tdVend.appendChild(selVend); selVend.addEventListener('pointerdown', ()=> ensureChoices(selVend), { once: true }); selVend.addEventListener('focus', ()=> ensureChoices(selVend), { once: true }); tr.appendChild(tdVend);
+      const tdAcct = document.createElement('td'); const inAcct = document.createElement('input'); inAcct.value = r.accountNumber||''; inAcct.oninput = ()=> r.accountNumber = inAcct.value; tdAcct.appendChild(inAcct); tr.appendChild(tdAcct);
+      const tdPropId = document.createElement('td'); const spPropId = document.createElement('span'); spPropId.textContent = r.propertyId || ''; spPropId.className = 'id-cell'; tdPropId.appendChild(spPropId); tr.appendChild(tdPropId);
+      const tdProp = document.createElement('td'); const selProp = document.createElement('select'); selProp.innerHTML = propertyOptionsHTML; if (r.propertyId){ selProp.value = String(r.propertyId); } selProp.onchange = ()=>{ const p = state.properties.find(x=>String(x.id)===selProp.value); r.propertyId = selProp.value; r.propertyName = p? p.name : ''; spPropId.textContent = r.propertyId || ''; }; tdProp.appendChild(selProp); selProp.addEventListener('pointerdown', ()=> ensureChoices(selProp), { once: true }); selProp.addEventListener('focus', ()=> ensureChoices(selProp), { once: true }); tr.appendChild(tdProp);
+      const tdGLN = document.createElement('td'); const selGL = document.createElement('select'); selGL.innerHTML = glNumberOptionsHTML; if (r.glAccountNumber){ selGL.value = String(r.glAccountNumber); } selGL.onchange = ()=>{ const g = state.gls.find(x=>String(x.number)===selGL.value); r.glAccountNumber = selGL.value; r.glAccountName = g? g.name : ''; selGLName.value = r.glAccountName || ''; }; tdGLN.appendChild(selGL); selGL.addEventListener('pointerdown', ()=> ensureChoices(selGL), { once: true }); selGL.addEventListener('focus', ()=> ensureChoices(selGL), { once: true }); tr.appendChild(tdGLN);
+      const tdGLName = document.createElement('td'); const selGLName = document.createElement('select'); selGLName.innerHTML = glNameOptionsHTML; if (r.glAccountName){ selGLName.value = String(r.glAccountName); } selGLName.onchange = ()=>{ const g = state.gls.find(x=>String(x.name||'')===selGLName.value); r.glAccountName = selGLName.value; r.glAccountNumber = g? g.number : r.glAccountNumber; selGL.value = r.glAccountNumber || ''; }; tdGLName.appendChild(selGLName); selGLName.addEventListener('pointerdown', ()=> ensureChoices(selGLName), { once: true }); selGLName.addEventListener('focus', ()=> ensureChoices(selGLName), { once: true }); tr.appendChild(tdGLName);
+      const tdDays = document.createElement('td'); const inDays = document.createElement('input'); inDays.type='number'; inDays.min='0'; inDays.value = r.daysBetweenBills ?? ''; inDays.style.maxWidth = '80px'; inDays.style.margin = '0 auto'; inDays.oninput = ()=> r.daysBetweenBills = parseInt(inDays.value||'0',10); tdDays.appendChild(inDays); tr.appendChild(tdDays);
+      const tdAct = document.createElement('td'); tdAct.className='row-actions'; tdAct.style.whiteSpace='nowrap'; const btnDel = document.createElement('button'); btnDel.className='btn secondary'; btnDel.style.padding='6px 10px'; btnDel.textContent='Del'; btnDel.title='Delete'; btnDel.onclick = ()=>{ const idx = state.items.indexOf(r); if(idx>=0){ state.items.splice(idx,1); render(); } }; const btnDup = document.createElement('button'); btnDup.className='btn'; btnDup.style.padding='6px 10px'; btnDup.textContent='Dup'; btnDup.title='Duplicate'; btnDup.onclick = ()=>{ const copy = {vendorId:r.vendorId||'',vendorName:r.vendorName||'',accountNumber:r.accountNumber||'',propertyId:r.propertyId||'',propertyName:r.propertyName||'',glAccountNumber:r.glAccountNumber||'',glAccountName:r.glAccountName||'',daysBetweenBills:r.daysBetweenBills??0}; state.items.push(copy); appendRow(copy); }; tdAct.appendChild(btnDup); tdAct.appendChild(btnDel); tr.appendChild(tdAct);
+      tbody.appendChild(tr);
+    }
+
+    async function submitAll(){
+      const payload = { items: state.items.map(r=>({
+        vendorId: r.vendorId||'', vendorName: r.vendorName||'', accountNumber: r.accountNumber||'', propertyId: r.propertyId||'', propertyName: r.propertyName||'', glAccountNumber: r.glAccountNumber||'', glAccountName: r.glAccountName||'', daysBetweenBills: Number(r.daysBetweenBills||0)
+      }))};
+      const r = await fetch('/api/config/accounts-to-track', {method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify(payload)});
+      if(!r.ok){
+        let body = '';
+        try { body = await r.text(); } catch(e) {}
+        try { const j = JSON.parse(body); showToast('Save failed: ' + (j.error||'') + (j.ddb_ok!==undefined?` | ddb_ok=${j.ddb_ok}`:'' ) + (j.s3_ok!==undefined?` | s3_ok=${j.s3_ok}`:'' ), 'err'); }
+        catch { showToast('Save failed', 'err'); }
+        return;
+      }
+      const j = await r.json();
+      showToast('Saved ' + (j.saved||0) + ' items' + (j.ddb_ok!==undefined?` | ddb=${j.ddb_ok?'ok':'fail'}`:'' ) + (j.s3_ok!==undefined?` | s3=${j.s3_ok?'ok':'fail'}`:'' ), 'ok');
+    }
+
+    document.getElementById('addRow').addEventListener('click', addEmptyRow);
+    document.getElementById('addPasted').addEventListener('click', parsePasted);
+    document.getElementById('submitBtn').addEventListener('click', submitAll);
+    bindSorting();
+    bindFilters();
+    loadAll().catch(()=> alert('Failed to load catalogs/config'));
+  
+    // IMPROVE modal functionality
+    (function(){
+      function showImproveToast(msg, type){
+        const t = document.getElementById('improveToast');
+        t.textContent = msg;
+        t.className = 'improve-toast ' + (type === 'ok' ? 'ok' : 'err');
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+      }
+
+      const modal = document.getElementById('improveModal');
+      const improveBtn = document.getElementById('improveBtn');
+      const cancelBtn = document.getElementById('cancelReport');
+      const submitBtn = document.getElementById('submitReport');
+      const titleInput = document.getElementById('reportTitle');
+      const descInput = document.getElementById('reportDesc');
+
+      if (!improveBtn) return; // Guard if button not found
+
+      improveBtn.addEventListener('click', () => {
+        modal.classList.add('show');
+        titleInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('show');
+        titleInput.value = '';
+        descInput.value = '';
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        }
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = descInput.value.trim();
+
+        if (!title || !description) {
+          showImproveToast('Please fill in both title and description', 'err');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/debug/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              title: title,
+              description: description,
+              page_url: window.location.href
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to submit report');
+          }
+
+          showImproveToast('Report submitted successfully', 'ok');
+          modal.classList.remove('show');
+          titleInput.value = '';
+          descInput.value = '';
+        } catch (e) {
+          showImproveToast('Error submitting report', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

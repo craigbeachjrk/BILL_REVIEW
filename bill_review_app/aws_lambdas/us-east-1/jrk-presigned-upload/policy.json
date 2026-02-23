@@ -1,0 +1,4 @@
+﻿{
+    "Policy":  "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"apigw-invoke\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:789814232318:function:jrk-presigned-upload\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:789814232318:p9fk3slot9/*/*/upload-token\"}}}]}",
+    "RevisionId":  "8d82b6b7-23a8-4352-8c34-67790422cba7"
+}

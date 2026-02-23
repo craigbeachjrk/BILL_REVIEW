@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UBI Batch Management · Bill Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:10}
+    .logout{display:flex;gap:8px;align-items:center}
+    .logout form{display:inline}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .btn.success{background:#10b981}
+    .btn.danger{background:#ef4444}
+    .btn.warning{background:#f59e0b}
+    .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
+    h1{margin:0 0 20px 0}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:32px;margin-bottom:20px}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+    select,input[type="date"],input[type="text"],textarea{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;table-layout:auto}
+    th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+    th{background:#f9fafb;font-weight:600;position:sticky;top:0}
+    tr:hover{background:#f9fafb}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.draft{background:#fef3c7;color:#92400e}
+    .badge.finalized{background:#dbeafe;color:#1e40af}
+    .badge.exported{background:#d1fae5;color:#065f46}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .summary{display:flex;gap:24px;margin-bottom:16px}
+    .summary-item{padding:12px 16px;background:#fff;border-radius:8px;flex:1}
+    .summary-label{font-size:12px;color:#64748b;margin-bottom:4px}
+    .summary-value{font-size:20px;font-weight:600}
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:800px;width:calc(100% - 80px);padding:36px 40px;margin:0 auto;max-height:80vh;overflow-y:auto}
+    .modal-box h2{margin:0 0 20px 0;font-size:18px}
+    .modal-box label{display:block;margin-bottom:6px;font-weight:600;font-size:13px}
+    .modal-box input,.modal-box textarea{display:block;width:calc(100% - 24px);max-width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;font-family:inherit;font-size:14px;box-sizing:border-box}
+    .modal-box textarea{min-height:120px;resize:vertical}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .line-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:12px}
+    .line-item:last-child{border-bottom:none}
+    .line-item:hover{background:#f9fafb}
+    .sql-output{background:#1e293b;color:#e2e8f0;padding:16px;border-radius:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;margin-top:16px}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK · UBI Batch Management</a></div>
+    <div class="logout">
+      <a class="btn secondary" href="/">Home</a>
+      <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+    <h1>UBI Batch Management</h1>
+
+    <div class="card">
+      <div class="controls">
+        <button class="btn success" onclick="openCreateBatchModal()">Create New Batch</button>
+        <button class="btn secondary" onclick="loadBatches()">Refresh</button>
+      </div>
+
+      <div id="loading" class="loading">Click "Create New Batch" to start</div>
+
+      <div id="batchesTable" style="display:none;max-height:600px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <!-- Create Batch Modal -->
+  <div class="modal-overlay" id="createBatchModal">
+    <div class="modal-box">
+      <h2>Create New UBI Batch</h2>
+      <label for="batchName">Batch Name</label>
+      <input type="text" id="batchName" placeholder="e.g., Q1 2024 UBI Billback" />
+      <label for="periodStart">Period Start</label>
+      <input type="date" id="periodStart" />
+      <label for="periodEnd">Period End</label>
+      <input type="date" id="periodEnd" />
+      <label for="memo">Memo (applies to all rows in Snowflake export)</label>
+      <textarea id="memo" placeholder="e.g., Q1 2024 utilities billback to residents"></textarea>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeCreateBatchModal()">Cancel</button>
+        <button class="btn success" onclick="submitCreateBatch()">Create Batch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Detail Modal -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal-box">
+      <h2 id="modalTitle">Batch Detail</h2>
+      <div id="modalContent"></div>
+      <div class="modal-actions" id="modalActions">
+        <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export SQL Modal -->
+  <div class="modal-overlay" id="exportModal">
+    <div class="modal-box">
+      <h2>Snowflake Export SQL</h2>
+      <div id="exportContent"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeExportModal()">Close</button>
+        <button class="btn success" onclick="copyToClipboard()">Copy to Clipboard</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let batches = [];
+    let currentBatchForExport = null;
+
+    async function loadBatches() {
+      const loading = document.getElementById('loading');
+      const table = document.getElementById('batchesTable');
+
+      loading.style.display = 'block';
+      loading.textContent = 'Loading batches...';
+      table.style.display = 'none';
+
+      try {
+        const response = await fetch('/api/ubi-batch/list');
+        if (!response.ok) throw new Error('Failed to load batches');
+
+        const data = await response.json();
+        batches = data.items || [];
+
+        loading.style.display = 'none';
+
+        if (batches.length === 0) {
+          table.innerHTML = '<div class="loading">No batches found. Click "Create New Batch" to start.</div>';
+          table.style.display = 'block';
+          return;
+        }
+
+        renderBatches();
+        table.style.display = 'block';
+      } catch (e) {
+        console.error('Error loading batches:', e);
+        loading.textContent = 'Error loading batches. Please try again.';
+        showToast('Error loading batches', 'err');
+      }
+    }
+
+    function renderBatches() {
+      const container = document.getElementById('batchesTable');
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th>Batch Name</th>
+              <th>Period</th>
+              <th>Status</th>
+              <th>Master Bills</th>
+              <th>Properties</th>
+              <th>Total Amount</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      batches.forEach(batch => {
+        const statusClass = batch.status === 'exported' ? 'exported' : (batch.status === 'finalized' ? 'finalized' : 'draft');
+        const statusBadge = `<span class="badge ${statusClass}">${(batch.status || 'draft').toUpperCase()}</span>`;
+        const periodStr = `${batch.period_start || 'N/A'} to ${batch.period_end || 'N/A'}`;
+
+        html += `
+          <tr>
+            <td style="font-weight:600">${batch.batch_name || batch.batch_id}</td>
+            <td>${periodStr}</td>
+            <td>${statusBadge}</td>
+            <td>${batch.total_master_bills || 0}</td>
+            <td>${batch.properties_count || 0}</td>
+            <td style="font-weight:600;color:#0ea5e9">$${(batch.total_amount || 0).toFixed(2)}</td>
+            <td style="font-size:11px;color:#64748b">${formatDate(batch.created_utc)}</td>
+            <td>
+              <button class="btn small" onclick="viewBatchDetail('${batch.batch_id.replace(/'/g, "\\'")}')">View</button>
+              ${batch.status === 'draft' ? `<button class="btn small success" onclick="finalizeBatch('${batch.batch_id.replace(/'/g, "\\'")}')">Finalize</button>` : ''}
+              ${batch.status === 'draft' ? `<button class="btn small danger" onclick="deleteBatch('${batch.batch_id.replace(/'/g, "\\'")}')">Delete</button>` : ''}
+              ${batch.status === 'finalized' ? `<button class="btn small warning" onclick="exportToSnowflake('${batch.batch_id.replace(/'/g, "\\'")}')">Export</button>` : ''}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+      container.innerHTML = html;
+    }
+
+    function formatDate(utcString) {
+      if (!utcString) return 'N/A';
+      const date = new Date(utcString);
+      return date.toLocaleString();
+    }
+
+    function openCreateBatchModal() {
+      document.getElementById('createBatchModal').classList.add('show');
+      document.getElementById('batchName').focus();
+    }
+
+    function closeCreateBatchModal() {
+      document.getElementById('createBatchModal').classList.remove('show');
+      document.getElementById('batchName').value = '';
+      document.getElementById('periodStart').value = '';
+      document.getElementById('periodEnd').value = '';
+      document.getElementById('memo').value = '';
+    }
+
+    async function submitCreateBatch() {
+      const batchName = document.getElementById('batchName').value.trim();
+      const periodStart = document.getElementById('periodStart').value;
+      const periodEnd = document.getElementById('periodEnd').value;
+      const memo = document.getElementById('memo').value.trim();
+
+      if (!batchName) {
+        showToast('Please enter a batch name', 'err');
+        return;
+      }
+
+      if (!periodStart || !periodEnd) {
+        showToast('Please select both period start and end dates', 'err');
+        return;
+      }
+
+      if (!memo) {
+        showToast('Please enter a memo', 'err');
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('batch_name', batchName);
+        fd.append('period_start', periodStart);
+        fd.append('period_end', periodEnd);
+        fd.append('memo', memo);
+
+        const response = await fetch('/api/ubi-batch/create', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to create batch');
+        }
+
+        const data = await response.json();
+        const batch = data.batch;
+
+        showToast(`Created batch: ${batch.batch_name} (${batch.total_master_bills} bills, $${batch.total_amount.toFixed(2)})`, 'ok');
+        closeCreateBatchModal();
+        await loadBatches();
+      } catch (e) {
+        console.error('Error creating batch:', e);
+        showToast(`Error creating batch: ${e.message}`, 'err');
+      }
+    }
+
+    async function viewBatchDetail(batchId) {
+      try {
+        const response = await fetch(`/api/ubi-batch/detail/${encodeURIComponent(batchId)}`);
+        if (!response.ok) throw new Error('Failed to load batch detail');
+
+        const batch = await response.json();
+
+        const statusClass = batch.status === 'exported' ? 'exported' : (batch.status === 'finalized' ? 'finalized' : 'draft');
+        const statusBadge = `<span class="badge ${statusClass}">${(batch.status || 'draft').toUpperCase()}</span>`;
+
+        let html = `
+          <div style="background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:16px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
+              <div><strong>Batch Name:</strong> ${batch.batch_name || batch.batch_id}</div>
+              <div><strong>Status:</strong> ${statusBadge}</div>
+              <div><strong>Period:</strong> ${batch.period_start} to ${batch.period_end}</div>
+              <div><strong>Total Amount:</strong> $${(batch.total_amount || 0).toFixed(2)}</div>
+              <div><strong>Master Bills:</strong> ${batch.total_master_bills || 0}</div>
+              <div><strong>Properties:</strong> ${batch.properties_count || 0}</div>
+              ${batch.run_date ? `<div><strong>Run Date:</strong> ${batch.run_date}</div>` : ''}
+            </div>
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid #e5e7eb">
+              <div><strong>Memo:</strong></div>
+              <div style="font-size:12px;color:#64748b;margin-top:4px">${batch.memo || 'N/A'}</div>
+            </div>
+          </div>
+
+          <h3 style="margin:20px 0 12px 0;font-size:14px;font-weight:600">Master Bills (${batch.master_bills ? batch.master_bills.length : 0})</h3>
+          <div style="max-height:400px;overflow-y:auto">
+        `;
+
+        if (batch.master_bills && batch.master_bills.length > 0) {
+          batch.master_bills.forEach(mb => {
+            html += `
+              <div class="line-item">
+                <div style="flex:1">
+                  <div><strong>${mb.property_name}</strong> - ${mb.ar_code_mapping} (${mb.utility_name})</div>
+                  <div style="font-size:11px;color:#64748b;margin-top:2px">
+                    Period: ${mb.billback_month_start} to ${mb.billback_month_end}
+                  </div>
+                </div>
+                <div style="text-align:right;font-weight:600;color:#0ea5e9">$${(mb.utility_amount || 0).toFixed(2)}</div>
+              </div>
+            `;
+          });
+        } else {
+          html += '<div class="loading">No master bills in this batch</div>';
+        }
+
+        html += '</div>';
+
+        document.getElementById('modalTitle').textContent = `Batch: ${batch.batch_name}`;
+        document.getElementById('modalContent').innerHTML = html;
+
+        // Update modal actions based on batch status
+        let actionsHtml = '<button class="btn secondary" onclick="closeDetailModal()">Close</button>';
+        if (batch.status === 'draft') {
+          actionsHtml = `
+            <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+            <button class="btn danger" onclick="deleteBatchFromDetail('${batch.batch_id.replace(/'/g, "\\'")}')">Delete</button>
+            <button class="btn success" onclick="finalizeBatchFromDetail('${batch.batch_id.replace(/'/g, "\\'")}')">Finalize</button>
+          `;
+        } else if (batch.status === 'finalized') {
+          actionsHtml = `
+            <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+            <button class="btn warning" onclick="exportToSnowflakeFromDetail('${batch.batch_id.replace(/'/g, "\\'")}')">Export to Snowflake</button>
+          `;
+        }
+        document.getElementById('modalActions').innerHTML = actionsHtml;
+
+        document.getElementById('detailModal').classList.add('show');
+      } catch (e) {
+        console.error('Error loading batch detail:', e);
+        showToast('Error loading batch detail', 'err');
+      }
+    }
+
+    function closeDetailModal() {
+      document.getElementById('detailModal').classList.remove('show');
+    }
+
+    async function finalizeBatch(batchId) {
+      if (!confirm('Finalize this batch? This will set the run date and mark it ready for export.')) {
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('batch_id', batchId);
+
+        const response = await fetch('/api/ubi-batch/finalize', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) throw new Error('Failed to finalize batch');
+
+        showToast('Batch finalized successfully', 'ok');
+        await loadBatches();
+      } catch (e) {
+        console.error('Error finalizing batch:', e);
+        showToast('Error finalizing batch', 'err');
+      }
+    }
+
+    async function finalizeBatchFromDetail(batchId) {
+      closeDetailModal();
+      await finalizeBatch(batchId);
+    }
+
+    async function deleteBatch(batchId) {
+      if (!confirm('Delete this batch? This cannot be undone.')) {
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('batch_id', batchId);
+
+        const response = await fetch('/api/ubi-batch/delete', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to delete batch');
+        }
+
+        showToast('Batch deleted successfully', 'ok');
+        await loadBatches();
+      } catch (e) {
+        console.error('Error deleting batch:', e);
+        showToast(`Error deleting batch: ${e.message}`, 'err');
+      }
+    }
+
+    async function deleteBatchFromDetail(batchId) {
+      closeDetailModal();
+      await deleteBatch(batchId);
+    }
+
+    async function exportToSnowflake(batchId) {
+      if (!confirm('Export this batch to Snowflake? This will generate SQL INSERT statements and mark the batch as exported.')) {
+        return;
+      }
+
+      try {
+        const fd = new FormData();
+        fd.append('batch_id', batchId);
+
+        const response = await fetch('/api/ubi-batch/export-snowflake', {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to export batch');
+        }
+
+        const data = await response.json();
+        currentBatchForExport = data.sql;
+
+        showToast(`Exported ${data.rows_exported} rows`, 'ok');
+
+        // Show SQL in modal
+        document.getElementById('exportContent').innerHTML = `
+          <div style="font-size:13px;margin-bottom:12px">
+            <strong>Rows Exported:</strong> ${data.rows_exported}<br>
+            <strong>Status:</strong> <span class="badge exported">EXPORTED</span>
+          </div>
+          <div class="sql-output" id="sqlOutput">${escapeHtml(data.sql)}</div>
+        `;
+        document.getElementById('exportModal').classList.add('show');
+
+        await loadBatches();
+      } catch (e) {
+        console.error('Error exporting batch:', e);
+        showToast(`Error exporting batch: ${e.message}`, 'err');
+      }
+    }
+
+    async function exportToSnowflakeFromDetail(batchId) {
+      closeDetailModal();
+      await exportToSnowflake(batchId);
+    }
+
+    function closeExportModal() {
+      document.getElementById('exportModal').classList.remove('show');
+    }
+
+    function copyToClipboard() {
+      if (!currentBatchForExport) {
+        showToast('No SQL to copy', 'err');
+        return;
+      }
+
+      navigator.clipboard.writeText(currentBatchForExport).then(() => {
+        showToast('SQL copied to clipboard', 'ok');
+      }).catch(() => {
+        showToast('Failed to copy to clipboard', 'err');
+      });
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function showToast(msg, type){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // Close modals on overlay click
+    document.getElementById('createBatchModal').addEventListener('click', (e) => {
+      if (e.target.id === 'createBatchModal') {
+        closeCreateBatchModal();
+      }
+    });
+
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+      if (e.target.id === 'detailModal') {
+        closeDetailModal();
+      }
+    });
+
+    document.getElementById('exportModal').addEventListener('click', (e) => {
+      if (e.target.id === 'exportModal') {
+        closeExportModal();
+      }
+    });
+
+    // Initialize - load batches on page load
+    loadBatches();
+  </script>
+</body>
+</html>

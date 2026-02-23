@@ -1,0 +1,8 @@
+{
+  "FunctionName": "jrk-bw-lookup",
+  "Runtime": "python3.12",
+  "Handler": "lambda_bw_lookup.handler",
+  "MemorySize": 256,
+  "Timeout": 60,
+  "Description": "Bitwarden credential lookup for Directed Workflow — returns portal URL and username only (no passwords)"
+}
