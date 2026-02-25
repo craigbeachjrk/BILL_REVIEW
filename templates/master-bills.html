@@ -968,7 +968,7 @@
                       })() :
                       group.lines.some(l => l.is_manual) ?
                         `<button class="btn small danger" onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" title="Delete this manual entry">Delete</button>` :
-                        `<button class="btn small danger" onclick="event.stopPropagation(); unassignAccount('${escapedHashes}', '${escapedBillIds}', '${displayName.replace(/'/g, "\\'")}')" title="Unassign this invoice">Unassign</button>`
+                        `<button class="btn small danger" onclick="event.stopPropagation(); unassignAccount(this, '${escapedHashes}', '${escapedBillIds}', '${displayName.replace(/'/g, "\\'")}')" title="Unassign this invoice">Unassign</button>`
                     }
                     <span class="expand-icon" id="icon-${groupId}">&#9660;</span>
                   </div>
@@ -1079,7 +1079,7 @@
       document.getElementById('detailModal').classList.remove('show');
     }
 
-    async function unassignAccount(lineHashes, billIds, accountName) {
+    async function unassignAccount(btnEl, lineHashes, billIds, accountName) {
       if (!lineHashes || !billIds) {
         showToast('Missing line data for unassign', 'err');
         return;
@@ -1118,9 +1118,10 @@
 
         if (response.ok) {
           const result = await response.json();
-          showToast(`Unassigned ${result.unassigned} line item(s). Refresh data to see changes.`, 'ok');
-          closeDetailModal();
-          generateMasterBills();
+          showToast(`Unassigned ${result.unassigned} line item(s).`, 'ok');
+          // Remove the account group from the modal DOM instead of full reload
+          const groupEl = btnEl ? btnEl.closest('.account-group') : null;
+          if (groupEl) groupEl.remove();
         } else {
           const errData = await response.json();
           console.error('Unassign error:', errData);

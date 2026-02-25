@@ -525,6 +525,7 @@ function showDetail(rowIdx) {
   html += '<th style="padding:8px;text-align:left">UOM</th>';
   html += '<th style="padding:8px;text-align:left">Conversion</th>';
   html += '<th style="padding:8px;text-align:right">Gallons</th>';
+  html += '<th style="padding:8px;text-align:center">PDF</th>';
   html += '</tr></thead><tbody>';
 
   let runAmt = 0, runGal = 0, runRaw = 0;
@@ -541,6 +542,16 @@ function showDetail(rowIdx) {
     html += `<td style="padding:6px 8px"><span class="uom-badge">${esc(ln.raw_uom || 'none')}</span></td>`;
     html += `<td style="padding:6px 8px;font-size:.75rem">${esc(ln.conversion)}</td>`;
     html += `<td style="padding:6px 8px;text-align:right;font-family:monospace">${fmtNum(Math.round(ln.gallons))}</td>`;
+    // View PDF button
+    const pdfKey = ln.pdf_s3_key || "";
+    if (pdfKey) {
+      html += `<td style="padding:6px 8px;text-align:center"><a href="/pdf?k=${encodeURIComponent(pdfKey)}" target="_blank" title="View source invoice PDF" style="display:inline-block;padding:3px 8px;border-radius:6px;background:#2563eb;color:#fff;font-size:.72rem;font-weight:600;text-decoration:none;white-space:nowrap">VIEW</a></td>`;
+    } else if (ln.jsonl_key) {
+      // Fallback: open the JSONL as raw text (less useful but still provides traceability)
+      html += `<td style="padding:6px 8px;text-align:center"><span style="font-size:.7rem;color:#94a3b8" title="No PDF link found — JSONL key: ${esc(ln.jsonl_key)}">no PDF</span></td>`;
+    } else {
+      html += `<td style="padding:6px 8px;text-align:center"><span style="font-size:.7rem;color:#94a3b8">—</span></td>`;
+    }
     html += '</tr>';
   });
 
@@ -551,13 +562,14 @@ function showDetail(rowIdx) {
   html += `<td style="padding:8px;text-align:right;font-family:monospace">${fmtNum(runRaw.toFixed(2))}</td>`;
   html += '<td colspan="2" style="padding:8px"></td>';
   html += `<td style="padding:8px;text-align:right;font-family:monospace">${fmtNum(Math.round(runGal))}</td>`;
+  html += '<td></td>';
   html += '</tr>';
 
   // Rate calculation
   const calcRate = runGal > 0 ? (runAmt / runGal) : null;
   html += '<tr style="background:#eff6ff">';
   html += '<td colspan="3" style="padding:8px;font-weight:700">RATE ($/gal)</td>';
-  html += `<td colspan="5" style="padding:8px;font-family:monospace;font-weight:700;font-size:1rem">${calcRate != null ? '$' + runAmt.toFixed(2) + ' / ' + fmtNum(Math.round(runGal)) + ' gal = ' + calcRate.toFixed(6) : 'N/A (no volume)'}</td>`;
+  html += `<td colspan="6" style="padding:8px;font-family:monospace;font-weight:700;font-size:1rem">${calcRate != null ? '$' + runAmt.toFixed(2) + ' / ' + fmtNum(Math.round(runGal)) + ' gal = ' + calcRate.toFixed(6) : 'N/A (no volume)'}</td>`;
   html += '</tr>';
 
   html += '</tbody></table>';

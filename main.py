@@ -30812,10 +30812,12 @@ def _submeter_rates_scan(ubi_period: str):
                     if not ubi_assignments:
                         lp = rec.get("ubi_period", "")
                         if lp == ubi_period:
+                            rec["_jsonl_key"] = key
                             items.append(rec)
                     else:
                         for asn in ubi_assignments:
                             if asn.get("period") == ubi_period:
+                                rec["_jsonl_key"] = key
                                 items.append(rec)
                                 break
                 return items
@@ -30938,6 +30940,16 @@ def _submeter_rates_scan(ubi_period: str):
             acct = rec.get("Account Number") or rec.get("account_number") or ""
             svc_start = rec.get("Bill Period Start") or rec.get("Service Start Date") or ""
             svc_end = rec.get("Bill Period End") or rec.get("Service End Date") or ""
+            # PDF location: prefer source_input_key, then pdfKey, then PDF_LINK if it looks like an S3 path
+            pdf_s3_key = (rec.get("source_input_key") or rec.get("pdfKey") or rec.get("__pdf_s3_key__") or "").strip()
+            if not pdf_s3_key:
+                _pl = (rec.get("PDF_LINK") or "").strip()
+                if _pl and ("Bill_Parser" in _pl or _pl.startswith("s3://") or ("/" in _pl and not _pl.startswith("http"))):
+                    pdf_s3_key = _pl.replace("s3://", "").lstrip("/")
+                    if pdf_s3_key.startswith(f"{BUCKET}/"):
+                        pdf_s3_key = pdf_s3_key[len(BUCKET) + 1:]
+            jsonl_key = rec.get("_jsonl_key", "")
+            line_pdf_id = pdf_id_from_key(jsonl_key) if jsonl_key else ""
             agg[agg_key]["source_lines"].append({
                 "vendor": vendor,
                 "account": acct,
@@ -30947,6 +30959,9 @@ def _submeter_rates_scan(ubi_period: str):
                 "raw_uom": (raw_uom or "").strip(),
                 "gallons": round(gallons, 2),
                 "conversion": conv_label,
+                "pdf_s3_key": pdf_s3_key,
+                "jsonl_key": jsonl_key,
+                "pdf_id": line_pdf_id,
             })
 
         # ---- Build rows ----
