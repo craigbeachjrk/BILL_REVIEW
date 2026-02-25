@@ -142,6 +142,16 @@
     </div>
   </div>
 
+  <!-- Drill-down modal -->
+  <div id="detailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;overflow-y:auto" onclick="if(event.target===this)closeDetail()">
+    <div style="background:#fff;max-width:900px;margin:40px auto;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);padding:28px;position:relative">
+      <button onclick="closeDetail()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:1.4rem;cursor:pointer;color:#94a3b8">&times;</button>
+      <h2 id="detailTitle" style="margin-bottom:4px;font-size:1.2rem"></h2>
+      <div id="detailSubtitle" style="font-size:.85rem;color:#64748b;margin-bottom:16px"></div>
+      <div id="detailContent"></div>
+    </div>
+  </div>
+
 <script>
 const CALC_OPTIONS = ["From Invoice & Volume", "Set by NCUC", "Sewer is RUBS"];
 const UOM_OPTIONS = [
@@ -427,7 +437,7 @@ function renderTable() {
     const issue = isIssueRow(row);
     const rowIdx = allRows.indexOf(row);
     html += `<tr${issue ? ' class="highlight"' : ''}>`;
-    html += `<td>${esc(row.property_name)}<br><span style="font-size:.7rem;color:#94a3b8">${esc(row.ar_code || "")}</span></td>`;
+    html += `<td><a href="#" onclick="event.preventDefault();showDetail(${rowIdx})" style="color:#2563eb;text-decoration:none;font-weight:600">${esc(row.property_name)}</a><br><span style="font-size:.7rem;color:#94a3b8">${esc(row.ar_code || "")}</span></td>`;
     html += `<td>${esc(row.utility_name)}</td>`;
     html += `<td class="total-cell">${row.invoice_total != null ? "$" + fmtNum(row.invoice_total.toFixed(2)) : "-"}</td>`;
     // Raw consumption + invoice UOM badge
@@ -495,6 +505,68 @@ function setUomOverride(rowIdx, val) {
   renderTable();
   // Auto-save config in background
   debouncedSaveConfig();
+}
+
+/* ---- Drill-down detail ---- */
+function showDetail(rowIdx) {
+  const row = allRows[rowIdx];
+  const lines = row.source_lines || [];
+  document.getElementById("detailTitle").textContent = row.property_name + " — " + row.utility_name;
+  document.getElementById("detailSubtitle").textContent =
+    `${lines.length} invoice line(s)  |  Total: $${fmtNum(row.invoice_total.toFixed(2))}  |  Volume: ${fmtNum(Math.round(row.volume_total_gals))} gal`;
+
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:.82rem">';
+  html += '<thead><tr style="background:#f1f5f9">';
+  html += '<th style="padding:8px;text-align:left">#</th>';
+  html += '<th style="padding:8px;text-align:left">Vendor / Account</th>';
+  html += '<th style="padding:8px;text-align:left">Service Period</th>';
+  html += '<th style="padding:8px;text-align:right">Amount ($)</th>';
+  html += '<th style="padding:8px;text-align:right">Raw Consumption</th>';
+  html += '<th style="padding:8px;text-align:left">UOM</th>';
+  html += '<th style="padding:8px;text-align:left">Conversion</th>';
+  html += '<th style="padding:8px;text-align:right">Gallons</th>';
+  html += '</tr></thead><tbody>';
+
+  let runAmt = 0, runGal = 0, runRaw = 0;
+  lines.forEach((ln, i) => {
+    runAmt += ln.amount || 0;
+    runGal += ln.gallons || 0;
+    runRaw += ln.raw_consumption || 0;
+    html += `<tr style="border-bottom:1px solid #e5e7eb${ln.gallons === 0 ? ';background:#fffbeb' : ''}">`;
+    html += `<td style="padding:6px 8px;color:#94a3b8">${i + 1}</td>`;
+    html += `<td style="padding:6px 8px">${esc(ln.vendor)}${ln.account ? '<br><span style="font-size:.7rem;color:#94a3b8">' + esc(ln.account) + '</span>' : ''}</td>`;
+    html += `<td style="padding:6px 8px;font-size:.78rem">${esc(ln.service_period)}</td>`;
+    html += `<td style="padding:6px 8px;text-align:right;font-family:monospace">$${fmtNum(ln.amount.toFixed(2))}</td>`;
+    html += `<td style="padding:6px 8px;text-align:right;font-family:monospace">${ln.raw_consumption ? fmtNum(ln.raw_consumption.toFixed(2)) : '-'}</td>`;
+    html += `<td style="padding:6px 8px"><span class="uom-badge">${esc(ln.raw_uom || 'none')}</span></td>`;
+    html += `<td style="padding:6px 8px;font-size:.75rem">${esc(ln.conversion)}</td>`;
+    html += `<td style="padding:6px 8px;text-align:right;font-family:monospace">${fmtNum(Math.round(ln.gallons))}</td>`;
+    html += '</tr>';
+  });
+
+  // Running total row
+  html += '<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1">';
+  html += '<td colspan="3" style="padding:8px">TOTAL</td>';
+  html += `<td style="padding:8px;text-align:right;font-family:monospace">$${fmtNum(runAmt.toFixed(2))}</td>`;
+  html += `<td style="padding:8px;text-align:right;font-family:monospace">${fmtNum(runRaw.toFixed(2))}</td>`;
+  html += '<td colspan="2" style="padding:8px"></td>';
+  html += `<td style="padding:8px;text-align:right;font-family:monospace">${fmtNum(Math.round(runGal))}</td>`;
+  html += '</tr>';
+
+  // Rate calculation
+  const calcRate = runGal > 0 ? (runAmt / runGal) : null;
+  html += '<tr style="background:#eff6ff">';
+  html += '<td colspan="3" style="padding:8px;font-weight:700">RATE ($/gal)</td>';
+  html += `<td colspan="5" style="padding:8px;font-family:monospace;font-weight:700;font-size:1rem">${calcRate != null ? '$' + runAmt.toFixed(2) + ' / ' + fmtNum(Math.round(runGal)) + ' gal = ' + calcRate.toFixed(6) : 'N/A (no volume)'}</td>`;
+  html += '</tr>';
+
+  html += '</tbody></table>';
+  document.getElementById("detailContent").innerHTML = html;
+  document.getElementById("detailModal").style.display = "block";
+}
+
+function closeDetail() {
+  document.getElementById("detailModal").style.display = "none";
 }
 
 /* ---- Helpers ---- */

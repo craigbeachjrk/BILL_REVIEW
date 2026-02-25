@@ -30922,6 +30922,7 @@ def _submeter_rates_scan(ubi_period: str):
                     "raw_uoms": set(),
                     "conversion_label": conv_label,
                     "factor_used": factor_used,
+                    "source_lines": [],
                 }
             agg[agg_key]["invoice_total"] += period_amount
             agg[agg_key]["volume_total_gals"] += gallons
@@ -30931,6 +30932,22 @@ def _submeter_rates_scan(ubi_period: str):
                 agg[agg_key]["raw_uoms"].add(raw_uom.strip())
             if ar_code and not agg[agg_key]["ar_code"]:
                 agg[agg_key]["ar_code"] = ar_code
+
+            # Collect per-line detail for drill-down
+            vendor = rec.get("EnrichedVendorName") or rec.get("Vendor Name") or rec.get("Account Name") or ""
+            acct = rec.get("Account Number") or rec.get("account_number") or ""
+            svc_start = rec.get("Bill Period Start") or rec.get("Service Start Date") or ""
+            svc_end = rec.get("Bill Period End") or rec.get("Service End Date") or ""
+            agg[agg_key]["source_lines"].append({
+                "vendor": vendor,
+                "account": acct,
+                "service_period": f"{svc_start} - {svc_end}" if svc_start else "",
+                "amount": round(period_amount, 2),
+                "raw_consumption": round(parsed_raw, 2),
+                "raw_uom": (raw_uom or "").strip(),
+                "gallons": round(gallons, 2),
+                "conversion": conv_label,
+            })
 
         # ---- Build rows ----
         run_dt = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -30957,6 +30974,7 @@ def _submeter_rates_scan(ubi_period: str):
                 "factor_used": entry.get("factor_used", 0),
                 "run_datetime": run_dt,
                 "line_count": entry["line_count"],
+                "source_lines": entry.get("source_lines", []),
             })
 
         rows.sort(key=lambda r: (r["property_name"].lower(), r["utility_name"]))
