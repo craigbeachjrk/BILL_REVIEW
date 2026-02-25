@@ -30699,40 +30699,42 @@ _SUBMETER_UOM_OVERRIDES = {
 
 
 def _consumption_to_gallons(raw_consumption, raw_uom: str, utility_type: str,
-                            uom_override: str | None = None) -> float:
+                            uom_override: str | None = None) -> tuple[float, float, str]:
     """Convert consumption value to gallons for water/sewer utilities.
 
-    Uses _parse_consumption() for value parsing and _normalize_uom() for
-    unit detection.  If *uom_override* is set (not None / not "Auto"),
-    the override factor is used instead of the auto-detected UOM.
-    Returns 0.0 when consumption or UOM is missing or unrecognisable.
+    Returns (gallons, factor_used, conversion_label) where:
+      - gallons = parsed_value * factor_used
+      - factor_used = the multiplier that was applied
+      - conversion_label = human-readable explanation, e.g. "×748.05 (HCF→Gal)"
+    Returns (0.0, 0.0, "no consumption") when consumption is missing.
     """
     parsed = _parse_consumption(raw_consumption)
     if parsed is None or parsed == 0:
-        return 0.0
+        return (0.0, 0.0, "no consumption")
 
     # ---- Manual override takes precedence ----
     if uom_override and uom_override != "Auto":
         override_factor = _SUBMETER_UOM_OVERRIDES.get(uom_override)
         if override_factor is not None:
-            return parsed * override_factor
-        # Unrecognised override string — fall through to auto-detect
+            label = f"×{override_factor:g} ({uom_override}→Gal)"
+            return (parsed * override_factor, override_factor, label)
 
     # ---- Auto-detect from the invoice UOM field ----
     canonical, category, factor = _normalize_uom(raw_uom or "")
 
-    # Accept water-category UOMs, or fallback for sewer (often uses water UOMs)
     ut = (utility_type or "").lower()
     if category == "water" or ut in ("water", "sewer"):
         if canonical == "Gallons":
-            return parsed * factor
-        # Unrecognised UOM but utility is water/sewer — return 0 so it
-        # shows as N/A and the user knows to set an override
+            if factor == 1.0:
+                return (parsed * factor, factor, "×1 (Gallons)")
+            label = f"×{factor:g} ({(raw_uom or '?').strip()}→Gal)"
+            return (parsed * factor, factor, label)
         if category not in ("water",):
-            return 0.0
-        return parsed * factor
+            return (0.0, 0.0, f"unknown UOM '{(raw_uom or '').strip()}'")
+        label = f"×{factor:g} ({(raw_uom or '?').strip()}→Gal)"
+        return (parsed * factor, factor, label)
 
-    return 0.0
+    return (0.0, 0.0, f"not water/sewer")
 
 
 @app.get("/submeter-rates", response_class=HTMLResponse)
@@ -30882,8 +30884,8 @@ def _submeter_rates_scan(ubi_period: str):
             raw_uom = rec.get("ENRICHED UOM") or rec.get("Unit of Measure") or rec.get("UOM") or rec.get("uom") or ""
             agg_key = f"{property_name}|{utility_name}"
             uom_override = cfg_uom_map.get(agg_key, "Auto")
-            gallons = _consumption_to_gallons(raw_consumption, raw_uom, utility_name,
-                                              uom_override=uom_override)
+            gallons, factor_used, conv_label = _consumption_to_gallons(
+                raw_consumption, raw_uom, utility_name, uom_override=uom_override)
             parsed_raw = _parse_consumption(raw_consumption) or 0.0
 
             if ubi_assignments and len(ubi_assignments) > 1 and total_bill_amount > 0:
@@ -30903,6 +30905,8 @@ def _submeter_rates_scan(ubi_period: str):
                     "utility_name": utility_name,
                     "line_count": 0,
                     "raw_uoms": set(),
+                    "conversion_label": conv_label,
+                    "factor_used": factor_used,
                 }
             agg[agg_key]["invoice_total"] += period_amount
             agg[agg_key]["volume_total_gals"] += gallons
@@ -30934,6 +30938,8 @@ def _submeter_rates_scan(ubi_period: str):
                 "calculation_desc": cfg_calc_map.get(cfg_key, "From Invoice & Volume"),
                 "raw_uom": ", ".join(raw_uoms_sorted) if raw_uoms_sorted else "",
                 "uom_override": cfg_uom_map.get(cfg_key, "Auto"),
+                "conversion": entry.get("conversion_label", ""),
+                "factor_used": entry.get("factor_used", 0),
                 "run_datetime": run_dt,
                 "line_count": entry["line_count"],
             })

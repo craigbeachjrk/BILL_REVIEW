@@ -340,11 +340,11 @@ function renderTable() {
   html += `<th onclick="doSort('property_name')">Property<span class="sort-arrow">${arrow("property_name")}</span></th>`;
   html += `<th onclick="doSort('utility_name')">Utility<span class="sort-arrow">${arrow("utility_name")}</span></th>`;
   html += `<th onclick="doSort('invoice_total')">Invoice Total<span class="sort-arrow">${arrow("invoice_total")}</span></th>`;
-  html += `<th onclick="doSort('raw_uom')">Invoice UOM<span class="sort-arrow">${arrow("raw_uom")}</span></th>`;
   html += `<th onclick="doSort('raw_consumption')">Raw Consumption<span class="sort-arrow">${arrow("raw_consumption")}</span></th>`;
-  html += `<th>UOM Override</th>`;
+  html += `<th>Conversion</th>`;
   html += `<th onclick="doSort('volume_total_gals')">Volume (Gal)<span class="sort-arrow">${arrow("volume_total_gals")}</span></th>`;
   html += `<th onclick="doSort('rate')">Rate ($/gal)<span class="sort-arrow">${arrow("rate")}</span></th>`;
+  html += `<th>UOM Override</th>`;
   html += `<th>Calc Desc</th>`;
   html += '</tr></thead><tbody>';
 
@@ -355,21 +355,22 @@ function renderTable() {
     html += `<td>${esc(row.property_name)}<br><span style="font-size:.7rem;color:#94a3b8">${esc(row.ar_code || "")}</span></td>`;
     html += `<td>${esc(row.utility_name)}</td>`;
     html += `<td class="total-cell">${row.invoice_total != null ? "$" + fmtNum(row.invoice_total.toFixed(2)) : "-"}</td>`;
-    // Invoice UOM
-    html += `<td>${row.raw_uom ? '<span class="uom-badge">' + esc(row.raw_uom) + '</span>' : '<span class="na-badge">none</span>'}</td>`;
-    // Raw consumption (original value before conversion)
-    html += `<td class="raw-cell mono">${row.raw_consumption ? fmtNum(row.raw_consumption.toFixed(2)) : '-'}</td>`;
-    // UOM Override dropdown with descriptive labels
+    // Raw consumption + invoice UOM badge
+    html += `<td class="raw-cell mono">${row.raw_consumption ? fmtNum(row.raw_consumption.toFixed(2)) : '-'}`;
+    html += ` <span class="uom-badge">${row.raw_uom ? esc(row.raw_uom) : 'no UOM'}</span></td>`;
+    // Conversion: shows exactly what math was applied
+    html += `<td style="font-size:.75rem">${row.conversion ? esc(row.conversion) : '<span class="na-badge">none</span>'}</td>`;
+    // Volume (converted gallons)
+    html += `<td class="volume-cell mono">${row.volume_total_gals ? fmtNum(Math.round(row.volume_total_gals)) : '<span class="na-badge">0</span>'}</td>`;
+    // Rate
+    html += `<td class="rate-cell">${row.rate != null ? row.rate.toFixed(6) : '<span class="na-badge">N/A</span>'}</td>`;
+    // UOM Override dropdown
     html += `<td><select class="cfg-select" onchange="setUomOverride(${rowIdx}, this.value)">`;
     UOM_OPTIONS.forEach(o => {
       const sel = (row.uom_override || "Auto") === o.val ? " selected" : "";
       html += `<option value="${esc(o.val)}"${sel}>${esc(o.label)}</option>`;
     });
     html += `</select></td>`;
-    // Volume (converted gallons)
-    html += `<td class="volume-cell mono">${row.volume_total_gals ? fmtNum(Math.round(row.volume_total_gals)) : '<span class="na-badge">0</span>'}</td>`;
-    // Rate
-    html += `<td class="rate-cell">${row.rate != null ? row.rate.toFixed(6) : '<span class="na-badge">N/A</span>'}</td>`;
     // Calc Desc
     html += `<td><select class="cfg-select" onchange="setCalcDesc(${rowIdx}, this.value)">`;
     CALC_OPTIONS.forEach(opt => {
