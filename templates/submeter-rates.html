@@ -40,12 +40,14 @@
       background:#2563eb; color:#fff; border:none; cursor:pointer; font-weight:600;
     }
     .controls button:hover { background:#1d4ed8; }
-    .controls button.secondary {
-      background:#64748b; color:#fff;
-    }
+    .controls button.secondary { background:#64748b; }
     .controls button.secondary:hover { background:#475569; }
     .controls button.save-btn { background:#059669; }
     .controls button.save-btn:hover { background:#047857; }
+    .controls button.warn-btn { background:#d97706; }
+    .controls button.warn-btn:hover { background:#b45309; }
+    .controls button.warn-btn.active { background:#ef4444; }
+    .controls button.warn-btn.active:hover { background:#dc2626; }
     .summary-bar {
       display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;
     }
@@ -57,32 +59,35 @@
     .summary-stat .label { font-size:.75rem; text-transform:uppercase; color:#64748b; font-weight:600; }
     .summary-stat .value { font-size:1.35rem; font-weight:700; color:#1e293b; margin-top:2px; }
     .table-wrap { overflow-x:auto; }
-    table { width:100%; border-collapse:collapse; font-size:.85rem; }
+    table { width:100%; border-collapse:collapse; font-size:.82rem; }
     thead th {
-      background:rgba(30,41,59,.07); padding:10px 12px; text-align:left;
-      font-weight:700; font-size:.78rem; text-transform:uppercase; color:#475569;
+      background:rgba(30,41,59,.07); padding:10px 10px; text-align:left;
+      font-weight:700; font-size:.75rem; text-transform:uppercase; color:#475569;
       cursor:pointer; user-select:none; white-space:nowrap;
     }
     thead th:hover { background:rgba(30,41,59,.12); }
     thead th .sort-arrow { margin-left:4px; font-size:.7rem; }
-    tbody td { padding:9px 12px; border-bottom:1px solid rgba(0,0,0,.06); }
+    tbody td { padding:8px 10px; border-bottom:1px solid rgba(0,0,0,.06); }
     tbody tr:hover { background:rgba(37,99,235,.06); }
     tbody tr.highlight { background:rgba(250,204,21,.18); }
     tbody tr.highlight:hover { background:rgba(250,204,21,.28); }
-    .rate-cell { font-family:'Cascadia Code','Fira Code',monospace; }
-    .volume-cell, .total-cell { text-align:right; }
+    .rate-cell, .mono { font-family:'Cascadia Code','Fira Code',monospace; font-size:.8rem; }
+    .volume-cell, .total-cell, .raw-cell { text-align:right; }
     .na-badge {
       display:inline-block; padding:2px 8px; border-radius:6px;
       background:#fef3c7; color:#92400e; font-weight:600; font-size:.78rem;
     }
     .cfg-select {
-      padding:4px 8px; border-radius:6px; border:1px solid #cbd5e1;
-      font-size:.82rem; background:#fff; width:100%;
+      padding:3px 6px; border-radius:6px; border:1px solid #cbd5e1;
+      font-size:.8rem; background:#fff; width:100%;
     }
     .uom-badge {
       display:inline-block; padding:2px 6px; border-radius:4px;
       background:rgba(30,41,59,.08); color:#475569; font-size:.75rem;
       font-family:'Cascadia Code','Fira Code',monospace;
+    }
+    .conversion-hint {
+      font-size:.7rem; color:#94a3b8; display:block; margin-top:1px;
     }
     .spinner {
       display:inline-block; width:18px; height:18px;
@@ -93,7 +98,7 @@
     @keyframes spin { to { transform:rotate(360deg); } }
     .status-msg { font-size:.85rem; color:#475569; margin-left:8px; }
     .empty-msg { text-align:center; padding:40px; color:#64748b; font-size:1rem; }
-    .hint { font-size:.75rem; color:#64748b; margin-top:4px; }
+    .hint { font-size:.75rem; color:#64748b; margin-top:4px; margin-bottom:12px; }
     @media (max-width:768px) {
       .card { margin:0 8px 16px; padding:16px; }
       .summary-bar { flex-direction:column; }
@@ -113,9 +118,15 @@
       <button onclick="generateReport()">Generate Report</button>
       <button class="secondary" onclick="exportCSV()">Export CSV</button>
       <button class="save-btn" onclick="saveConfig()">Save Config</button>
+      <button class="warn-btn" id="issuesBtn" onclick="toggleIssuesFilter()">Show Issues</button>
       <span id="status-msg" class="status-msg"></span>
     </div>
-    <div class="hint">Change <b>UOM Override</b> when the invoice unit isn't gallons, then click <b>Save Config</b> + <b>Generate Report</b> to recalculate.</div>
+    <div class="hint">
+      <b>Invoice UOM</b> = what the parser found on the bill.
+      <b>Raw Consumption</b> = original value from invoice.
+      <b>Volume (Gal)</b> = raw &times; conversion factor.
+      If Volume is wrong, set <b>UOM Override</b>, <b>Save Config</b>, then <b>Generate Report</b>.
+    </div>
 
     <div id="summary-bar" class="summary-bar" style="display:none;">
       <div class="summary-stat"><div class="label">Properties</div><div class="value" id="stat-properties">0</div></div>
@@ -134,10 +145,21 @@
 
 <script>
 const CALC_OPTIONS = ["From Invoice & Volume", "Set by NCUC", "Sewer is RUBS"];
-const UOM_OPTIONS = ["Auto", "Gallons", "kGal", "HCF", "CCF", "100 Gallons", "Acre-Feet"];
+// value : display label  (label shows gallon equivalent so user knows what they're picking)
+const UOM_OPTIONS = [
+  {val: "Auto",        label: "Auto (detect from invoice)"},
+  {val: "Gallons",     label: "Gallons (1 gal)"},
+  {val: "kGal",        label: "kGal (1,000 gal)"},
+  {val: "HCF",         label: "HCF / 100 cu ft (748 gal)"},
+  {val: "CCF",         label: "CCF / 100 cu ft (748 gal)"},
+  {val: "100 Gallons",label: "100 Gallons"},
+  {val: "Acre-Feet",   label: "Acre-Feet (325,851 gal)"},
+];
+
 let allRows = [];
 let sortCol = "property_name";
 let sortAsc = true;
+let showIssuesOnly = false;
 
 /* ---- Period dropdown ---- */
 function populatePeriods() {
@@ -153,11 +175,23 @@ function populatePeriods() {
   periods.reverse();
   periods.forEach(p => {
     const opt = document.createElement("option");
-    opt.value = p;
-    opt.textContent = p;
+    opt.value = p; opt.textContent = p;
     if (p === "03/2026") opt.selected = true;
     sel.appendChild(opt);
   });
+}
+
+/* ---- Issues filter toggle ---- */
+function toggleIssuesFilter() {
+  showIssuesOnly = !showIssuesOnly;
+  const btn = document.getElementById("issuesBtn");
+  btn.textContent = showIssuesOnly ? "Show All" : "Show Issues";
+  if (showIssuesOnly) btn.classList.add("active"); else btn.classList.remove("active");
+  renderTable();
+}
+
+function isIssueRow(row) {
+  return row.rate == null || row.volume_total_gals === 0 || !row.raw_uom;
 }
 
 /* ---- Status helpers ---- */
@@ -178,14 +212,12 @@ async function generateReport(bustCache) {
     const resp = await fetch(`/api/submeter-rates/generate?${qs}`, {method: "POST"});
     const data = await resp.json();
     if (data.rows) {
-      // Came back from cache — already done
       allRows = data.rows;
       setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
       renderSummary();
       renderTable();
       return;
     }
-    // Scan kicked off — start polling
     startPolling();
   } catch (e) {
     setStatus("Error: " + e.message, false);
@@ -202,9 +234,7 @@ async function pollStatus() {
     const resp = await fetch("/api/submeter-rates/status");
     const data = await resp.json();
     if (data.rows) {
-      // Scan complete — result returned
-      clearInterval(pollTimer);
-      pollTimer = null;
+      clearInterval(pollTimer); pollTimer = null;
       allRows = data.rows;
       setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
       renderSummary();
@@ -212,22 +242,18 @@ async function pollStatus() {
       return;
     }
     if (data.error) {
-      clearInterval(pollTimer);
-      pollTimer = null;
+      clearInterval(pollTimer); pollTimer = null;
       setStatus("Error: " + data.error, false);
       return;
     }
-    // Still running — show progress (keep "Starting scan..." until files_total is known)
     if (data.files_total > 0) {
       const pct = Math.round(data.files_done / data.files_total * 100);
       setStatus(`${data.progress} (${pct}% — ${data.files_done}/${data.files_total} files)`, true);
     }
-  } catch (e) {
-    // Network blip — keep polling
-  }
+  } catch (e) { /* keep polling */ }
 }
 
-/* ---- Save config then regenerate so overrides take effect ---- */
+/* ---- Save config then regenerate ---- */
 async function saveConfig() {
   const items = allRows.map(row => ({
     property_name: row.property_name,
@@ -245,7 +271,7 @@ async function saveConfig() {
     });
     const data = await resp.json();
     if (data.ok) {
-      setStatus("Config saved. Regenerating with new UOM settings...", true);
+      setStatus("Config saved. Regenerating...", true);
       generateReport(true);
     } else {
       setStatus("Save failed: " + (data.error || "unknown"), false);
@@ -256,7 +282,7 @@ async function saveConfig() {
 }
 
 /* ---- Export CSV ---- */
-async function exportCSV() {
+function exportCSV() {
   const period = document.getElementById("period-select").value;
   window.open(`/api/submeter-rates/export-csv?ubi_period=${encodeURIComponent(period)}`, "_blank");
 }
@@ -266,18 +292,15 @@ function renderSummary() {
   const bar = document.getElementById("summary-bar");
   if (!allRows.length) { bar.style.display = "none"; return; }
   bar.style.display = "flex";
-
   const props = new Set(allRows.map(r => r.property_name));
   const waterRows = allRows.filter(r => r.utility_name === "Water");
   const sewerRows = allRows.filter(r => r.utility_name === "Sewer");
   const waterVol = waterRows.reduce((s, r) => s + (r.volume_total_gals || 0), 0);
   const sewerVol = sewerRows.reduce((s, r) => s + (r.volume_total_gals || 0), 0);
-
   const waterRates = waterRows.filter(r => r.rate != null).map(r => r.rate);
   const sewerRates = sewerRows.filter(r => r.rate != null).map(r => r.rate);
   const avgWater = waterRates.length ? waterRates.reduce((a,b) => a+b, 0) / waterRates.length : null;
   const avgSewer = sewerRates.length ? sewerRates.reduce((a,b) => a+b, 0) / sewerRates.length : null;
-
   document.getElementById("stat-properties").textContent = props.size;
   document.getElementById("stat-water-vol").textContent = fmtNum(Math.round(waterVol));
   document.getElementById("stat-sewer-vol").textContent = fmtNum(Math.round(sewerVol));
@@ -293,7 +316,9 @@ function renderTable() {
     return;
   }
 
-  const sorted = [...allRows].sort((a, b) => {
+  let rows = showIssuesOnly ? allRows.filter(isIssueRow) : allRows;
+
+  const sorted = [...rows].sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
     if (typeof va === "string") va = (va || "").toLowerCase();
     if (typeof vb === "string") vb = (vb || "").toLowerCase();
@@ -304,52 +329,54 @@ function renderTable() {
     return 0;
   });
 
+  if (showIssuesOnly && sorted.length === 0) {
+    container.innerHTML = '<div class="empty-msg">No issues found — all rows have valid rates.</div>';
+    return;
+  }
+
   const arrow = col => col === sortCol ? (sortAsc ? " &#9650;" : " &#9660;") : "";
-  const cols = [
-    {key:"property_name", label:"Property Name"},
-    {key:"ar_code", label:"AR Code"},
-    {key:"invoice_total", label:"Invoice Total"},
-    {key:"volume_total_gals", label:"Volume (Gal)"},
-    {key:"utility_name", label:"Utility"},
-    {key:"raw_uom", label:"Invoice UOM"},
-    {key:"uom_override", label:"UOM Override"},
-    {key:"rate", label:"Rate ($/gal)"},
-    {key:"calculation_desc", label:"Calculation Desc"},
-    {key:"run_datetime", label:"Run DateTime"},
-  ];
 
   let html = '<table><thead><tr>';
-  cols.forEach(c => {
-    html += `<th onclick="doSort('${c.key}')">${c.label}<span class="sort-arrow">${arrow(c.key)}</span></th>`;
-  });
+  html += `<th onclick="doSort('property_name')">Property<span class="sort-arrow">${arrow("property_name")}</span></th>`;
+  html += `<th onclick="doSort('utility_name')">Utility<span class="sort-arrow">${arrow("utility_name")}</span></th>`;
+  html += `<th onclick="doSort('invoice_total')">Invoice Total<span class="sort-arrow">${arrow("invoice_total")}</span></th>`;
+  html += `<th onclick="doSort('raw_uom')">Invoice UOM<span class="sort-arrow">${arrow("raw_uom")}</span></th>`;
+  html += `<th onclick="doSort('raw_consumption')">Raw Consumption<span class="sort-arrow">${arrow("raw_consumption")}</span></th>`;
+  html += `<th>UOM Override</th>`;
+  html += `<th onclick="doSort('volume_total_gals')">Volume (Gal)<span class="sort-arrow">${arrow("volume_total_gals")}</span></th>`;
+  html += `<th onclick="doSort('rate')">Rate ($/gal)<span class="sort-arrow">${arrow("rate")}</span></th>`;
+  html += `<th>Calc Desc</th>`;
   html += '</tr></thead><tbody>';
 
-  sorted.forEach((row, idx) => {
-    const highlight = row.rate == null || row.volume_total_gals === 0 ? ' class="highlight"' : '';
+  sorted.forEach((row) => {
+    const issue = isIssueRow(row);
     const rowIdx = allRows.indexOf(row);
-    html += `<tr${highlight}>`;
-    html += `<td>${esc(row.property_name)}</td>`;
-    html += `<td>${esc(row.ar_code || "")}</td>`;
-    html += `<td class="total-cell">${row.invoice_total != null ? "$" + fmtNum(row.invoice_total.toFixed(2)) : "-"}</td>`;
-    html += `<td class="volume-cell">${row.volume_total_gals != null ? fmtNum(Math.round(row.volume_total_gals)) : "-"}</td>`;
+    html += `<tr${issue ? ' class="highlight"' : ''}>`;
+    html += `<td>${esc(row.property_name)}<br><span style="font-size:.7rem;color:#94a3b8">${esc(row.ar_code || "")}</span></td>`;
     html += `<td>${esc(row.utility_name)}</td>`;
-    // Invoice UOM — shows what the parser found on the actual invoice
+    html += `<td class="total-cell">${row.invoice_total != null ? "$" + fmtNum(row.invoice_total.toFixed(2)) : "-"}</td>`;
+    // Invoice UOM
     html += `<td>${row.raw_uom ? '<span class="uom-badge">' + esc(row.raw_uom) + '</span>' : '<span class="na-badge">none</span>'}</td>`;
-    // UOM Override dropdown
+    // Raw consumption (original value before conversion)
+    html += `<td class="raw-cell mono">${row.raw_consumption ? fmtNum(row.raw_consumption.toFixed(2)) : '-'}</td>`;
+    // UOM Override dropdown with descriptive labels
     html += `<td><select class="cfg-select" onchange="setUomOverride(${rowIdx}, this.value)">`;
-    UOM_OPTIONS.forEach(opt => {
-      const sel = (row.uom_override || "Auto") === opt ? " selected" : "";
-      html += `<option value="${esc(opt)}"${sel}>${esc(opt)}</option>`;
+    UOM_OPTIONS.forEach(o => {
+      const sel = (row.uom_override || "Auto") === o.val ? " selected" : "";
+      html += `<option value="${esc(o.val)}"${sel}>${esc(o.label)}</option>`;
     });
     html += `</select></td>`;
+    // Volume (converted gallons)
+    html += `<td class="volume-cell mono">${row.volume_total_gals ? fmtNum(Math.round(row.volume_total_gals)) : '<span class="na-badge">0</span>'}</td>`;
+    // Rate
     html += `<td class="rate-cell">${row.rate != null ? row.rate.toFixed(6) : '<span class="na-badge">N/A</span>'}</td>`;
+    // Calc Desc
     html += `<td><select class="cfg-select" onchange="setCalcDesc(${rowIdx}, this.value)">`;
     CALC_OPTIONS.forEach(opt => {
       const sel = (row.calculation_desc || "From Invoice & Volume") === opt ? " selected" : "";
       html += `<option value="${esc(opt)}"${sel}>${esc(opt)}</option>`;
     });
     html += `</select></td>`;
-    html += `<td style="font-size:.78rem;color:#64748b">${esc(row.run_datetime || "")}</td>`;
     html += '</tr>';
   });
 
@@ -363,18 +390,11 @@ function doSort(col) {
   renderTable();
 }
 
-function setCalcDesc(rowIdx, val) {
-  allRows[rowIdx].calculation_desc = val;
-}
-
-function setUomOverride(rowIdx, val) {
-  allRows[rowIdx].uom_override = val;
-}
+function setCalcDesc(rowIdx, val) { allRows[rowIdx].calculation_desc = val; }
+function setUomOverride(rowIdx, val) { allRows[rowIdx].uom_override = val; }
 
 /* ---- Helpers ---- */
-function fmtNum(n) {
-  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
+function fmtNum(n) { return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
 function esc(s) {
   if (!s) return "";
   const d = document.createElement("div");

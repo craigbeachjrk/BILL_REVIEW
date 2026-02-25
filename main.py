@@ -30884,9 +30884,13 @@ def _submeter_rates_scan(ubi_period: str):
             uom_override = cfg_uom_map.get(agg_key, "Auto")
             gallons = _consumption_to_gallons(raw_consumption, raw_uom, utility_name,
                                               uom_override=uom_override)
+            parsed_raw = _parse_consumption(raw_consumption) or 0.0
 
-            if ubi_assignments and len(ubi_assignments) > 1 and total_bill_amount > 0 and gallons > 0:
-                gallons = gallons * (period_amount / total_bill_amount) if total_bill_amount else 0.0
+            if ubi_assignments and len(ubi_assignments) > 1 and total_bill_amount > 0:
+                prorate_ratio = (period_amount / total_bill_amount) if total_bill_amount else 0.0
+                if gallons > 0:
+                    gallons = gallons * prorate_ratio
+                parsed_raw = parsed_raw * prorate_ratio
 
             if agg_key not in agg:
                 agg[agg_key] = {
@@ -30895,12 +30899,14 @@ def _submeter_rates_scan(ubi_period: str):
                     "ar_code": ar_code,
                     "invoice_total": 0.0,
                     "volume_total_gals": 0.0,
+                    "raw_consumption_total": 0.0,
                     "utility_name": utility_name,
                     "line_count": 0,
                     "raw_uoms": set(),
                 }
             agg[agg_key]["invoice_total"] += period_amount
             agg[agg_key]["volume_total_gals"] += gallons
+            agg[agg_key]["raw_consumption_total"] += parsed_raw
             agg[agg_key]["line_count"] += 1
             if raw_uom:
                 agg[agg_key]["raw_uoms"].add(raw_uom.strip())
@@ -30922,6 +30928,7 @@ def _submeter_rates_scan(ubi_period: str):
                 "ar_code": entry["ar_code"],
                 "invoice_total": round(total, 2),
                 "volume_total_gals": round(vol, 2),
+                "raw_consumption": round(entry.get("raw_consumption_total", 0), 2),
                 "utility_name": entry["utility_name"],
                 "rate": round(rate, 6) if rate is not None else None,
                 "calculation_desc": cfg_calc_map.get(cfg_key, "From Invoice & Volume"),
