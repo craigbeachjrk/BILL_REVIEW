@@ -82,6 +82,12 @@
     .check-icon{color:#10b981}
     .posted-icon{color:#3b82f6}
     .x-icon{color:#ef4444}
+    .x-icon.clickable{cursor:pointer;font-weight:700;padding:2px 4px;border-radius:4px;transition:background .15s}
+    .x-icon.clickable:hover{background:#fee2e2}
+    .badge.accrual{background:#dbeafe;color:#1e40af}
+    .badge.manual{background:#fce7f3;color:#9d174d}
+    .badge.trueup{background:#e0e7ff;color:#3730a3}
+    .badge.source-type{font-size:10px;padding:2px 6px;margin-left:4px}
     /* Account grouping in modal */
     .account-group{margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
     .account-group-header{background:#f9fafb;padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:13px}
@@ -192,6 +198,20 @@
       <div id="modalContent"></div>
       <div class="modal-actions">
         <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Accrual / Manual Entry Modal -->
+  <div class="modal-overlay" id="accrualModal">
+    <div class="modal-box" style="max-width:680px">
+      <h2 id="accrualModalTitle">Create Entry</h2>
+      <div id="accrualModalContent">
+        <div class="loading">Loading historical data...</div>
+      </div>
+      <div class="modal-actions" id="accrualModalActions" style="display:none">
+        <button class="btn secondary" onclick="closeAccrualModal()">Cancel</button>
+        <button class="btn success" onclick="submitAccrual()">Create Entry</button>
       </div>
     </div>
   </div>
@@ -764,10 +784,27 @@
           manualBadge = `<span class="badge manual" title="Manually uploaded from: ${mb.manual_source || 'Unknown'}">MANUAL</span>`;
         }
 
+        // Accrual/True-up entry badge (from MANUAL_ENTRIES_TABLE)
+        let accrualBadge = '';
+        let isAccrualEntry = false;
+        let accrualEntryIds = [];
+        if (mb.source_line_items) {
+          const accrualLines = mb.source_line_items.filter(l => l.entry_type && ['ACCRUAL', 'MANUAL', 'TRUE-UP'].includes(l.entry_type));
+          if (accrualLines.length > 0) {
+            isAccrualEntry = true;
+            const entryType = accrualLines[0].entry_type;
+            const badgeClass = entryType === 'ACCRUAL' ? 'accrual' : entryType === 'TRUE-UP' ? 'trueup' : 'manual';
+            accrualBadge = `<span class="badge ${badgeClass}" style="font-size:10px;padding:2px 6px">${entryType}</span>`;
+            accrualEntryIds = accrualLines.map(l => l.bill_id).filter(id => id);
+          }
+        }
+
+        const rowBg = isUnmapped ? ' style="background:#fffbeb"' : isDuplicate ? ' style="background:#fef9c3"' : (mb.is_manual || isAccrualEntry) ? ' style="background:#f5f3ff"' : '';
+
         html += `
-          <tr${isUnmapped ? ' style="background:#fffbeb"' : ''}${isDuplicate ? ' style="background:#fef9c3"' : ''}${mb.is_manual ? ' style="background:#f5f3ff"' : ''}>
+          <tr${rowBg}>
             <td onclick="event.stopPropagation()"><input type="checkbox" class="mb-select" value="${mb.master_bill_id.replace(/"/g, '&quot;')}" onchange="updateReclassifyBtn()"></td>
-            <td>${mb.property_name || 'N/A'} ${duplicateBadge} ${manualBadge}</td>
+            <td>${mb.property_name || 'N/A'} ${duplicateBadge} ${manualBadge} ${accrualBadge}</td>
             <td style="font-size:11px;color:#64748b">${mb.property_lookup_code || ''}</td>
             <td>${chargeCodeDisplay}</td>
             <td>${mb.utility_name || 'N/A'}</td>
@@ -778,7 +815,8 @@
             <td>${overrideBadge}</td>
             <td>
               <button class="btn small" onclick="viewDetail('${mb.master_bill_id.replace(/'/g, "\\'")}')">View Detail</button>
-              ${mb.is_manual ? `<span onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" style="margin-left:10px;color:#94a3b8;cursor:pointer;font-size:13px" title="Delete manual entry">&#x2715;</span>` : ''}
+              ${isAccrualEntry ? `<span onclick="event.stopPropagation(); deleteAccrualEntry('${accrualEntryIds.join(',').replace(/'/g, "\\'")}', '${(mb.property_name || 'Entry').replace(/'/g, "\\'")}')" style="margin-left:10px;color:#ef4444;cursor:pointer;font-size:13px" title="Delete entry">&#x2715;</span>` : ''}
+              ${mb.is_manual && !isAccrualEntry ? `<span onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" style="margin-left:10px;color:#94a3b8;cursor:pointer;font-size:13px" title="Delete manual entry">&#x2715;</span>` : ''}
             </td>
           </tr>
         `;
@@ -923,9 +961,14 @@
                   </div>
                   <div style="display:flex;align-items:center;gap:12px">
                     <span style="color:#0ea5e9;font-weight:600">$${group.total.toFixed(2)}</span>
-                    ${group.lines.some(l => l.is_manual) ?
-                      `<span onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" style="color:#94a3b8;cursor:pointer;font-size:14px" title="Delete this manual entry">&#x2715;</span>` :
-                      `<button class="btn small danger" onclick="event.stopPropagation(); unassignAccount('${escapedHashes}', '${escapedBillIds}', '${displayName.replace(/'/g, "\\'")}')" title="Unassign this invoice">Unassign</button>`
+                    ${group.lines.some(l => l.entry_type && ['ACCRUAL', 'MANUAL', 'TRUE-UP'].includes(l.entry_type)) ?
+                      (() => {
+                        const entryIds = group.lines.filter(l => l.bill_id && l.entry_type).map(l => l.bill_id);
+                        return `<button class="btn small danger" onclick="event.stopPropagation(); deleteAccrualEntry('${entryIds.join(',').replace(/'/g, "\\'")}', '${displayName.replace(/'/g, "\\'")}')" title="Delete this entry">Delete</button>`;
+                      })() :
+                      group.lines.some(l => l.is_manual) ?
+                        `<button class="btn small danger" onclick="event.stopPropagation(); deleteManualEntry('${mb.master_bill_id.replace(/'/g, "\\'")}')" title="Delete this manual entry">Delete</button>` :
+                        `<button class="btn small danger" onclick="event.stopPropagation(); unassignAccount('${escapedHashes}', '${escapedBillIds}', '${displayName.replace(/'/g, "\\'")}')" title="Unassign this invoice">Unassign</button>`
                     }
                     <span class="expand-icon" id="icon-${groupId}">&#9660;</span>
                   </div>
@@ -994,6 +1037,7 @@
                     <div style="font-size:11px;color:#64748b;margin-top:2px">
                       <strong>Description:</strong> ${line.description || 'N/A'}
                     </div>
+                    ${line.note ? `<div style="font-size:11px;color:#475569;margin-top:2px;font-style:italic"><strong>Note:</strong> ${line.note}</div>` : ''}
                     ${line.override_reason ? `<div style="font-size:11px;color:#991b1b;margin-top:2px"><strong>Override Reason:</strong> ${line.override_reason}</div>` : ''}
                     ${duplicateBadge}
                   </div>
@@ -1106,6 +1150,8 @@
           // Remove from local cache and re-render
           masterBills = masterBills.filter(mb => mb.master_bill_id !== masterBillId);
           renderMasterBills();
+          // Refresh completion tracker to release status
+          loadCompletionTracker();
         } else {
           const errData = await response.json();
           showToast('Error: ' + (errData.error || 'Failed to delete'), 'err');
@@ -1113,6 +1159,39 @@
       } catch (e) {
         console.error('Error deleting manual entry:', e);
         showToast('Error deleting manual entry', 'err');
+      }
+    }
+
+    async function deleteAccrualEntry(entryIds, displayName) {
+      if (!entryIds) {
+        showToast('No entry IDs found', 'err');
+        return;
+      }
+      const ids = entryIds.split(',').filter(id => id);
+      if (ids.length === 0) {
+        showToast('No entry IDs found', 'err');
+        return;
+      }
+
+      if (!confirm(`Delete "${displayName}" entry?\n\nThis will remove ${ids.length} entry item(s) and release the completion tracker status.`)) return;
+
+      try {
+        let deleted = 0;
+        for (const entryId of ids) {
+          const response = await fetch(`/api/accrual/entry/${encodeURIComponent(entryId)}`, {
+            method: 'DELETE'
+          });
+          if (response.ok) deleted++;
+        }
+        showToast(`Deleted ${deleted} entry item(s)`, 'ok');
+        closeDetailModal();
+        // Regenerate master bills to remove the deleted entries
+        generateMasterBills();
+        // Refresh completion tracker to release status
+        loadCompletionTracker();
+      } catch (e) {
+        console.error('Error deleting accrual entry:', e);
+        showToast('Error deleting entry', 'err');
       }
     }
 
@@ -1347,8 +1426,21 @@
         });
 
         for (const acc of sortedAccounts) {
-          const accClass = acc.has_bill ? 'has-bill' : acc.has_posted_bill ? 'posted-unassigned' : 'no-bill';
-          const accIcon = acc.has_bill ? '<span class="check-icon">&#10003;</span>' : acc.has_posted_bill ? '<span class="posted-icon" title="Bill posted but not yet assigned to this period">&#9679;</span>' : '<span class="x-icon">&#10007;</span>';
+          let accClass, accIcon;
+          if (acc.has_bill && !acc.has_manual_entry) {
+            accClass = 'has-bill';
+            accIcon = '<span class="check-icon">&#10003;</span>';
+          } else if (acc.has_manual_entry) {
+            accClass = 'has-bill';
+            const badgeClass = acc.manual_entry_type === 'ACCRUAL' ? 'accrual' : acc.manual_entry_type === 'TRUE-UP' ? 'trueup' : 'manual';
+            accIcon = `<span class="badge ${badgeClass}" style="font-size:10px;padding:2px 6px">${acc.manual_entry_type}</span>`;
+          } else if (acc.has_posted_bill) {
+            accClass = 'posted-unassigned';
+            accIcon = `<span class="posted-icon clickable accrual-trigger" data-property-id="${prop.property_id}" data-property-name="${(prop.property_name || '').replace(/"/g, '&quot;')}" data-account="${(acc.account_number || '').replace(/"/g, '&quot;')}" data-vendor="${(acc.vendor_name || '').replace(/"/g, '&quot;')}" title="Bill posted but not yet assigned - click to create accrual/manual entry" style="cursor:pointer">&#9679;</span>`;
+          } else {
+            accClass = 'no-bill';
+            accIcon = `<span class="x-icon clickable accrual-trigger" data-property-id="${prop.property_id}" data-property-name="${(prop.property_name || '').replace(/"/g, '&quot;')}" data-account="${(acc.account_number || '').replace(/"/g, '&quot;')}" data-vendor="${(acc.vendor_name || '').replace(/"/g, '&quot;')}" title="Click to create accrual/manual entry">&#10007;</span>`;
+          }
 
           // Period dots: show prev/current/next coverage using actual Stage 8 assignments
           // Include service dates in tooltips for prev/next periods
@@ -1393,6 +1485,19 @@
 
       html += '</div>';
       container.innerHTML = html;
+
+      // Attach click handlers for accrual triggers via event delegation
+      container.querySelectorAll('.accrual-trigger').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openAccrualModal(
+            el.dataset.propertyId,
+            el.dataset.propertyName,
+            el.dataset.account,
+            el.dataset.vendor
+          );
+        });
+      });
     }
 
     function togglePropertyAccounts(propertyId) {
@@ -1934,6 +2039,249 @@
         if (e.target === modal) closeReportModal();
       });
     })();
+
+    // ===== ACCRUAL / MANUAL ENTRY FUNCTIONS =====
+    let accrualData = null;
+    let _glCatalog = null;  // cached GL account catalog
+    let _ccCatalog = null;  // cached charge code catalog
+
+    async function _ensureGlCatalog() {
+      if (_glCatalog) return _glCatalog;
+      try {
+        const resp = await fetch('/api/catalog/gl-accounts');
+        const data = await resp.json();
+        _glCatalog = (data.items || []);
+      } catch { _glCatalog = []; }
+      return _glCatalog;
+    }
+
+    async function _ensureCcCatalog() {
+      if (_ccCatalog) return _ccCatalog;
+      try {
+        const resp = await fetch('/api/config/charge-codes');
+        const data = await resp.json();
+        _ccCatalog = (data.items || []);
+      } catch { _ccCatalog = []; }
+      return _ccCatalog;
+    }
+
+    async function openAccrualModal(propertyId, propertyName, accountNumber, vendorName) {
+      const modal = document.getElementById('accrualModal');
+      const content = document.getElementById('accrualModalContent');
+      const actions = document.getElementById('accrualModalActions');
+      const period = document.getElementById('trackerPeriod').value;
+
+      if (!period) { showToast('Please select a period first', 'err'); return; }
+
+      document.getElementById('accrualModalTitle').textContent = `Create Entry - ${vendorName || 'Unknown'} / ${accountNumber}`;
+      content.innerHTML = '<div class="loading">Loading historical data...</div>';
+      actions.style.display = 'none';
+      modal.classList.add('show');
+
+      try {
+        const params = new URLSearchParams({ property_id: propertyId, account_number: accountNumber, vendor_name: vendorName, period: period });
+        const [response, glItems, ccItems] = await Promise.all([
+          fetch(`/api/accrual/calculate?${params}`),
+          _ensureGlCatalog(),
+          _ensureCcCatalog()
+        ]);
+        if (!response.ok) throw new Error('Failed to calculate accrual');
+        accrualData = await response.json();
+        accrualData.property_name = propertyName;
+        renderAccrualForm(accrualData, glItems, ccItems);
+        actions.style.display = 'flex';
+      } catch (e) {
+        console.error('Error calculating accrual:', e);
+        content.innerHTML = '<div style="color:#ef4444;padding:20px;text-align:center">Error loading historical data. You can still create a manual entry.</div>';
+        accrualData = { property_id: propertyId, property_name: propertyName, account_number: accountNumber, vendor_name: vendorName, period: period, calculated_amount: 0, historical_months: 0, avg_amount: 0, inflation_amount: 0, monthly_amounts: [], charge_code: '', utility_name: '', gl_account_number: '', gl_account_name: '', vendor_id: '', source: 'none' };
+        renderAccrualForm(accrualData, _glCatalog || [], _ccCatalog || []);
+        actions.style.display = 'flex';
+      }
+    }
+
+    function renderAccrualForm(data, glCatalog, ccCatalog) {
+      const content = document.getElementById('accrualModalContent');
+      const hasHistory = data.monthly_amounts && data.monthly_amounts.length > 0;
+      const rowCount = hasHistory ? data.monthly_amounts.length : 0;
+
+      // Source badge colors
+      const sourceBadges = {
+        invoices_mat: { bg: '#dcfce7', color: '#166534', label: 'INVOICES_MAT' },
+        snowflake: { bg: '#dbeafe', color: '#1e40af', label: 'SNOWFLAKE' },
+        assignments: { bg: '#fef9c3', color: '#854d0e', label: 'ASSIGNMENTS' },
+        none: { bg: '#f3f4f6', color: '#6b7280', label: 'NONE' },
+      };
+      const badge = sourceBadges[data.source] || sourceBadges.none;
+      const sourceBadgeHtml = `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${badge.bg};color:${badge.color}">${badge.label}</span>`;
+
+      // Matched vendor info (for INVOICES_MAT source)
+      let matchInfoHtml = '';
+      if (data.source === 'invoices_mat' && data.matched_vendor) {
+        const matchTypeLabel = { account: 'account match', exact: 'exact match', contains: 'contains match', token: 'token match', regex: 'regex match' };
+        const matchLabel = matchTypeLabel[data.match_type] || data.match_type || '';
+        const confidence = data.match_confidence ? ` ${Math.round(data.match_confidence * 100)}%` : '';
+        matchInfoHtml = `<div style="margin:8px 0;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:12px;color:#166534">Matched: <strong>${data.matched_vendor}</strong> <span style="color:#6b7280">(${matchLabel}${confidence})</span></div>`;
+      }
+
+      let historyHtml = '';
+      if (hasHistory) {
+        historyHtml = `
+          <div style="margin:16px 0">
+            <div style="font-size:13px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px">Historical Data (${rowCount} months) ${sourceBadgeHtml}</div>
+            ${matchInfoHtml}
+            <div style="max-height:150px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">
+              <table style="width:100%;font-size:12px"><thead><tr><th style="padding:6px 10px">Period</th><th style="padding:6px 10px;text-align:right">Amount</th></tr></thead><tbody>
+                ${data.monthly_amounts.map(m => `<tr><td style="padding:4px 10px">${m.period}</td><td style="padding:4px 10px;text-align:right">$${(m.amount || 0).toFixed(2)}</td></tr>`).join('')}
+              </tbody></table>
+            </div>
+            <div style="display:flex;gap:16px;margin-top:8px;font-size:12px;color:#64748b">
+              <span>Avg: <strong>$${(data.avg_amount || 0).toFixed(2)}</strong></span>
+              <span>Inflation adj: <strong>+$${(data.inflation_amount || 0).toFixed(2)}</strong></span>
+            </div>
+          </div>`;
+      } else {
+        historyHtml = `<div style="margin:16px 0;padding:12px;background:#fef3c7;border-radius:8px;font-size:12px;color:#92400e">No historical data found ${sourceBadgeHtml}. Enter amount manually.</div>`;
+      }
+
+      // Build GL Account dropdown options
+      const glItems = glCatalog || [];
+      const curGlNum = (data.gl_account_number || '').replace(/-/g, '');
+      let glOptionsHtml = '<option value="">-- Select GL Account --</option>';
+      for (const gl of glItems) {
+        const val = `${gl.number}|${gl.name}`;
+        const matchNum = (gl.rawNumber || gl.number || '').replace(/-/g, '');
+        const sel = (matchNum === curGlNum || gl.number === data.gl_account_number) ? ' selected' : '';
+        glOptionsHtml += `<option value="${val}"${sel}>${gl.number} - ${gl.name}</option>`;
+      }
+
+      // Charge Code dropdown from config
+      const ccItems = ccCatalog || [];
+      const curCC = (data.charge_code || '').trim().toUpperCase();
+      let ccOptionsHtml = '<option value="">-- Select Charge Code --</option>';
+      for (const cc of ccItems) {
+        const code = cc.chargeCode || '';
+        const util = cc.utilityName || '';
+        const label = util ? `${code} - ${util}` : code;
+        const sel = (code.toUpperCase() === curCC) ? ' selected' : '';
+        ccOptionsHtml += `<option value="${code}" data-utility="${util}"${sel}>${label}</option>`;
+      }
+
+      // Utility type dropdown
+      const utilityTypes = ['Electric', 'Gas', 'Water', 'Sewer', 'Trash', 'Storm', 'Cable/Internet', 'Other'];
+      const curUtil = (data.utility_name || '').toLowerCase();
+      let utilOptionsHtml = '<option value="">-- Select Utility --</option>';
+      for (const u of utilityTypes) {
+        const sel = (curUtil === u.toLowerCase()) ? ' selected' : '';
+        utilOptionsHtml += `<option value="${u}"${sel}>${u}</option>`;
+      }
+
+      const selectStyle = 'width:100%;padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;box-sizing:border-box;background:#fff';
+
+      content.innerHTML = `
+        <div style="background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:12px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+            <div><strong>Property:</strong> ${data.property_name || data.property_id}</div>
+            <div><strong>Account:</strong> ${data.account_number}</div>
+            <div><strong>Vendor:</strong> ${data.vendor_name || 'N/A'}</div>
+            <div><strong>Period:</strong> ${data.period}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Utility Type</label>
+            <select id="accrualUtilityName" style="${selectStyle}">${utilOptionsHtml}</select>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Charge Code</label>
+            <select id="accrualChargeCode" style="${selectStyle}">${ccOptionsHtml}</select>
+          </div>
+          <div style="grid-column:1/-1">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">GL Account</label>
+            <select id="accrualGlAccount" style="${selectStyle}">${glOptionsHtml}</select>
+          </div>
+        </div>
+        ${historyHtml}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
+          <div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Amount ($)</label>
+            <input type="number" id="accrualAmount" step="0.01" value="${(data.calculated_amount || 0).toFixed(2)}" style="width:100%;padding:10px 12px;border:2px solid #0ea5e9;border-radius:8px;font-size:18px;font-weight:700;color:#0ea5e9;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Entry Type</label>
+            <select id="accrualEntryType" style="width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;box-sizing:border-box">
+              <option value="ACCRUAL" ${hasHistory ? 'selected' : ''}>ACCRUAL - Based on historical avg</option>
+              <option value="MANUAL" ${!hasHistory ? 'selected' : ''}>MANUAL - User-entered estimate</option>
+              <option value="TRUE-UP">TRUE-UP - Adjust prior accrual</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Reason</label>
+          <select id="accrualReasonCode" style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;box-sizing:border-box">
+            <option value="missing_bill">Missing Bill</option>
+            <option value="credit_balance">Credit Balance ($0)</option>
+            <option value="estimate">Estimate</option>
+            <option value="correction">Correction</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div style="margin-top:12px">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Note (optional)</label>
+          <textarea id="accrualNote" rows="2" placeholder="Additional context..." style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+        </div>`;
+
+      // Auto-zero amount when "Credit Balance ($0)" is selected
+      document.getElementById('accrualReasonCode').addEventListener('change', function() {
+        if (this.value === 'credit_balance') {
+          document.getElementById('accrualAmount').value = '0.00';
+        }
+      });
+    }
+
+    async function submitAccrual() {
+      if (!accrualData) return;
+      const amount = parseFloat(document.getElementById('accrualAmount').value);
+      const entryType = document.getElementById('accrualEntryType').value;
+      const reasonCode = document.getElementById('accrualReasonCode').value;
+      const note = document.getElementById('accrualNote').value.trim();
+      if (isNaN(amount)) { showToast('Please enter a valid amount', 'err'); return; }
+
+      try {
+        const response = await fetch('/api/accrual/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            property_id: accrualData.property_id, property_name: accrualData.property_name || '',
+            account_number: accrualData.account_number, vendor_name: accrualData.vendor_name || '',
+            vendor_id: accrualData.vendor_id || '',
+            charge_code: (document.getElementById('accrualChargeCode') || {}).value || accrualData.charge_code || '',
+            utility_name: (document.getElementById('accrualUtilityName') || {}).value || accrualData.utility_name || '',
+            gl_account_number: ((document.getElementById('accrualGlAccount') || {}).value || '').split('|')[0] || accrualData.gl_account_number || '',
+            gl_account_name: ((document.getElementById('accrualGlAccount') || {}).value || '').split('|').slice(1).join('|') || accrualData.gl_account_name || '',
+            amount: amount,
+            entry_type: entryType, reason_code: reasonCode, note: note,
+            period: accrualData.period, historical_months: accrualData.historical_months || 0,
+            historical_avg: accrualData.avg_amount || 0
+          })
+        });
+        if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'Failed'); }
+        showToast(`${entryType} entry created ($${amount.toFixed(2)})`, 'ok');
+        closeAccrualModal();
+        loadCompletionTracker();
+      } catch (e) {
+        console.error('Error creating accrual entry:', e);
+        showToast(`Error: ${e.message}`, 'err');
+      }
+    }
+
+    function closeAccrualModal() {
+      document.getElementById('accrualModal').classList.remove('show');
+      accrualData = null;
+    }
+
+    document.getElementById('accrualModal').addEventListener('click', (e) => {
+      if (e.target.id === 'accrualModal') closeAccrualModal();
+    });
 
     // Initialize - populate dropdowns and load master bills on page load
     populatePeriodDropdowns();

@@ -1,0 +1,14 @@
+[
+  {
+    "IndexName": "period-index",
+    "KeySchema": [
+      {
+        "AttributeName": "period",
+        "KeyType": "HASH"
+      }
+    ],
+    "Projection": {
+      "ProjectionType": "ALL"
+    }
+  }
+]

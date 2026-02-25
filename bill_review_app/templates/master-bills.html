@@ -77,6 +77,12 @@
     .account-item.no-bill{color:#ef4444}
     .check-icon{color:#10b981}
     .x-icon{color:#ef4444}
+    .x-icon.clickable{cursor:pointer;font-weight:700;padding:2px 4px;border-radius:4px;transition:background .15s}
+    .x-icon.clickable:hover{background:#fee2e2}
+    .badge.accrual{background:#dbeafe;color:#1e40af}
+    .badge.manual{background:#fce7f3;color:#9d174d}
+    .badge.trueup{background:#e0e7ff;color:#3730a3}
+    .badge.source-type{font-size:10px;padding:2px 6px;margin-left:4px}
     /* Account grouping in modal */
     .account-group{margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
     .account-group-header{background:#f9fafb;padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:13px}
@@ -162,6 +168,20 @@
       <div id="modalContent"></div>
       <div class="modal-actions">
         <button class="btn secondary" onclick="closeDetailModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Accrual / Manual Entry Modal -->
+  <div class="modal-overlay" id="accrualModal">
+    <div class="modal-box" style="max-width:680px">
+      <h2 id="accrualModalTitle">Create Entry</h2>
+      <div id="accrualModalContent">
+        <div class="loading">Loading historical data...</div>
+      </div>
+      <div class="modal-actions" id="accrualModalActions" style="display:none">
+        <button class="btn secondary" onclick="closeAccrualModal()">Cancel</button>
+        <button class="btn success" onclick="submitAccrual()">Create Entry</button>
       </div>
     </div>
   </div>
@@ -339,6 +359,17 @@
         const overrideBadge = hasOverrides ? '<span class="badge overridden">OVERRIDDEN</span>' : '';
         const sourceCount = mb.source_line_items ? mb.source_line_items.length : 0;
 
+        // Count non-actual entries
+        const nonActualLines = (mb.source_line_items || []).filter(l => l.entry_type);
+        const nonActualCount = nonActualLines.length;
+        let sourceTypeBadge = '';
+        if (mb.has_non_actual || nonActualCount > 0) {
+          const types = [...new Set(nonActualLines.map(l => l.entry_type))];
+          const badgeType = types.length === 1 ? types[0] : 'MIXED';
+          const badgeClass = badgeType === 'ACCRUAL' ? 'accrual' : badgeType === 'TRUE-UP' ? 'trueup' : badgeType === 'MANUAL' ? 'manual' : 'accrual';
+          sourceTypeBadge = `<span class="badge ${badgeClass} source-type">${badgeType}</span>`;
+        }
+
         html += `
           <tr>
             <td>${mb.property_name || 'N/A'}</td>
@@ -347,7 +378,7 @@
             <td>${mb.billback_month_start || 'N/A'}</td>
             <td>${mb.billback_month_end || 'N/A'}</td>
             <td style="font-weight:600;color:#0ea5e9">$${(mb.utility_amount || 0).toFixed(2)}</td>
-            <td>${sourceCount}</td>
+            <td>${sourceCount} ${sourceTypeBadge}</td>
             <td>${overrideBadge}</td>
             <td>
               <button class="btn small" onclick="viewDetail('${mb.master_bill_id.replace(/'/g, "\\'")}')">View Detail</button>
@@ -398,9 +429,13 @@
         `;
 
         if (mb.source_line_items && mb.source_line_items.length > 0) {
-          // Group line items by account_number
+          // Separate actual vs non-actual line items
+          const actualLines = mb.source_line_items.filter(l => !l.entry_type);
+          const nonActualLines = mb.source_line_items.filter(l => l.entry_type);
+
+          // Group actual line items by account_number
           const accountGroups = {};
-          mb.source_line_items.forEach(line => {
+          actualLines.forEach(line => {
             const acct = line.account_number || 'Unknown Account';
             if (!accountGroups[acct]) {
               accountGroups[acct] = {
@@ -475,6 +510,30 @@
               </div>
             `;
           });
+          // Render non-actual entries (ACCRUAL / MANUAL / TRUE-UP)
+          if (nonActualLines.length > 0) {
+            html += `<h3 style="margin:20px 0 12px 0;font-size:14px;font-weight:600">Accrual / Manual Entries (${nonActualLines.length})</h3>`;
+            for (const line of nonActualLines) {
+              const badgeClass = line.entry_type === 'ACCRUAL' ? 'accrual' : line.entry_type === 'TRUE-UP' ? 'trueup' : 'manual';
+              html += `
+                <div class="line-item" style="border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;padding:12px">
+                  <div style="flex:1">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                      <span class="badge ${badgeClass}">${line.entry_type}</span>
+                      <span style="font-size:12px;font-weight:600">${line.vendor_name || 'Unknown'} - ${line.account_number || 'N/A'}</span>
+                    </div>
+                    <div style="font-size:11px;color:#64748b">
+                      <strong>Reason:</strong> ${line.reason_code || 'N/A'}
+                      ${line.note ? ` &mdash; ${line.note}` : ''}
+                    </div>
+                  </div>
+                  <div style="text-align:right;font-weight:600;color:#0ea5e9;font-size:16px">
+                    $${(line.amount || 0).toFixed(2)}
+                  </div>
+                </div>
+              `;
+            }
+          }
         } else {
           html += '<div class="loading">No source line items found</div>';
         }
@@ -568,6 +627,201 @@
       }
     });
 
+    document.getElementById('accrualModal').addEventListener('click', (e) => {
+      if (e.target.id === 'accrualModal') {
+        closeAccrualModal();
+      }
+    });
+
+    // ===== ACCRUAL / MANUAL ENTRY FUNCTIONS =====
+    let accrualData = null;  // Store current accrual calc data
+
+    async function openAccrualModal(propertyId, propertyName, accountNumber, vendorName) {
+      const modal = document.getElementById('accrualModal');
+      const content = document.getElementById('accrualModalContent');
+      const actions = document.getElementById('accrualModalActions');
+      const period = document.getElementById('trackerPeriod').value;
+
+      if (!period) {
+        showToast('Please select a period first', 'err');
+        return;
+      }
+
+      document.getElementById('accrualModalTitle').textContent = `Create Entry - ${vendorName || 'Unknown'} / ${accountNumber}`;
+      content.innerHTML = '<div class="loading">Loading historical data...</div>';
+      actions.style.display = 'none';
+      modal.classList.add('show');
+
+      try {
+        const params = new URLSearchParams({
+          property_id: propertyId,
+          account_number: accountNumber,
+          vendor_name: vendorName,
+          period: period
+        });
+        const response = await fetch(`/api/accrual/calculate?${params}`);
+        if (!response.ok) throw new Error('Failed to calculate accrual');
+
+        accrualData = await response.json();
+        accrualData.property_name = propertyName;
+
+        renderAccrualForm(accrualData);
+        actions.style.display = 'flex';
+      } catch (e) {
+        console.error('Error calculating accrual:', e);
+        content.innerHTML = '<div style="color:#ef4444;padding:20px;text-align:center">Error loading historical data. You can still create a manual entry.</div>';
+        accrualData = {
+          property_id: propertyId, property_name: propertyName,
+          account_number: accountNumber, vendor_name: vendorName,
+          period: period, calculated_amount: 0, historical_months: 0,
+          avg_amount: 0, inflation_amount: 0, monthly_amounts: [],
+          charge_code: '', utility_name: '', gl_account_number: '',
+          gl_account_name: '', vendor_id: '', source: 'none'
+        };
+        renderAccrualForm(accrualData);
+        actions.style.display = 'flex';
+      }
+    }
+
+    function renderAccrualForm(data) {
+      const content = document.getElementById('accrualModalContent');
+      const hasHistory = data.monthly_amounts && data.monthly_amounts.length > 0;
+
+      let historyHtml = '';
+      if (hasHistory) {
+        historyHtml = `
+          <div style="margin:16px 0">
+            <div style="font-size:13px;font-weight:600;margin-bottom:8px">Historical Data (T-${data.historical_months} months, source: ${data.source})</div>
+            <div style="max-height:150px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">
+              <table style="width:100%;font-size:12px">
+                <thead><tr><th style="padding:6px 10px">Period</th><th style="padding:6px 10px;text-align:right">Amount</th></tr></thead>
+                <tbody>
+                  ${data.monthly_amounts.map((m, i) => `
+                    <tr><td style="padding:4px 10px">T-${data.monthly_amounts.length - i} (${m.period})</td><td style="padding:4px 10px;text-align:right">$${(m.amount || 0).toFixed(2)}</td></tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div style="display:flex;gap:16px;margin-top:8px;font-size:12px;color:#64748b">
+              <span>Avg: <strong>$${(data.avg_amount || 0).toFixed(2)}</strong></span>
+              <span>Inflation adj: <strong>+$${(data.inflation_amount || 0).toFixed(2)}</strong></span>
+            </div>
+          </div>
+        `;
+      } else {
+        historyHtml = `<div style="margin:16px 0;padding:12px;background:#fef3c7;border-radius:8px;font-size:12px;color:#92400e">No historical data found. Enter amount manually.</div>`;
+      }
+
+      content.innerHTML = `
+        <div style="background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:12px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+            <div><strong>Property:</strong> ${data.property_name || data.property_id}</div>
+            <div><strong>Account:</strong> ${data.account_number}</div>
+            <div><strong>Vendor:</strong> ${data.vendor_name || 'N/A'}</div>
+            <div><strong>Period:</strong> ${data.period}</div>
+            <div><strong>Charge Code:</strong> ${data.charge_code || 'N/A'}</div>
+            <div><strong>Utility:</strong> ${data.utility_name || 'N/A'}</div>
+          </div>
+        </div>
+
+        ${historyHtml}
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
+          <div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Amount ($)</label>
+            <input type="number" id="accrualAmount" step="0.01" value="${(data.calculated_amount || 0).toFixed(2)}"
+              style="width:100%;padding:10px 12px;border:2px solid #0ea5e9;border-radius:8px;font-size:18px;font-weight:700;color:#0ea5e9;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Entry Type</label>
+            <select id="accrualEntryType" style="width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;box-sizing:border-box">
+              <option value="ACCRUAL" ${hasHistory ? 'selected' : ''}>ACCRUAL - Based on historical avg</option>
+              <option value="MANUAL" ${!hasHistory ? 'selected' : ''}>MANUAL - User-entered estimate</option>
+              <option value="TRUE-UP">TRUE-UP - Adjust prior accrual</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Reason</label>
+          <select id="accrualReasonCode" style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;box-sizing:border-box">
+            <option value="missing_bill">Missing Bill</option>
+            <option value="credit_balance">Credit Balance ($0)</option>
+            <option value="estimate">Estimate</option>
+            <option value="correction">Correction</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div style="margin-top:12px">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Note (optional)</label>
+          <textarea id="accrualNote" rows="2" placeholder="Additional context..."
+            style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+      `;
+    }
+
+    async function submitAccrual() {
+      if (!accrualData) return;
+
+      const amount = parseFloat(document.getElementById('accrualAmount').value);
+      const entryType = document.getElementById('accrualEntryType').value;
+      const reasonCode = document.getElementById('accrualReasonCode').value;
+      const note = document.getElementById('accrualNote').value.trim();
+
+      if (isNaN(amount)) {
+        showToast('Please enter a valid amount', 'err');
+        return;
+      }
+
+      try {
+        const payload = {
+          property_id: accrualData.property_id,
+          property_name: accrualData.property_name || '',
+          account_number: accrualData.account_number,
+          vendor_name: accrualData.vendor_name || '',
+          vendor_id: accrualData.vendor_id || '',
+          charge_code: accrualData.charge_code || '',
+          utility_name: accrualData.utility_name || '',
+          gl_account_number: accrualData.gl_account_number || '',
+          gl_account_name: accrualData.gl_account_name || '',
+          amount: amount,
+          entry_type: entryType,
+          reason_code: reasonCode,
+          note: note,
+          period: accrualData.period,
+          historical_months: accrualData.historical_months || 0,
+          historical_avg: accrualData.avg_amount || 0
+        };
+
+        const response = await fetch('/api/accrual/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Failed to create entry');
+        }
+
+        const result = await response.json();
+        showToast(`${entryType} entry created ($${amount.toFixed(2)})`, 'ok');
+        closeAccrualModal();
+
+        // Refresh the completion tracker
+        loadCompletionTracker();
+      } catch (e) {
+        console.error('Error creating accrual entry:', e);
+        showToast(`Error: ${e.message}`, 'err');
+      }
+    }
+
+    function closeAccrualModal() {
+      document.getElementById('accrualModal').classList.remove('show');
+      accrualData = null;
+    }
+
     // ===== COMPLETION TRACKER FUNCTIONS =====
     async function loadCompletionTracker() {
       const period = document.getElementById('trackerPeriod').value;
@@ -648,11 +902,24 @@
         });
 
         for (const acc of sortedAccounts) {
-          const accClass = acc.has_bill ? 'has-bill' : 'no-bill';
-          const accIcon = acc.has_bill ? '<span class="check-icon">&#10003;</span>' : '<span class="x-icon">&#10007;</span>';
+          let accClass, accIcon, dateLine = '';
+          if (acc.has_bill) {
+            accClass = 'has-bill';
+            accIcon = '<span class="check-icon">&#10003;</span>';
+            if (acc.service_period) {
+              dateLine = `<span style="font-size:9px;color:#64748b;margin-left:4px">(${acc.service_period})</span>`;
+            }
+          } else if (acc.has_manual_entry) {
+            accClass = 'has-bill';
+            const badgeClass = acc.manual_entry_type === 'ACCRUAL' ? 'accrual' : acc.manual_entry_type === 'TRUE-UP' ? 'trueup' : 'manual';
+            accIcon = `<span class="badge ${badgeClass}" style="font-size:10px;padding:2px 6px">${acc.manual_entry_type}</span>`;
+          } else {
+            accClass = 'no-bill';
+            accIcon = `<span class="x-icon clickable accrual-trigger" data-property-id="${prop.property_id}" data-property-name="${(prop.property_name || '').replace(/"/g, '&quot;')}" data-account="${(acc.account_number || '').replace(/"/g, '&quot;')}" data-vendor="${(acc.vendor_name || '').replace(/"/g, '&quot;')}" title="Create accrual/manual entry">&#10007;</span>`;
+          }
           html += `
             <div class="account-item ${accClass}">
-              <span>${acc.vendor_name || 'Unknown'} - ${acc.account_number}</span>
+              <span>${acc.vendor_name || 'Unknown'} - ${acc.account_number}${dateLine}</span>
               ${accIcon}
             </div>
           `;
@@ -666,6 +933,19 @@
 
       html += '</div>';
       container.innerHTML = html;
+
+      // Attach click handlers via event delegation (avoids inline onclick escaping issues)
+      container.querySelectorAll('.accrual-trigger').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openAccrualModal(
+            el.dataset.propertyId,
+            el.dataset.propertyName,
+            el.dataset.account,
+            el.dataset.vendor
+          );
+        });
+      });
     }
 
     function togglePropertyAccounts(propertyId) {

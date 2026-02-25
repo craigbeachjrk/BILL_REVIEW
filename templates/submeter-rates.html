@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submeter Rates | Bill Review</title>
+  <style>
+    :root {
+      --bg:#0ea5e9; --bg2:#4338ca;
+      --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33);
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+      background:linear-gradient(135deg,var(--bg),var(--bg2));
+      min-height:100vh; color:#1e293b;
+    }
+    .header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:18px 32px; color:#fff;
+    }
+    .header h1 { font-size:1.5rem; font-weight:700; }
+    .header a { color:#fff; text-decoration:none; opacity:.85; font-size:.9rem; }
+    .header a:hover { opacity:1; }
+    .card {
+      background:var(--glass); backdrop-filter:blur(10px);
+      border:1px solid var(--border); border-radius:16px;
+      box-shadow:0 10px 30px rgba(0,0,0,.12);
+      margin:0 24px 24px; padding:24px;
+    }
+    .controls {
+      display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px;
+    }
+    .controls label { font-weight:600; font-size:.9rem; }
+    .controls select, .controls button {
+      padding:8px 16px; border-radius:8px; font-size:.9rem; border:1px solid #cbd5e1;
+    }
+    .controls select { background:#fff; }
+    .controls button {
+      background:#2563eb; color:#fff; border:none; cursor:pointer; font-weight:600;
+    }
+    .controls button:hover { background:#1d4ed8; }
+    .controls button.secondary {
+      background:#64748b; color:#fff;
+    }
+    .controls button.secondary:hover { background:#475569; }
+    .controls button.save-btn { background:#059669; }
+    .controls button.save-btn:hover { background:#047857; }
+    .summary-bar {
+      display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;
+    }
+    .summary-stat {
+      background:rgba(255,255,255,.55); backdrop-filter:blur(6px);
+      border:1px solid var(--border); border-radius:12px;
+      padding:12px 20px; min-width:160px; text-align:center;
+    }
+    .summary-stat .label { font-size:.75rem; text-transform:uppercase; color:#64748b; font-weight:600; }
+    .summary-stat .value { font-size:1.35rem; font-weight:700; color:#1e293b; margin-top:2px; }
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; font-size:.85rem; }
+    thead th {
+      background:rgba(30,41,59,.07); padding:10px 12px; text-align:left;
+      font-weight:700; font-size:.78rem; text-transform:uppercase; color:#475569;
+      cursor:pointer; user-select:none; white-space:nowrap;
+    }
+    thead th:hover { background:rgba(30,41,59,.12); }
+    thead th .sort-arrow { margin-left:4px; font-size:.7rem; }
+    tbody td { padding:9px 12px; border-bottom:1px solid rgba(0,0,0,.06); }
+    tbody tr:hover { background:rgba(37,99,235,.06); }
+    tbody tr.highlight { background:rgba(250,204,21,.18); }
+    tbody tr.highlight:hover { background:rgba(250,204,21,.28); }
+    .rate-cell { font-family:'Cascadia Code','Fira Code',monospace; }
+    .volume-cell, .total-cell { text-align:right; }
+    .na-badge {
+      display:inline-block; padding:2px 8px; border-radius:6px;
+      background:#fef3c7; color:#92400e; font-weight:600; font-size:.78rem;
+    }
+    .cfg-select {
+      padding:4px 8px; border-radius:6px; border:1px solid #cbd5e1;
+      font-size:.82rem; background:#fff; width:100%;
+    }
+    .uom-badge {
+      display:inline-block; padding:2px 6px; border-radius:4px;
+      background:rgba(30,41,59,.08); color:#475569; font-size:.75rem;
+      font-family:'Cascadia Code','Fira Code',monospace;
+    }
+    .spinner {
+      display:inline-block; width:18px; height:18px;
+      border:2.5px solid #e2e8f0; border-top-color:#2563eb;
+      border-radius:50%; animation:spin .6s linear infinite; margin-right:6px;
+      vertical-align:middle;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .status-msg { font-size:.85rem; color:#475569; margin-left:8px; }
+    .empty-msg { text-align:center; padding:40px; color:#64748b; font-size:1rem; }
+    .hint { font-size:.75rem; color:#64748b; margin-top:4px; }
+    @media (max-width:768px) {
+      .card { margin:0 8px 16px; padding:16px; }
+      .summary-bar { flex-direction:column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Submeter Rates Report</h1>
+    <a href="/">&larr; Back to Dashboard</a>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <label for="period-select">UBI Period:</label>
+      <select id="period-select"></select>
+      <button onclick="generateReport()">Generate Report</button>
+      <button class="secondary" onclick="exportCSV()">Export CSV</button>
+      <button class="save-btn" onclick="saveConfig()">Save Config</button>
+      <span id="status-msg" class="status-msg"></span>
+    </div>
+    <div class="hint">Change <b>UOM Override</b> when the invoice unit isn't gallons, then click <b>Save Config</b> + <b>Generate Report</b> to recalculate.</div>
+
+    <div id="summary-bar" class="summary-bar" style="display:none;">
+      <div class="summary-stat"><div class="label">Properties</div><div class="value" id="stat-properties">0</div></div>
+      <div class="summary-stat"><div class="label">Water Volume (gal)</div><div class="value" id="stat-water-vol">0</div></div>
+      <div class="summary-stat"><div class="label">Sewer Volume (gal)</div><div class="value" id="stat-sewer-vol">0</div></div>
+      <div class="summary-stat"><div class="label">Avg Water Rate</div><div class="value" id="stat-water-rate">-</div></div>
+      <div class="summary-stat"><div class="label">Avg Sewer Rate</div><div class="value" id="stat-sewer-rate">-</div></div>
+    </div>
+
+    <div class="table-wrap">
+      <div id="table-container">
+        <div class="empty-msg">Select a period and click <b>Generate Report</b> to load submeter rates.</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const CALC_OPTIONS = ["From Invoice & Volume", "Set by NCUC", "Sewer is RUBS"];
+const UOM_OPTIONS = ["Auto", "Gallons", "kGal", "HCF", "CCF", "100 Gallons", "Acre-Feet"];
+let allRows = [];
+let sortCol = "property_name";
+let sortAsc = true;
+
+/* ---- Period dropdown ---- */
+function populatePeriods() {
+  const sel = document.getElementById("period-select");
+  const now = new Date();
+  const periods = [];
+  for (let offset = -12; offset <= 3; offset++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    periods.push(`${mm}/${yyyy}`);
+  }
+  periods.reverse();
+  periods.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    if (p === "03/2026") opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+/* ---- Status helpers ---- */
+function setStatus(msg, loading) {
+  const el = document.getElementById("status-msg");
+  el.innerHTML = (loading ? '<span class="spinner"></span>' : '') + msg;
+}
+function clearStatus() { document.getElementById("status-msg").textContent = ""; }
+
+/* ---- Generate ---- */
+async function generateReport() {
+  const period = document.getElementById("period-select").value;
+  setStatus("Scanning Stage 8...", true);
+  try {
+    const resp = await fetch(`/api/submeter-rates/generate?ubi_period=${encodeURIComponent(period)}`);
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      setStatus("Error: " + (data.error || resp.statusText), false);
+      return;
+    }
+    allRows = data.rows || [];
+    setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
+    renderSummary();
+    renderTable();
+  } catch (e) {
+    setStatus("Error: " + e.message, false);
+  }
+}
+
+/* ---- Save config then regenerate so overrides take effect ---- */
+async function saveConfig() {
+  const items = allRows.map(row => ({
+    property_name: row.property_name,
+    property_id: row.property_id || "",
+    utility_name: row.utility_name,
+    calculation_desc: row.calculation_desc || "From Invoice & Volume",
+    uom_override: row.uom_override || "Auto"
+  }));
+  setStatus("Saving config...", true);
+  try {
+    const resp = await fetch("/api/submeter-rates/config", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({items})
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      setStatus("Config saved. Regenerating with new UOM settings...", true);
+      // Bust the server cache so the override is applied on next generate
+      await regenerateAfterOverrideChange();
+    } else {
+      setStatus("Save failed: " + (data.error || "unknown"), false);
+    }
+  } catch (e) {
+    setStatus("Save error: " + e.message, false);
+  }
+}
+
+/* Regenerate with cache-bust so saved UOM overrides take effect */
+async function regenerateAfterOverrideChange() {
+  const period = document.getElementById("period-select").value;
+  try {
+    const resp = await fetch(`/api/submeter-rates/generate?ubi_period=${encodeURIComponent(period)}&bust_cache=1`);
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      setStatus("Regenerate error: " + (data.error || resp.statusText), false);
+      return;
+    }
+    allRows = data.rows || [];
+    setStatus(`Config saved. ${data.records_matched} records recalculated.`, false);
+    renderSummary();
+    renderTable();
+  } catch (e) {
+    setStatus("Regenerate error: " + e.message, false);
+  }
+}
+
+/* ---- Export CSV ---- */
+async function exportCSV() {
+  const period = document.getElementById("period-select").value;
+  window.open(`/api/submeter-rates/export-csv?ubi_period=${encodeURIComponent(period)}`, "_blank");
+}
+
+/* ---- Summary ---- */
+function renderSummary() {
+  const bar = document.getElementById("summary-bar");
+  if (!allRows.length) { bar.style.display = "none"; return; }
+  bar.style.display = "flex";
+
+  const props = new Set(allRows.map(r => r.property_name));
+  const waterRows = allRows.filter(r => r.utility_name === "Water");
+  const sewerRows = allRows.filter(r => r.utility_name === "Sewer");
+  const waterVol = waterRows.reduce((s, r) => s + (r.volume_total_gals || 0), 0);
+  const sewerVol = sewerRows.reduce((s, r) => s + (r.volume_total_gals || 0), 0);
+
+  const waterRates = waterRows.filter(r => r.rate != null).map(r => r.rate);
+  const sewerRates = sewerRows.filter(r => r.rate != null).map(r => r.rate);
+  const avgWater = waterRates.length ? waterRates.reduce((a,b) => a+b, 0) / waterRates.length : null;
+  const avgSewer = sewerRates.length ? sewerRates.reduce((a,b) => a+b, 0) / sewerRates.length : null;
+
+  document.getElementById("stat-properties").textContent = props.size;
+  document.getElementById("stat-water-vol").textContent = fmtNum(Math.round(waterVol));
+  document.getElementById("stat-sewer-vol").textContent = fmtNum(Math.round(sewerVol));
+  document.getElementById("stat-water-rate").textContent = avgWater != null ? avgWater.toFixed(6) : "-";
+  document.getElementById("stat-sewer-rate").textContent = avgSewer != null ? avgSewer.toFixed(6) : "-";
+}
+
+/* ---- Table ---- */
+function renderTable() {
+  const container = document.getElementById("table-container");
+  if (!allRows.length) {
+    container.innerHTML = '<div class="empty-msg">No results. Try generating a report.</div>';
+    return;
+  }
+
+  const sorted = [...allRows].sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (typeof va === "string") va = (va || "").toLowerCase();
+    if (typeof vb === "string") vb = (vb || "").toLowerCase();
+    if (va == null) va = sortAsc ? Infinity : -Infinity;
+    if (vb == null) vb = sortAsc ? Infinity : -Infinity;
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  const arrow = col => col === sortCol ? (sortAsc ? " &#9650;" : " &#9660;") : "";
+  const cols = [
+    {key:"property_name", label:"Property Name"},
+    {key:"ar_code", label:"AR Code"},
+    {key:"invoice_total", label:"Invoice Total"},
+    {key:"volume_total_gals", label:"Volume (Gal)"},
+    {key:"utility_name", label:"Utility"},
+    {key:"raw_uom", label:"Invoice UOM"},
+    {key:"uom_override", label:"UOM Override"},
+    {key:"rate", label:"Rate ($/gal)"},
+    {key:"calculation_desc", label:"Calculation Desc"},
+    {key:"run_datetime", label:"Run DateTime"},
+  ];
+
+  let html = '<table><thead><tr>';
+  cols.forEach(c => {
+    html += `<th onclick="doSort('${c.key}')">${c.label}<span class="sort-arrow">${arrow(c.key)}</span></th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  sorted.forEach((row, idx) => {
+    const highlight = row.rate == null || row.volume_total_gals === 0 ? ' class="highlight"' : '';
+    const rowIdx = allRows.indexOf(row);
+    html += `<tr${highlight}>`;
+    html += `<td>${esc(row.property_name)}</td>`;
+    html += `<td>${esc(row.ar_code || "")}</td>`;
+    html += `<td class="total-cell">${row.invoice_total != null ? "$" + fmtNum(row.invoice_total.toFixed(2)) : "-"}</td>`;
+    html += `<td class="volume-cell">${row.volume_total_gals != null ? fmtNum(Math.round(row.volume_total_gals)) : "-"}</td>`;
+    html += `<td>${esc(row.utility_name)}</td>`;
+    // Invoice UOM — shows what the parser found on the actual invoice
+    html += `<td>${row.raw_uom ? '<span class="uom-badge">' + esc(row.raw_uom) + '</span>' : '<span class="na-badge">none</span>'}</td>`;
+    // UOM Override dropdown
+    html += `<td><select class="cfg-select" onchange="setUomOverride(${rowIdx}, this.value)">`;
+    UOM_OPTIONS.forEach(opt => {
+      const sel = (row.uom_override || "Auto") === opt ? " selected" : "";
+      html += `<option value="${esc(opt)}"${sel}>${esc(opt)}</option>`;
+    });
+    html += `</select></td>`;
+    html += `<td class="rate-cell">${row.rate != null ? row.rate.toFixed(6) : '<span class="na-badge">N/A</span>'}</td>`;
+    html += `<td><select class="cfg-select" onchange="setCalcDesc(${rowIdx}, this.value)">`;
+    CALC_OPTIONS.forEach(opt => {
+      const sel = (row.calculation_desc || "From Invoice & Volume") === opt ? " selected" : "";
+      html += `<option value="${esc(opt)}"${sel}>${esc(opt)}</option>`;
+    });
+    html += `</select></td>`;
+    html += `<td style="font-size:.78rem;color:#64748b">${esc(row.run_datetime || "")}</td>`;
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function doSort(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+  renderTable();
+}
+
+function setCalcDesc(rowIdx, val) {
+  allRows[rowIdx].calculation_desc = val;
+}
+
+function setUomOverride(rowIdx, val) {
+  allRows[rowIdx].uom_override = val;
+}
+
+/* ---- Helpers ---- */
+function fmtNum(n) {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+function esc(s) {
+  if (!s) return "";
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/* ---- Init ---- */
+populatePeriods();
+</script>
+</body>
+</html>

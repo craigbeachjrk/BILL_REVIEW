@@ -127,6 +127,7 @@ HIST_ARCHIVE_PREFIX = os.getenv("HIST_ARCHIVE_PREFIX", "Bill_Parser_99_Historica
 FAILED_JOBS_PREFIX = os.getenv("FAILED_JOBS_PREFIX", "Bill_Parser_Failed_Jobs/")
 METER_DATA_PREFIX = os.getenv("METER_DATA_PREFIX", "Bill_Parser_Meter_Data/")
 ERRORS_TABLE = os.getenv("ERRORS_TABLE", "jrk-bill-parser-errors")
+MANUAL_ENTRIES_TABLE = os.getenv("MANUAL_ENTRIES_TABLE", "jrk-bill-manual-entries")
 PARSED_INPUTS_PREFIX = os.getenv("PARSED_INPUTS_PREFIX", "Bill_Parser_2_Parsed_Inputs/")
 REWORK_PREFIX = os.getenv("REWORK_PREFIX", "Bill_Parser_Rework_Input/")
 
@@ -847,6 +848,31 @@ _VENDOR_PAIR_CACHE = {
 import threading
 _VENDOR_PAIR_LOCK = threading.Lock()
 
+# Precomputed INVOICES_MAT cache for instant accrual modal loads
+_INVOICE_HISTORY_CACHE = {
+    "data": {},           # {property_code: {vendor_name_lower: [{"month": "2025-01", "amount": float, "gl_account": str, "gl_name": str, "vendor_raw": str, "line_count": int}]}}
+    "account_data": {},   # {property_code: {account_number: [{"month": "2025-01", "amount": float, "gl_account": str, "gl_name": str, "vendor_raw": str, "line_count": int}]}}
+    "prop_code_map": {},  # {property_id: property_code}  from dim_property
+    "vendor_index": {},   # {property_code: [vendor_name_lower, ...]}  for regex scanning
+    "last_refresh": None,
+    "ttl_seconds": 7200,  # 2 hours (mat view updates daily)
+    "loading": False,
+}
+_INVOICE_HISTORY_LOCK = threading.Lock()
+
+# -------- Precomputed Search Index --------
+# In-memory index of all Stage 4 invoice metadata for instant advanced search
+_SEARCH_INDEX = {
+    "entries": [],           # [{pdf_id, date, account, vendor, property, amount, s3_key}, ...]
+    "by_date": {},           # {date_str: [entry_indices...]} for incremental refresh
+    "dates_indexed": set(),  # which "y-m-d" dates have been indexed
+    "ready": False,          # True once initial backfill is done
+    "loading": False,
+    "last_refresh": None,
+    "entry_count": 0,
+}
+_SEARCH_INDEX_LOCK = threading.Lock()
+
 def _scan_historical_pairs_for_prefix(prefix: str, start_date, end_date):
     """Scan a single S3 prefix (Stage 7 or Archive) for vendor-property and vendor-GL pairs."""
     vp_pairs = set()
@@ -1074,8 +1100,64 @@ async def startup_prewarm_caches():
         except Exception as e:
             print(f"[STARTUP] Error pre-warming vendor pair cache: {e}")
 
-    # Run in background thread so it doesn't block app startup
+    def prewarm_invoice_cache():
+        print("[STARTUP] Pre-warming invoice history cache...")
+        try:
+            _load_invoice_history_cache()
+            print("[STARTUP] Invoice history cache loaded")
+        except Exception as e:
+            print(f"[STARTUP] Error loading invoice history: {e}")
+
+    # Run in separate background threads so they don't block each other
     threading.Thread(target=prewarm, daemon=True).start()
+    threading.Thread(target=prewarm_invoice_cache, daemon=True).start()
+
+    # Background refresh thread for invoice history cache (every 2 hours)
+    def _invoice_history_refresh_loop():
+        while True:
+            time.sleep(7200)
+            try:
+                _load_invoice_history_cache()
+            except Exception:
+                pass
+    threading.Thread(target=_invoice_history_refresh_loop, daemon=True).start()
+
+    # Search index: load from S3 (instant), then index only new dates
+    def _search_index_backfill():
+        print("[STARTUP] Loading search index from S3...")
+        loaded = False
+        try:
+            loaded = _load_search_index_from_s3()
+        except Exception as e:
+            print(f"[STARTUP] Search index S3 load error: {e}")
+        if loaded:
+            # Index is ready from S3, just pick up any new dates
+            print("[STARTUP] Catching up new dates...")
+            try:
+                _build_search_index(force_full=False)
+            except Exception as e:
+                print(f"[STARTUP] Search index incremental error: {e}")
+        else:
+            # No persisted index, do full backfill
+            print("[STARTUP] No persisted index, doing full backfill...")
+            try:
+                _build_search_index(force_full=True)
+            except Exception as e:
+                print(f"[STARTUP] Search index backfill error: {e}")
+
+    def _search_index_refresh_loop():
+        # Wait for backfill to finish first
+        while not _SEARCH_INDEX["ready"]:
+            time.sleep(5)
+        while True:
+            time.sleep(300)  # 5 minutes
+            try:
+                _build_search_index(force_full=False)
+            except Exception:
+                pass
+
+    threading.Thread(target=_search_index_backfill, daemon=True).start()
+    threading.Thread(target=_search_index_refresh_loop, daemon=True).start()
 
 # -------- VACANT GL DESC Helpers --------
 # GL codes that trigger the special VACANT description format
@@ -1378,10 +1460,22 @@ def write_overrides(y: str, m: str, d: str, overrides: List[Dict[str, Any]]) -> 
     return out_key
 
 
+def _clean_account_number(acct: str) -> str:
+    """Strip dashes, spaces, and other punctuation from account numbers to prevent duplicates."""
+    if not acct:
+        return acct
+    return re.sub(r'[-\s\.\(\)]', '', str(acct).strip())
+
+
 def _write_jsonl(prefix: str, y: str, m: str, d: str, basename: str, rows: List[Dict[str, Any]]) -> str:
     ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     out_prefix = f"{prefix}yyyy={y}/mm={m}/dd={d}/"
     out_key = f"{out_prefix}{basename}_{ts}.jsonl"
+    # Clean account numbers: strip dashes and other punctuation to prevent duplicates
+    for r in rows:
+        for acct_field in ("Account Number", "AccountNumber", "Line Item Account Number"):
+            if acct_field in r and r[acct_field]:
+                r[acct_field] = _clean_account_number(r[acct_field])
     body = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n"
     s3.put_object(Bucket=BUCKET, Key=out_key, Body=body.encode('utf-8'), ContentType='application/x-ndjson')
     return out_key
@@ -3034,6 +3128,212 @@ def search_view(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse("search.html", {"request": request, "user": user})
 
 
+def _calc_invoice_total(data_rows):
+    """Calculate total amount for an invoice, excluding summary rows."""
+    total = 0.0
+    for r in data_rows:
+        try:
+            desc = str(r.get("Line Item Description", "")).upper().strip()
+            summary_patterns = [
+                r'\bSUBTOTAL\b', r'\bGRAND TOTAL\b', r'\bBALANCE DUE\b', r'\bAMOUNT DUE\b',
+                r'\bTOTAL DUE\b', r'\bTOTAL CHARGES?\b', r'\bTOTAL AMOUNT\b'
+            ]
+            exact_summary = desc in ['TOTAL', 'SUBTOTAL', 'TAX', 'TAXES', 'BALANCE', 'AMOUNT DUE', 'TOTAL DUE']
+            is_summary_row = exact_summary or any(re.search(p, desc) for p in summary_patterns)
+            if not is_summary_row:
+                amt = r.get("Line Item Charge") or r.get("AMOUNT") or r.get("amount") or r.get("Amount") or r.get("LINE_AMOUNT") or 0
+                charge_str = str(amt).replace("$", "").replace(",", "").strip()
+                total += float(charge_str) if charge_str else 0.0
+        except (ValueError, TypeError):
+            pass
+    return total
+
+
+# -------- Search Index Builder --------
+
+def _index_one_day(y: str, m: str, d: str) -> List[Dict]:
+    """Load a single day from S3, extract per-invoice metadata for the search index."""
+    entries = []
+    try:
+        rows = load_day(y, m, d)
+    except Exception:
+        return entries
+
+    by_pdf: dict = {}
+    for r in rows:
+        key = r.get("__s3_key__", "")
+        if not key:
+            continue
+        pid = pdf_id_from_key(key)
+        if pid not in by_pdf:
+            by_pdf[pid] = {"rows": [], "key": key}
+        by_pdf[pid]["rows"].append(r)
+
+    date_str = f"{y}-{m}-{d}"
+    for pid, data in by_pdf.items():
+        first = data["rows"][0]
+        acct = str(
+            first.get("Account Number") or first.get("ACCOUNT_ID") or first.get("account_id") or
+            first.get("Account ID") or first.get("ACCOUNT_NUMBER") or ""
+        )
+        vend = str(
+            first.get("EnrichedVendorName") or first.get("Vendor Name") or first.get("VENDOR") or
+            first.get("vendor") or first.get("Vendor") or first.get("VENDOR_NAME") or ""
+        )
+        prop = str(
+            first.get("EnrichedPropertyName") or first.get("EnrichedProperty") or first.get("PROPERTY") or
+            first.get("property") or first.get("Property") or first.get("PROPERTY_NAME") or ""
+        )
+        total = _calc_invoice_total(data["rows"])
+        entries.append({
+            "pdf_id": pid,
+            "date": date_str,
+            "account": acct,
+            "account_l": acct.lower(),
+            "vendor": vend,
+            "vendor_l": vend.lower(),
+            "property": prop,
+            "property_l": prop.lower(),
+            "amount": total,
+        })
+    return entries
+
+
+_SEARCH_INDEX_S3_KEY = "Bill_Parser_Config/search_index.json.gz"
+
+
+def _save_search_index_to_s3():
+    """Persist the search index to S3 as compressed JSON so it survives restarts."""
+    import gzip
+    idx = _SEARCH_INDEX
+    # Strip the _l (lowercase) fields to save space — we rebuild them on load
+    slim_entries = [
+        {"pdf_id": e["pdf_id"], "date": e["date"], "account": e["account"],
+         "vendor": e["vendor"], "property": e["property"], "amount": e["amount"]}
+        for e in idx["entries"]
+    ]
+    payload = {
+        "entries": slim_entries,
+        "dates_indexed": sorted(idx["dates_indexed"]),
+        "saved_at": dt.datetime.utcnow().isoformat() + "Z",
+    }
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    compressed = gzip.compress(raw)
+    s3.put_object(Bucket=BUCKET, Key=_SEARCH_INDEX_S3_KEY, Body=compressed,
+                  ContentType="application/gzip")
+    print(f"[SEARCH INDEX] Saved to S3: {len(slim_entries)} entries, {len(compressed)//1024}KB compressed")
+
+
+def _load_search_index_from_s3() -> bool:
+    """Load persisted search index from S3. Returns True if loaded successfully."""
+    import gzip
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=_SEARCH_INDEX_S3_KEY)
+        compressed = obj["Body"].read()
+        raw = gzip.decompress(compressed)
+        payload = json.loads(raw)
+        entries = payload.get("entries", [])
+        dates_indexed = set(payload.get("dates_indexed", []))
+        # Rebuild lowercase fields for fast search
+        for e in entries:
+            e["account_l"] = e["account"].lower()
+            e["vendor_l"] = e["vendor"].lower()
+            e["property_l"] = e["property"].lower()
+        with _SEARCH_INDEX_LOCK:
+            _SEARCH_INDEX["entries"] = entries
+            _SEARCH_INDEX["dates_indexed"] = dates_indexed
+            _SEARCH_INDEX["by_date"] = {d: 0 for d in dates_indexed}
+            _SEARCH_INDEX["ready"] = True
+            _SEARCH_INDEX["entry_count"] = len(entries)
+            _SEARCH_INDEX["last_refresh"] = time.time()
+        print(f"[SEARCH INDEX] Loaded from S3: {len(entries)} entries across {len(dates_indexed)} dates (saved {payload.get('saved_at', '?')})")
+        return True
+    except s3.exceptions.NoSuchKey:
+        print("[SEARCH INDEX] No persisted index found in S3, will do full backfill")
+        return False
+    except Exception as e:
+        print(f"[SEARCH INDEX] Error loading from S3: {e}, will do full backfill")
+        return False
+
+
+def _build_search_index(force_full: bool = False):
+    """Build or refresh the in-memory search index from Stage 4 data.
+    - On startup: loads persisted index from S3, then indexes only new dates.
+    - force_full=True: re-indexes everything from scratch.
+    - Incremental: only re-indexes today + any new date folders.
+    - Persists to S3 after every build so restarts are instant.
+    """
+    idx = _SEARCH_INDEX
+    if idx["loading"]:
+        return
+    with _SEARCH_INDEX_LOCK:
+        idx["loading"] = True
+
+    try:
+        dates = list_dates()
+        already = idx["dates_indexed"]
+
+        if force_full:
+            to_index = dates
+            new_entries = []
+            new_by_date = {}
+        else:
+            # Incremental: index new dates + always re-index today
+            today_str = dt.date.today().strftime("%Y-%m-%d")
+            to_index = [d for d in dates if d["label"] not in already or d["label"] == today_str]
+            new_entries = [e for e in idx["entries"] if e["date"] != today_str]
+            new_by_date = {k: v for k, v in idx["by_date"].items() if k != today_str}
+
+        if not to_index:
+            with _SEARCH_INDEX_LOCK:
+                idx["loading"] = False
+                idx["last_refresh"] = time.time()
+            return
+
+        total_dates = len(to_index)
+        indexed = 0
+        print(f"[SEARCH INDEX] Indexing {total_dates} date(s)...")
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {
+                executor.submit(_index_one_day, d["tuple"][0], d["tuple"][1], d["tuple"][2]): d["label"]
+                for d in to_index
+            }
+            for future in as_completed(futures):
+                date_label = futures[future]
+                try:
+                    day_entries = future.result(timeout=120)
+                    new_entries.extend(day_entries)
+                    new_by_date[date_label] = len(day_entries)
+                    indexed += 1
+                    if indexed % 10 == 0:
+                        print(f"[SEARCH INDEX] ... {indexed}/{total_dates} dates done ({len(new_entries)} invoices)")
+                except Exception as e:
+                    print(f"[SEARCH INDEX] Error indexing {date_label}: {e}")
+
+        with _SEARCH_INDEX_LOCK:
+            idx["entries"] = new_entries
+            idx["by_date"] = new_by_date
+            idx["dates_indexed"] = {d["label"] for d in dates}
+            idx["ready"] = True
+            idx["loading"] = False
+            idx["last_refresh"] = time.time()
+            idx["entry_count"] = len(new_entries)
+
+        print(f"[SEARCH INDEX] Done. {len(new_entries)} invoices indexed across {len(idx['dates_indexed'])} dates.")
+
+        # Persist to S3 so next startup is instant
+        try:
+            _save_search_index_to_s3()
+        except Exception as e:
+            print(f"[SEARCH INDEX] Warning: failed to persist to S3: {e}")
+
+    except Exception as e:
+        print(f"[SEARCH INDEX] Fatal error: {e}")
+        with _SEARCH_INDEX_LOCK:
+            idx["loading"] = False
+
+
 @app.get("/api/search")
 def api_search(
     request: Request,
@@ -3044,7 +3344,7 @@ def api_search(
     end_date: str = "",
     user: str = Depends(require_user)
 ):
-    """Search across all parse dates for invoices matching criteria."""
+    """Instant search against the precomputed in-memory index."""
     account = (account or "").strip().lower()
     vendor = (vendor or "").strip().lower()
     prop = (property or "").strip().lower()
@@ -3052,118 +3352,72 @@ def api_search(
     if not account and not vendor and not prop:
         return JSONResponse({"error": "At least one search term required"}, status_code=400)
 
-    # Get all available dates
-    dates = list_dates()
-
-    # Filter by date range if provided
-    if start_date:
-        dates = [d for d in dates if f"{d['tuple'][0]}-{d['tuple'][1]}-{d['tuple'][2]}" >= start_date]
-    if end_date:
-        dates = [d for d in dates if f"{d['tuple'][0]}-{d['tuple'][1]}-{d['tuple'][2]}" <= end_date]
+    idx = _SEARCH_INDEX
+    if not idx["ready"]:
+        return JSONResponse({
+            "error": "Search index is still building. Please wait a few minutes and try again.",
+            "indexing": True,
+        }, status_code=503)
 
     results = []
     max_results = 500
-    limit_reached = False
 
-    for d in dates:
-        if limit_reached:
-            break
-
-        y, m, dd = d["tuple"]
-        date_str = f"{y}-{m}-{dd}"
-
-        try:
-            rows = load_day(y, m, dd)
-        except Exception:
+    for entry in idx["entries"]:
+        # Date range filter
+        if start_date and entry["date"] < start_date:
+            continue
+        if end_date and entry["date"] > end_date:
+            continue
+        # Search term filters (contains match)
+        if account and account not in entry["account_l"]:
+            continue
+        if vendor and vendor not in entry["vendor_l"]:
+            continue
+        if prop and prop not in entry["property_l"]:
             continue
 
-        # Group rows by pdf_id to get unique invoices
-        by_pdf: dict = {}
-        for r in rows:
-            key = r.get("__s3_key__", "")
-            if not key:
-                continue
-            pid = pdf_id_from_key(key)
-            if pid not in by_pdf:
-                by_pdf[pid] = {"rows": [], "key": key}
-            by_pdf[pid]["rows"].append(r)
+        results.append({
+            "date": entry["date"],
+            "pdf_id": entry["pdf_id"],
+            "account_id": entry["account"],
+            "vendor": entry["vendor"],
+            "property": entry["property"],
+            "amount": entry["amount"],
+        })
+        if len(results) >= max_results:
+            break
 
-        for pid, data in by_pdf.items():
-            first_row = data["rows"][0]
+    results.sort(key=lambda x: x["date"], reverse=True)
+    return {
+        "results": results,
+        "truncated": len(results) >= max_results,
+        "index_size": idx["entry_count"],
+        "index_dates": len(idx["dates_indexed"]),
+    }
 
-            # Extract searchable fields - check multiple possible field names
-            row_account = str(
-                first_row.get("Account Number") or first_row.get("ACCOUNT_ID") or first_row.get("account_id") or
-                first_row.get("Account ID") or first_row.get("ACCOUNT_NUMBER") or ""
-            ).lower()
-            row_vendor = str(
-                first_row.get("EnrichedVendorName") or first_row.get("Vendor Name") or first_row.get("VENDOR") or
-                first_row.get("vendor") or first_row.get("Vendor") or first_row.get("VENDOR_NAME") or ""
-            ).lower()
-            row_property = str(
-                first_row.get("EnrichedPropertyName") or first_row.get("EnrichedProperty") or first_row.get("PROPERTY") or
-                first_row.get("property") or first_row.get("Property") or first_row.get("PROPERTY_NAME") or ""
-            ).lower()
 
-            # Check if matches search criteria
-            matches = True
-            if account and account not in row_account:
-                matches = False
-            if vendor and vendor not in row_vendor:
-                matches = False
-            if prop and prop not in row_property:
-                matches = False
+@app.get("/api/search/index-status")
+def api_search_index_status(user: str = Depends(require_user)):
+    """Check search index status."""
+    idx = _SEARCH_INDEX
+    return {
+        "ready": idx["ready"],
+        "loading": idx["loading"],
+        "entry_count": idx["entry_count"],
+        "dates_indexed": len(idx["dates_indexed"]),
+        "last_refresh": idx["last_refresh"],
+    }
 
-            if not matches:
-                continue
 
-            # Calculate total amount (exclude summary rows like SUBTOTAL, TOTAL, TAX to match invoices page)
-            total = 0.0
-            for r in data["rows"]:
-                try:
-                    desc = str(r.get("Line Item Description", "")).upper().strip()
-                    # Skip rows with descriptions indicating they're summary/aggregate lines
-                    summary_patterns = [
-                        r'\bSUBTOTAL\b', r'\bGRAND TOTAL\b', r'\bBALANCE DUE\b', r'\bAMOUNT DUE\b',
-                        r'\bTOTAL DUE\b', r'\bTOTAL CHARGES?\b', r'\bTOTAL AMOUNT\b'
-                    ]
-                    exact_summary = desc in ['TOTAL', 'SUBTOTAL', 'TAX', 'TAXES', 'BALANCE', 'AMOUNT DUE', 'TOTAL DUE']
-                    is_summary_row = exact_summary or any(re.search(p, desc) for p in summary_patterns)
-
-                    if not is_summary_row:
-                        amt = r.get("Line Item Charge") or r.get("AMOUNT") or r.get("amount") or r.get("Amount") or r.get("LINE_AMOUNT") or 0
-                        charge_str = str(amt).replace("$", "").replace(",", "").strip()
-                        total += float(charge_str) if charge_str else 0.0
-                except (ValueError, TypeError):
-                    pass
-
-            # Get display values using same field lookups
-            display_account = (
-                first_row.get("Account Number") or first_row.get("ACCOUNT_ID") or first_row.get("account_id") or
-                first_row.get("Account ID") or first_row.get("ACCOUNT_NUMBER") or ""
-            )
-            display_vendor = (
-                first_row.get("EnrichedVendorName") or first_row.get("Vendor Name") or first_row.get("VENDOR") or
-                first_row.get("vendor") or first_row.get("Vendor") or first_row.get("VENDOR_NAME") or ""
-            )
-            display_property = (
-                first_row.get("EnrichedPropertyName") or first_row.get("EnrichedProperty") or first_row.get("PROPERTY") or
-                first_row.get("property") or first_row.get("Property") or first_row.get("PROPERTY_NAME") or ""
-            )
-            results.append({
-                "date": date_str,
-                "pdf_id": pid,
-                "account_id": display_account,
-                "vendor": display_vendor,
-                "property": display_property,
-                "amount": total
-            })
-            # Check limit AFTER adding a match (not before checking invoices)
-            if len(results) >= max_results:
-                limit_reached = True
-                break
-
-    return {"results": results, "truncated": len(results) >= max_results}
+@app.post("/api/search/rebuild-index")
+def api_search_rebuild_index(user: str = Depends(require_user)):
+    """Force full rebuild of search index."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin only"}, status_code=403)
+    if _SEARCH_INDEX["loading"]:
+        return {"status": "already_loading"}
+    threading.Thread(target=_build_search_index, args=(True,), daemon=True).start()
+    return {"status": "rebuild_started"}
 
 
 # Default to the Pending_Parsing prefix to match the S3 event rule
@@ -5197,11 +5451,26 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
             if new_s7_key != s3_key:
                 s3.delete_object(Bucket=BUCKET, Key=s3_key)
                 print(f"[UBI ASSIGN] Deleted original {s3_key}, remaining items in {new_s7_key}")
+                # Verify deletion
+                try:
+                    s3.head_object(Bucket=BUCKET, Key=s3_key)
+                    print(f"[UBI ASSIGN] WARNING: Original file STILL EXISTS after delete: {s3_key}")
+                    s3.delete_object(Bucket=BUCKET, Key=s3_key)
+                    print(f"[UBI ASSIGN] Retried delete for {s3_key}")
+                except Exception:
+                    pass  # Good - file is gone (404)
             else:
                 print(f"[UBI ASSIGN] Rewrote {len(remaining_items)} remaining items to source")
         else:
             s3.delete_object(Bucket=BUCKET, Key=s3_key)
             print(f"[UBI ASSIGN] Deleted empty source file {s3_key}")
+            # Verify deletion
+            try:
+                s3.head_object(Bucket=BUCKET, Key=s3_key)
+                print(f"[UBI ASSIGN] WARNING: Source file STILL EXISTS after delete: {s3_key}")
+                s3.delete_object(Bucket=BUCKET, Key=s3_key)
+            except Exception:
+                pass  # Good - file is gone (404)
 
         print(f"[UBI ASSIGN] COMPLETED: Moved {assigned_count} items to Stage 8 for {len(ubi_periods)} period(s)")
 
@@ -5634,11 +5903,32 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
         # Archive copy
         archive_key = _write_jsonl(HIST_ARCHIVE_PREFIX, y, m, d, base.replace('.jsonl', ''), assigned_items)
 
-        # Update source file
+        # Write exclusion hashes to DDB (same as main assign endpoint)
+        try:
+            now_utc = datetime.utcnow().isoformat() + "Z"
+            for rec in assigned_items:
+                lh = _compute_stable_line_hash(rec)
+                ddb.put_item(TableName='jrk-bill-ubi-assignments', Item={
+                    'assignment_id': {'S': lh},
+                    'line_hash': {'S': lh},
+                    's3_key': {'S': assigned_key},
+                    'ubi_period': {'S': rec.get("ubi_period", "")},
+                    'assigned_by': {'S': user},
+                    'assigned_date': {'S': now_utc},
+                })
+            print(f"[UBI ACCEPT] Wrote {len(assigned_items)} hashes to DDB exclusion table")
+        except Exception as ddb_err:
+            print(f"[UBI ACCEPT] Warning: Could not write to DDB exclusion tables: {ddb_err}")
+
+        # Update source file - MUST delete original when writing new file
         if remaining_items:
-            _write_jsonl(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_items)
+            new_s7_key = _write_jsonl(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_items)
+            if new_s7_key != s3_key:
+                s3.delete_object(Bucket=BUCKET, Key=s3_key)
+                print(f"[UBI ACCEPT] Deleted original {s3_key}, remaining items in {new_s7_key}")
         else:
             s3.delete_object(Bucket=BUCKET, Key=s3_key)
+            print(f"[UBI ACCEPT] Deleted empty source file {s3_key}")
 
         # Update account history
         _update_ubi_account_history(
@@ -14160,13 +14450,23 @@ def _parse_date_any(s: str) -> dt.date | None:
     if not s:
         return None
     s = str(s).strip()
-    fmts = ["%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"]
+    fmts = ["%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d", "%m/%d/%y"]
     for f in fmts:
         try:
             return datetime.strptime(s, f).date()
         except Exception:
             pass
     return None
+
+
+def _normalize_date_display(s: str) -> str:
+    """Normalize any date string to MM/DD/YYYY format for consistent display."""
+    if not s:
+        return s
+    d = _parse_date_any(s)
+    if d:
+        return d.strftime("%m/%d/%Y")
+    return s  # Return as-is if unparseable
 
 
 def _month_key(d: dt.date) -> str:
@@ -14267,7 +14567,10 @@ def _read_json_records_from_s3(keys: list[str]) -> list[dict]:
 SNOWFLAKE_CREDENTIALS_CACHE = None
 
 def _get_snowflake_credentials() -> dict | None:
-    """Fetch Snowflake credentials from AWS Secrets Manager (with caching)"""
+    """Fetch Snowflake credentials from AWS Secrets Manager (with caching).
+    Supports key-pair auth: if the config references a private_key_secret,
+    the private key is fetched separately and decoded for Snowflake connector.
+    """
     global SNOWFLAKE_CREDENTIALS_CACHE
 
     if SNOWFLAKE_CREDENTIALS_CACHE:
@@ -14285,6 +14588,30 @@ def _get_snowflake_credentials() -> dict | None:
             return None
 
         credentials = json.loads(secret_string)
+
+        # If config references a separate private key secret, fetch and decode it
+        pk_secret_name = credentials.get('private_key_secret')
+        if pk_secret_name and not credentials.get('password'):
+            try:
+                pk_resp = secrets_client.get_secret_value(SecretId=pk_secret_name)
+                pk_pem = pk_resp.get('SecretString', '')
+                # Normalize: strip BOM (unicode + UTF-8 bytes), CRLF -> LF, whitespace
+                pk_pem = pk_pem.lstrip('\ufeff').lstrip('\xef\xbb\xbf').strip()
+                pk_pem = pk_pem.replace('\r\n', '\n').replace('\r', '\n')
+                pk_bytes_raw = pk_pem.encode('ascii')
+                if pk_bytes_raw:
+                    from cryptography.hazmat.primitives import serialization
+                    pk_obj = serialization.load_pem_private_key(pk_bytes_raw, password=None)
+                    pk_bytes = pk_obj.private_bytes(
+                        encoding=serialization.Encoding.DER,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                    credentials['private_key'] = pk_bytes
+                    print(f"[SNOWFLAKE] Loaded private key from {pk_secret_name}")
+            except Exception as e:
+                print(f"[SNOWFLAKE] Error loading private key: {e}")
+
         SNOWFLAKE_CREDENTIALS_CACHE = credentials
         print(f"[SNOWFLAKE] Loaded credentials for account: {credentials.get('account')}")
         return credentials
@@ -14292,6 +14619,25 @@ def _get_snowflake_credentials() -> dict | None:
     except Exception as e:
         print(f"[SNOWFLAKE] Error fetching credentials: {e}")
         return None
+
+
+def _snowflake_connect(credentials: dict):
+    """Create a Snowflake connection using either password or key-pair auth."""
+    connect_args = {
+        'account': credentials.get('account'),
+        'user': credentials.get('user'),
+        'database': credentials.get('database'),
+        'schema': credentials.get('schema'),
+        'warehouse': credentials.get('warehouse'),
+        'insecure_mode': True,  # Skip OCSP check (fails in containers)
+    }
+    if credentials.get('role'):
+        connect_args['role'] = credentials['role']
+    if credentials.get('private_key'):
+        connect_args['private_key'] = credentials['private_key']
+    elif credentials.get('password'):
+        connect_args['password'] = credentials['password']
+    return snowflake.connector.connect(**connect_args)
 
 
 def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_date: str) -> tuple[bool, str, int]:
@@ -14302,21 +14648,25 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
             return False, "Failed to load Snowflake credentials", 0
 
         # Connect to Snowflake
-        conn = snowflake.connector.connect(
-            account=credentials.get('account'),
-            user=credentials.get('user'),
-            password=credentials.get('password'),
-            database=credentials.get('database'),
-            schema=credentials.get('schema'),
-            warehouse=credentials.get('warehouse'),
-            role=credentials.get('role') if credentials.get('role') else None
-        )
+        conn = _snowflake_connect(credentials)
 
         cursor = conn.cursor()
 
-        # Prepare data for batch insert (NEW schema with Batch_ID column)
+        # Prepare data for batch insert (with Source_Type column)
         rows_to_insert = []
         for mb in master_bills:
+            # Determine Source_Type from source line items
+            source_type = None  # NULL = ACTUAL (existing behavior)
+            if mb.get('has_non_actual'):
+                entry_types = set()
+                for sl in mb.get('source_line_items', []):
+                    et = sl.get('entry_type', '')
+                    if et:
+                        entry_types.add(et)
+                if entry_types:
+                    has_actual = any(not sl.get('entry_type') for sl in mb.get('source_line_items', []))
+                    source_type = "MIXED" if len(entry_types) > 1 or has_actual else entry_types.pop()
+
             row = (
                 str(mb.get('property_id', '')),
                 str(mb.get('ar_code_mapping', '')),
@@ -14326,16 +14676,18 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
                 str(mb.get('billback_month_end', '')),
                 str(run_date),
                 str(memo),
-                str(batch_id)  # Add Batch_ID for traceability
+                str(batch_id),  # Batch_ID for traceability
+                source_type  # Source_Type: NULL=ACTUAL, ACCRUAL, MANUAL, TRUE-UP, MIXED
             )
             rows_to_insert.append(row)
 
-        # Insert into Snowflake (NEW table "_Master_Bills_Prod" with Batch_ID column)
+        # Insert into Snowflake (with Source_Type column)
         insert_sql = """
         INSERT INTO "_Master_Bills_Prod"
         ("Property_ID", "AR_Code_Mapping", "Utility_Name", "Utility_Amount",
-         "Billback_Month_Start", "Billback_Month_End", "RunDate", "Memo", "Batch_ID")
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+         "Billback_Month_Start", "Billback_Month_End", "RunDate", "Memo", "Batch_ID",
+         "Source_Type")
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
 
         cursor.executemany(insert_sql, rows_to_insert)
@@ -14354,6 +14706,470 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
         import traceback
         traceback.print_exc()
         return False, str(e), 0
+
+
+# -------- Accrual / Manual Entry Helpers --------
+
+def _read_historical_from_snowflake(property_id: str, account_number: str, charge_code: str, utility_name: str) -> list[dict]:
+    """Query Snowflake _Master_Bills_Prod for historical amounts matching property + charge code + utility."""
+    try:
+        credentials = _get_snowflake_credentials()
+        if not credentials:
+            return []
+
+        conn = _snowflake_connect(credentials)
+
+        cursor = conn.cursor()
+        query = """
+        SELECT "Billback_Month_Start", "Utility_Amount"
+        FROM "_Master_Bills_Prod"
+        WHERE "Property_ID" = %s
+          AND "AR_Code_Mapping" = %s
+          AND "Utility_Name" = %s
+        ORDER BY "Billback_Month_Start" ASC
+        """
+        cursor.execute(query, (property_id, charge_code, utility_name))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        results = []
+        for row in rows:
+            billback_start = str(row[0]) if row[0] else ""
+            amount = float(row[1]) if row[1] else 0.0
+            period = ""
+            if billback_start:
+                parts = billback_start.split("/")
+                if len(parts) == 3:
+                    period = f"{parts[0]}/{parts[2]}"
+            results.append({"period": period, "amount": amount})
+
+        print(f"[ACCRUAL] Snowflake returned {len(results)} historical records for {property_id}/{charge_code}/{utility_name}")
+        return results
+
+    except Exception as e:
+        print(f"[ACCRUAL] Snowflake historical query error: {e}")
+        return []
+
+
+# -------- INVOICES_MAT Precomputed Cache --------
+
+def _load_invoice_history_cache():
+    """Load and index INVOICES_MAT data into in-memory cache for instant accrual lookups."""
+    cache = _INVOICE_HISTORY_CACHE
+    if cache.get("loading"):
+        print("[INVOICE CACHE] Already loading, skipping")
+        return
+
+    cache["loading"] = True
+    t0 = time.time()
+
+    try:
+        # Step 1: Build property_id -> property_code mapping from dim_property
+        prop_code_map = {}
+        try:
+            dim_rows = _load_dim_records(DIM_PROPERTY_PREFIX)
+            for r in dim_rows:
+                pid = str(
+                    r.get("propertyId") or r.get("PROPERTY_ID") or r.get("Property ID")
+                    or r.get("id") or r.get("PROPERTYID") or r.get("PROP_ID") or ""
+                ).strip()
+                pcode = str(
+                    r.get("LOOKUP_CODE") or r.get("lookup_code") or r.get("LookupCode")
+                    or r.get("PROPERTY_CODE") or r.get("code") or r.get("CODE") or ""
+                ).strip()
+                if pid and pcode:
+                    prop_code_map[pid] = pcode
+            print(f"[INVOICE CACHE] Built prop_code_map: {len(prop_code_map)} properties")
+        except Exception as e:
+            print(f"[INVOICE CACHE] Error loading dim_property: {e}")
+
+        # Step 2: Query INVOICES_MAT (aggregated)
+        credentials = _get_snowflake_credentials()
+        if not credentials:
+            print("[INVOICE CACHE] No Snowflake credentials, skipping")
+            cache["loading"] = False
+            return
+
+        conn = _snowflake_connect(credentials)
+
+        cursor = conn.cursor()
+        query = """
+        SELECT VENDOR_NAME, PROPERTY_CODE, PROPERTY_NAME,
+               GL_ACCOUNT, GL_ACCOUNT_NAME, POST_MONTH,
+               SUM(AMOUNT) as TOTAL_AMOUNT,
+               COUNT(*) as LINE_COUNT,
+               INVOICE_NUMBER
+        FROM RAW.ENTRATA.INVOICES_MAT
+        WHERE POST_MONTH >= '2024-01-01'
+          AND AMOUNT IS NOT NULL
+        GROUP BY VENDOR_NAME, PROPERTY_CODE, PROPERTY_NAME,
+                 GL_ACCOUNT, GL_ACCOUNT_NAME, POST_MONTH,
+                 INVOICE_NUMBER
+        ORDER BY PROPERTY_CODE, VENDOR_NAME, POST_MONTH
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Step 3: Index into nested dicts (both vendor-level and account-level)
+        data = {}  # {property_code: {vendor_name_lower: [records]}}
+        account_data = {}  # {property_code: {account_number: [records]}}
+        vendor_index = {}  # {property_code: [vendor_name_lower, ...]}
+        row_count = 0
+        account_count = 0
+
+        for row in rows:
+            vendor_name_raw = str(row[0] or "").strip()
+            prop_code = str(row[1] or "").strip()
+            gl_account = str(row[3] or "").strip()
+            gl_name = str(row[4] or "").strip()
+            post_month = row[5]  # date object
+            total_amount = float(row[6]) if row[6] else 0.0
+            line_count = int(row[7]) if row[7] else 0
+            invoice_number_raw = str(row[8] or "").strip()
+
+            if not vendor_name_raw or not prop_code or not post_month:
+                continue
+
+            # Convert POST_MONTH (date like 2025-01-01) to "2025-01"
+            if hasattr(post_month, 'strftime'):
+                month_key = post_month.strftime("%Y-%m")
+            else:
+                month_key = str(post_month)[:7]
+
+            vendor_lower = vendor_name_raw.lower().strip()
+
+            rec = {
+                "month": month_key,
+                "amount": total_amount,
+                "gl_account": gl_account,
+                "gl_name": gl_name,
+                "vendor_raw": vendor_name_raw,
+                "line_count": line_count,
+            }
+
+            # Vendor-level index (aggregated - same as before)
+            if prop_code not in data:
+                data[prop_code] = {}
+            if vendor_lower not in data[prop_code]:
+                data[prop_code][vendor_lower] = []
+            data[prop_code][vendor_lower].append(rec)
+
+            # Account-level index (extract account number from INVOICE_NUMBER)
+            # Format: "5300134601885 12/24" or just "5300134601885"
+            if invoice_number_raw:
+                acct_num = invoice_number_raw.split()[0].strip() if " " in invoice_number_raw else invoice_number_raw.strip()
+                if acct_num:
+                    if prop_code not in account_data:
+                        account_data[prop_code] = {}
+                    if acct_num not in account_data[prop_code]:
+                        account_data[prop_code][acct_num] = []
+                    account_data[prop_code][acct_num].append(rec)
+                    account_count += 1
+
+            row_count += 1
+
+        # Step 4: Build vendor index per property for fast scanning
+        for prop_code, vendors in data.items():
+            vendor_index[prop_code] = list(vendors.keys())
+
+        # Update cache atomically
+        with _INVOICE_HISTORY_LOCK:
+            cache["data"] = data
+            cache["account_data"] = account_data
+            cache["prop_code_map"] = prop_code_map
+            cache["vendor_index"] = vendor_index
+            cache["last_refresh"] = time.time()
+
+        elapsed = time.time() - t0
+        vendor_count = sum(len(v) for v in vendor_index.values())
+        unique_accounts = sum(len(a) for a in account_data.values())
+        print(f"[INVOICE CACHE] Loaded {row_count} records, {len(data)} properties, {vendor_count} vendors, {unique_accounts} unique accounts in {elapsed:.1f}s")
+
+    except Exception as e:
+        print(f"[INVOICE CACHE] Error loading: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        cache["loading"] = False
+
+
+# -------- Vendor Name Matching for INVOICES_MAT --------
+
+# Tokens to strip when doing fuzzy vendor name matching
+_VENDOR_STRIP_TOKENS = {"inc", "llc", "ltd", "co", "corp", "lp", "llp", "the", "of", "and", "dba"}
+
+def _normalize_vendor_tokens(name: str) -> set:
+    """Tokenize and normalize a vendor name for fuzzy matching."""
+    # Split on spaces, commas, punctuation
+    tokens = re.split(r'[\s,.\-/&()]+', name.lower().strip())
+    # Remove empty strings and common suffixes
+    return {t for t in tokens if t and t not in _VENDOR_STRIP_TOKENS}
+
+
+def _match_vendor_in_invoices(property_id: str, vendor_name: str, account_number: str = "") -> dict | None:
+    """Find the best matching vendor in INVOICES_MAT for a tracked account.
+
+    Returns: {"matched_vendor": str, "match_type": str, "confidence": float, "history": list} or None
+    """
+    cache = _INVOICE_HISTORY_CACHE
+    if not cache.get("data") or not vendor_name:
+        return None
+
+    # Resolve property_code from property_id
+    prop_code = cache["prop_code_map"].get(property_id, "")
+    if not prop_code:
+        return None
+
+    prop_data = cache["data"].get(prop_code)
+    if not prop_data:
+        return None
+
+    vendor_list = cache["vendor_index"].get(prop_code, [])
+    if not vendor_list:
+        return None
+
+    vendor_lower = vendor_name.lower().strip()
+    best_match = None
+    best_confidence = 0.0
+    best_type = ""
+
+    # Strategy a: Exact match (case-insensitive)
+    if vendor_lower in prop_data:
+        return {
+            "matched_vendor": prop_data[vendor_lower][0]["vendor_raw"],
+            "match_type": "exact",
+            "confidence": 1.0,
+            "history": prop_data[vendor_lower],
+        }
+
+    # Strategy b: Contains match (tracked name is substring of cached, or vice versa)
+    for cached_vendor in vendor_list:
+        if vendor_lower in cached_vendor or cached_vendor in vendor_lower:
+            # Prefer the longer overlap (more specific match)
+            overlap = min(len(vendor_lower), len(cached_vendor)) / max(len(vendor_lower), len(cached_vendor))
+            confidence = 0.8 + (overlap * 0.15)
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_match = cached_vendor
+                best_type = "contains"
+
+    if best_match and best_confidence >= 0.85:
+        return {
+            "matched_vendor": prop_data[best_match][0]["vendor_raw"],
+            "match_type": best_type,
+            "confidence": round(best_confidence, 3),
+            "history": prop_data[best_match],
+        }
+
+    # Strategy c: Token overlap (Jaccard similarity)
+    tracked_tokens = _normalize_vendor_tokens(vendor_name)
+    if tracked_tokens:
+        for cached_vendor in vendor_list:
+            cached_tokens = _normalize_vendor_tokens(cached_vendor)
+            if not cached_tokens:
+                continue
+            intersection = tracked_tokens & cached_tokens
+            union = tracked_tokens | cached_tokens
+            jaccard = len(intersection) / len(union) if union else 0
+            if jaccard >= 0.5 and jaccard > best_confidence:
+                best_confidence = jaccard
+                best_match = cached_vendor
+                best_type = "token"
+
+    if best_match and best_type == "token":
+        return {
+            "matched_vendor": prop_data[best_match][0]["vendor_raw"],
+            "match_type": best_type,
+            "confidence": round(best_confidence, 3),
+            "history": prop_data[best_match],
+        }
+
+    # Strategy d: Regex pattern from tracked vendor name tokens
+    if tracked_tokens:
+        # Build regex: join tokens with .* separator
+        sorted_tokens = sorted(tracked_tokens, key=len, reverse=True)
+        pattern_str = ".*".join(re.escape(t) for t in sorted_tokens[:4])  # limit to top 4 tokens
+        try:
+            pattern = re.compile(pattern_str, re.IGNORECASE)
+            for cached_vendor in vendor_list:
+                if pattern.search(cached_vendor):
+                    # Score based on how much of the tracked name the regex covers
+                    confidence = 0.5 + (len(tracked_tokens) * 0.1)
+                    confidence = min(confidence, 0.75)
+                    if confidence > best_confidence:
+                        best_confidence = confidence
+                        best_match = cached_vendor
+                        best_type = "regex"
+        except re.error:
+            pass
+
+    if best_match:
+        return {
+            "matched_vendor": prop_data[best_match][0]["vendor_raw"],
+            "match_type": best_type,
+            "confidence": round(best_confidence, 3),
+            "history": prop_data[best_match],
+        }
+
+    return None
+
+
+def _read_historical_from_invoices_mat(property_id: str, account_number: str, vendor_name: str) -> tuple[list[dict], dict | None]:
+    """Read historical amounts from precomputed INVOICES_MAT cache.
+
+    Priority: account-number match (exact per-account amounts) > vendor-name match (aggregated).
+    Returns: (list of {"period": "MM/YYYY", "amount": float}, match_info dict or None)
+    """
+    cache = _INVOICE_HISTORY_CACHE
+    history_records = None
+    match_info = None
+
+    # Priority 1: Direct account number lookup (gives per-account amounts)
+    if account_number and cache.get("account_data"):
+        prop_code = cache.get("prop_code_map", {}).get(property_id, "")
+        if prop_code:
+            acct_clean = account_number.strip()
+            prop_accounts = cache["account_data"].get(prop_code, {})
+            if acct_clean in prop_accounts:
+                history_records = prop_accounts[acct_clean]
+                # Get the vendor name from the records
+                vendor_raw = history_records[0].get("vendor_raw", "") if history_records else ""
+                match_info = {
+                    "matched_vendor": vendor_raw,
+                    "match_type": "account",
+                    "confidence": 1.0,
+                }
+
+    # Priority 2: Vendor name fuzzy match (falls back to aggregated vendor-level data)
+    if not history_records and vendor_name:
+        match = _match_vendor_in_invoices(property_id, vendor_name, account_number)
+        if match and match.get("history"):
+            history_records = match["history"]
+            match_info = {
+                "matched_vendor": match["matched_vendor"],
+                "match_type": match["match_type"],
+                "confidence": match["confidence"],
+            }
+
+    if not history_records:
+        return [], None
+
+    # Aggregate by month (a vendor/account may have multiple GL accounts per month)
+    month_totals = {}
+    for rec in history_records:
+        month_key = rec["month"]  # "2025-01"
+        month_totals[month_key] = month_totals.get(month_key, 0.0) + rec["amount"]
+
+    # Convert "2025-01" to "01/2025" period format
+    results = []
+    for month_key in sorted(month_totals.keys()):
+        parts = month_key.split("-")
+        if len(parts) == 2:
+            period = f"{parts[1]}/{parts[0]}"  # "01/2025"
+        else:
+            period = month_key
+        results.append({"period": period, "amount": month_totals[month_key]})
+
+    # Extract GL info from the most recent record (for display)
+    gl_counts = {}
+    for rec in history_records:
+        gl_key = (rec.get("gl_account", ""), rec.get("gl_name", ""))
+        gl_counts[gl_key] = gl_counts.get(gl_key, 0) + 1
+    if gl_counts:
+        top_gl = max(gl_counts, key=gl_counts.get)
+        match_info["gl_account"] = top_gl[0]
+        match_info["gl_name"] = top_gl[1]
+
+    return results, match_info
+
+
+def _get_historical_from_assignments(property_id: str, account_number: str, vendor_name: str) -> list[dict]:
+    """Fallback: scan jrk-bill-ubi-assignments and load S3 files to find historical amounts."""
+    try:
+        response = ddb.scan(TableName="jrk-bill-ubi-assignments")
+        assignments = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = ddb.scan(
+                TableName="jrk-bill-ubi-assignments",
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            assignments.extend(response.get("Items", []))
+
+        s3_cache = {}
+        period_amounts = {}
+
+        for assignment in assignments:
+            s3_key = assignment.get("s3_key", {}).get("S", "")
+            line_hash = assignment.get("line_hash", {}).get("S", "")
+            ubi_period = assignment.get("ubi_period", {}).get("S", "")
+            amount = float(assignment.get("amount", {}).get("N", "0"))
+
+            if not s3_key or not line_hash:
+                continue
+
+            if s3_key not in s3_cache:
+                try:
+                    obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
+                    body = obj["Body"].read()
+                    if s3_key.endswith('.gz'):
+                        import gzip
+                        body = gzip.decompress(body)
+                    s3_cache[s3_key] = body.decode('utf-8')
+                except Exception:
+                    continue
+
+            for line_str in s3_cache[s3_key].strip().split("\n"):
+                try:
+                    parsed = json.loads(line_str)
+                    computed_hash = _compute_stable_line_hash(parsed)
+                    if computed_hash != line_hash:
+                        continue
+                    p_id = parsed.get("EnrichedPropertyID", parsed.get("Property ID", ""))
+                    acc_num = parsed.get("Account Number", parsed.get("AccountNumber", ""))
+                    if p_id == property_id and acc_num == account_number:
+                        period_key = ubi_period.split(" to ")[0].strip() if ubi_period else ""
+                        if period_key:
+                            period_amounts[period_key] = period_amounts.get(period_key, 0) + amount
+                except Exception:
+                    continue
+
+        results = [{"period": p, "amount": a} for p, a in sorted(period_amounts.items())]
+        print(f"[ACCRUAL] Assignments fallback returned {len(results)} historical records for {property_id}/{account_number}")
+        return results
+
+    except Exception as e:
+        print(f"[ACCRUAL] Assignments historical query error: {e}")
+        return []
+
+
+def _calculate_accrual(historical_amounts: list[dict], annual_inflation_rate: float = 0.03) -> dict:
+    """Calculate accrual from historical amounts with annual inflation adjustment."""
+    if not historical_amounts:
+        return {
+            "calculated_amount": 0, "historical_months": 0,
+            "avg_amount": 0, "inflation_amount": 0, "monthly_amounts": []
+        }
+
+    amounts = [h["amount"] for h in historical_amounts if h.get("amount", 0) != 0]
+    if not amounts:
+        return {
+            "calculated_amount": 0, "historical_months": len(historical_amounts),
+            "avg_amount": 0, "inflation_amount": 0, "monthly_amounts": historical_amounts
+        }
+
+    avg = sum(amounts) / len(amounts)
+    monthly_inflation = annual_inflation_rate / 12
+    calculated = round(avg * (1 + monthly_inflation), 2)
+    inflation_amount = round(calculated - avg, 2)
+
+    return {
+        "calculated_amount": calculated, "historical_months": len(amounts),
+        "avg_amount": round(avg, 2), "inflation_amount": inflation_amount,
+        "monthly_amounts": historical_amounts
+    }
 
 
 # -------- S3 helpers for large data (master bills) --------
@@ -15485,6 +16301,11 @@ async def api_add_to_tracker(request: Request, user: str = Depends(require_user)
             if not vendor_id:
                 print(f"[ADD TO TRACKER] Could not find vendor_id for '{vendor_name}'")
 
+        # Auto-generate account number if missing (some vendors have no account #)
+        if not account_number and vendor_id:
+            account_number = f"NOACT-{vendor_id}"
+            print(f"[ADD TO TRACKER] Auto-generated account_number: {account_number}")
+
         print(f"[ADD TO TRACKER] Final values: vendor_id={vendor_id}, account_number={account_number}, property_id={property_id}")
 
         if not vendor_id or not account_number or not property_id:
@@ -15591,6 +16412,11 @@ async def api_add_account_to_ubi(request: Request, user: str = Depends(require_u
                     break
             if not vendor_id:
                 print(f"[ADD TO UBI] Could not find vendor_id for '{vendor_name}'")
+
+        # Auto-generate account number if missing (some vendors have no account #)
+        if not account_number and vendor_id:
+            account_number = f"NOACT-{vendor_id}"
+            print(f"[ADD TO UBI] Auto-generated account_number: {account_number}")
 
         print(f"[ADD TO UBI] Final values: vendor_id={vendor_id}, account_number={account_number}, property_id={property_id}")
 
@@ -16235,9 +17061,9 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                         "utility_name": utility_name,
                         "description": description,
                         "amount": amount,
-                        "service_start": service_start,
-                        "service_end": service_end,
-                        "bill_date": bill_date,
+                        "service_start": _normalize_date_display(service_start),
+                        "service_end": _normalize_date_display(service_end),
+                        "bill_date": _normalize_date_display(bill_date),
                         "pdf_key": pdf_key,
                         "overridden": amount_overridden or charge_code_overridden,
                         "override_reason": " | ".join(filter(None, [
@@ -16255,10 +17081,118 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                 traceback.print_exc()
                 continue
 
-        # Convert to list and save to DynamoDB
+        # Merge manual/accrual entries for the same period range
+        try:
+            me_items = []
+            me_response = ddb.scan(TableName=MANUAL_ENTRIES_TABLE)
+            me_items = me_response.get("Items", [])
+            while me_response.get("LastEvaluatedKey"):
+                me_response = ddb.scan(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    ExclusiveStartKey=me_response["LastEvaluatedKey"]
+                )
+                me_items.extend(me_response.get("Items", []))
+
+            manual_count = 0
+            for me_item in me_items:
+                me_period = me_item.get("period", {}).get("S", "")
+                me_amount = float(me_item.get("amount", {}).get("N", "0"))
+                me_property_id = me_item.get("property_id", {}).get("S", "")
+                me_property_name = me_item.get("property_name", {}).get("S", "")
+                me_charge_code = me_item.get("charge_code", {}).get("S", "")
+                me_utility_name = me_item.get("utility_name", {}).get("S", "")
+                me_entry_type = me_item.get("entry_type", {}).get("S", "")
+                me_reason_code = me_item.get("reason_code", {}).get("S", "")
+                me_note = me_item.get("note", {}).get("S", "")
+                me_account_number = me_item.get("account_number", {}).get("S", "")
+                me_vendor_name = me_item.get("vendor_name", {}).get("S", "")
+                me_entry_id = me_item.get("entry_id", {}).get("S", "")
+
+                if not me_period or not me_property_id:
+                    continue
+
+                # Apply same period filter
+                if start_period or end_period:
+                    try:
+                        p_month, p_year = me_period.split("/")
+                        period_yyyymm = f"{p_year}-{p_month.zfill(2)}"
+                    except:
+                        continue
+                    if start_period:
+                        try:
+                            s_month, s_year = start_period.split("/")
+                            if period_yyyymm < f"{s_year}-{s_month.zfill(2)}":
+                                continue
+                        except:
+                            pass
+                    if end_period:
+                        try:
+                            e_month, e_year = end_period.split("/")
+                            if period_yyyymm > f"{e_year}-{e_month.zfill(2)}":
+                                continue
+                        except:
+                            pass
+
+                # Build period dates
+                import calendar
+                try:
+                    p_month, p_year = me_period.split("/")
+                    period_start = f"{p_month}/01/{p_year}"
+                    last_day = calendar.monthrange(int(p_year), int(p_month))[1]
+                    period_end = f"{p_month}/{last_day:02d}/{p_year}"
+                except:
+                    continue
+
+                mb_key = f"{me_property_id}|{me_charge_code}|{me_utility_name}|{me_period}|{me_period}"
+
+                if mb_key not in master_bills:
+                    master_bills[mb_key] = {
+                        "master_bill_id": mb_key,
+                        "property_id": me_property_id,
+                        "property_name": me_property_name,
+                        "ar_code_mapping": me_charge_code,
+                        "utility_name": me_utility_name,
+                        "billback_month_start": period_start,
+                        "billback_month_end": period_end,
+                        "utility_amount": 0,
+                        "source_line_items": [],
+                        "has_non_actual": False,
+                        "created_utc": datetime.utcnow().isoformat(),
+                        "created_by": user,
+                        "status": "draft"
+                    }
+
+                master_bills[mb_key]["utility_amount"] += me_amount
+                master_bills[mb_key]["has_non_actual"] = True
+
+                master_bills[mb_key]["source_line_items"].append({
+                    "bill_id": me_entry_id,
+                    "line_index": 0,
+                    "account_number": me_account_number,
+                    "vendor_name": me_vendor_name,
+                    "gl_code": me_item.get("gl_account_number", {}).get("S", ""),
+                    "gl_code_name": me_item.get("gl_account_name", {}).get("S", ""),
+                    "description": f"{me_entry_type}: {me_reason_code}",
+                    "amount": me_amount,
+                    "overridden": False,
+                    "override_reason": "",
+                    "entry_type": me_entry_type,
+                    "reason_code": me_reason_code,
+                    "note": me_note
+                })
+                manual_count += 1
+
+            print(f"[GENERATE MASTER BILLS] Merged {manual_count} manual/accrual entries")
+
+        except Exception as e:
+            print(f"[GENERATE MASTER BILLS] Error merging manual entries: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Convert to list and save
         master_bills_list = list(master_bills.values())
 
-        print(f"[GENERATE MASTER BILLS] Created {len(master_bills_list)} master bills from {len(all_line_items)} line items")
+        print(f"[GENERATE MASTER BILLS] Created {len(master_bills_list)} master bills from {len(all_line_items)} line items + manual entries")
 
         # Store master bills in S3 (handles large datasets without size limits)
         save_ok = _s3_put_master_bills(master_bills_list)
@@ -16438,17 +17372,28 @@ def api_manual_template():
     import io
     from datetime import datetime
 
-    # Load valid properties
-    properties = []
+    # Load valid properties with codes
+    properties = []  # list of (name, code) tuples
     try:
         dim_props = _load_dim_records(DIM_PROPERTY_PREFIX)
         for r in dim_props:
             name = r.get("PROPERTY_NAME") or r.get("name") or r.get("NAME") or r.get("propertyName") or ""
+            code = (
+                r.get("LOOKUP_CODE") or r.get("lookup_code") or r.get("LookupCode")
+                or r.get("PROPERTY_CODE") or r.get("code") or r.get("CODE") or ""
+            )
             if name and str(name).strip():
-                properties.append(str(name).strip())
-        properties = sorted(set(properties))
+                properties.append((str(name).strip(), str(code).strip()))
+        # Deduplicate by name, keep first code found
+        seen = set()
+        unique_props = []
+        for name, code in properties:
+            if name not in seen:
+                seen.add(name)
+                unique_props.append((name, code))
+        properties = sorted(unique_props, key=lambda x: x[0])
     except:
-        properties = ["(Error loading properties)"]
+        properties = [("(Error loading properties)", "")]
 
     # Load valid charge codes from CONFIG table - keep code and utility paired
     charge_code_pairs = []  # List of (code, utility) tuples to maintain pairing
@@ -16492,56 +17437,55 @@ def api_manual_template():
 
     # ============ SECTION 1: DATA ENTRY AREA ============
     # Include all columns (required + optional)
-    output.write("property_name,charge_code,amount,ubi_period,utility_type,start_date,end_date,vendor_name,account_number,description\n")
+    output.write("property_name,property_code,charge_code,amount,ubi_period,utility_type,start_date,end_date,vendor_name,account_number,description\n")
 
     # Add a few example rows using real data
-    example_props = properties[:3] if len(properties) >= 3 else ["Property Name Here", "Property Name Here", "Property Name Here"]
+    example_props = properties[:3] if len(properties) >= 3 else [("Property Name Here", "PROP1"), ("Property Name Here", "PROP2"), ("Property Name Here", "PROP3")]
     example_ccs = [p[0] for p in charge_code_pairs[:3]] if len(charge_code_pairs) >= 3 else ["5706-0000", "5710-0000", "5565-0000"]
 
-    output.write(f"{example_props[0]},{example_ccs[0]},1234.56,{current_period},Electric,{example_start},{example_end},,,Common area electric\n")
-    output.write(f"{example_props[1] if len(example_props) > 1 else example_props[0]},{example_ccs[1] if len(example_ccs) > 1 else example_ccs[0]},567.89,{current_period},Water,{example_start},{example_end},,,\n")
-    output.write(f"{example_props[2] if len(example_props) > 2 else example_props[0]},{example_ccs[2] if len(example_ccs) > 2 else example_ccs[0]},890.12,{current_period},Gas,{example_start},{example_end},,,\n")
+    output.write(f"{example_props[0][0]},{example_props[0][1]},{example_ccs[0]},1234.56,{current_period},Electric,{example_start},{example_end},,,Common area electric\n")
+    output.write(f"{example_props[1][0] if len(example_props) > 1 else example_props[0][0]},{example_props[1][1] if len(example_props) > 1 else example_props[0][1]},{example_ccs[1] if len(example_ccs) > 1 else example_ccs[0]},567.89,{current_period},Water,{example_start},{example_end},,,\n")
+    output.write(f"{example_props[2][0] if len(example_props) > 2 else example_props[0][0]},{example_props[2][1] if len(example_props) > 2 else example_props[0][1]},{example_ccs[2] if len(example_ccs) > 2 else example_ccs[0]},890.12,{current_period},Gas,{example_start},{example_end},,,\n")
 
-    # Add blank rows for data entry (10 columns = 9 commas)
+    # Add blank rows for data entry (11 columns = 10 commas)
     for _ in range(10):
-        output.write(",,,,,,,,,\n")
+        output.write(",,,,,,,,,,\n")
 
     # ============ SECTION 2: REFERENCE - MUST DELETE BEFORE UPLOAD ============
     output.write("\n")
     output.write("\n")
-    output.write("DELETE EVERYTHING BELOW THIS LINE BEFORE UPLOADING,,,,,,,,,\n")
-    output.write("=========================================================,,,,,,,,,\n")
+    output.write("DELETE EVERYTHING BELOW THIS LINE BEFORE UPLOADING,,,,,,,,,,\n")
+    output.write("=========================================================,,,,,,,,,,\n")
     output.write("\n")
-    output.write("INSTRUCTIONS:,,,,,,,,,\n")
-    output.write("1. Enter your data in the rows at the TOP,,,,,,,,,\n")
-    output.write("2. Copy values from reference lists below,,,,,,,,,\n")
-    output.write("3. DELETE all rows from here down before upload,,,,,,,,,\n")
-    output.write("4. Date format: MM/DD/YYYY,,,,,,,,,\n")
-    output.write("5. UBI Period format: MM/YYYY,,,,,,,,,\n")
-    output.write("6. Required: property_name + charge_code + amount + ubi_period + utility_type + start_date + end_date,,,,,,,,,\n")
-    output.write("7. Optional: vendor_name + account_number + description,,,,,,,,,\n")
+    output.write("INSTRUCTIONS:,,,,,,,,,,\n")
+    output.write("1. Enter your data in the rows at the TOP,,,,,,,,,,\n")
+    output.write("2. Copy values from reference lists below,,,,,,,,,,\n")
+    output.write("3. DELETE all rows from here down before upload,,,,,,,,,,\n")
+    output.write("4. Date format: MM/DD/YYYY,,,,,,,,,,\n")
+    output.write("5. UBI Period format: MM/YYYY,,,,,,,,,,\n")
+    output.write("6. Required: property_name + property_code + charge_code + amount + ubi_period + utility_type + start_date + end_date,,,,,,,,,,\n")
+    output.write("7. Optional: vendor_name + account_number + description,,,,,,,,,,\n")
     output.write("\n")
 
     # Utility Types reference
-    output.write("----- UTILITY TYPES (copy from column A) -----,,,,,,,,,\n")
+    output.write("----- UTILITY TYPES (copy from column A) -----,,,,,,,,,,\n")
     for ut in utility_types:
-        output.write(f"{ut},,,,,,,,,\n")
+        output.write(f"{ut},,,,,,,,,,\n")
 
     output.write("\n")
 
     # Charge Codes reference (with utility name for reference in column B)
-    output.write("----- CHARGE CODES (copy from column A) -----,Maps to Utility:,,,,,,,,\n")
+    output.write("----- CHARGE CODES (copy from column A) -----,Maps to Utility:,,,,,,,,,\n")
     for code, utility in charge_code_pairs:
-        output.write(f"{code},{utility},,,,,,,,\n")
+        output.write(f"{code},{utility},,,,,,,,,\n")
 
     output.write("\n")
 
-    # Properties reference
-    output.write("----- PROPERTY NAMES (copy from column A) -----,,,,,,,,,\n")
-    for prop in properties:
-        # Escape commas in property names by quoting
-        safe_prop = f'"{prop}"' if ',' in prop else prop
-        output.write(f"{safe_prop},,,,,,,,,\n")
+    # Properties reference (name in column A, code in column B)
+    output.write("----- PROPERTIES (name in A / code in B) -----,Property Code:,,,,,,,,,\n")
+    for prop_name, prop_code in properties:
+        safe_prop = f'"{prop_name}"' if ',' in prop_name else prop_name
+        output.write(f"{safe_prop},{prop_code},,,,,,,,,\n")
 
     csv_content = output.getvalue()
 
@@ -17137,6 +18081,7 @@ async def api_upload_manual_billback(
                     'entry_id': f"{batch_id}-{row_num:04d}",
                     'batch_id': batch_id,
                     'property_name': (row.get('property_name') or '').strip(),
+                    'property_code': (row.get('property_code') or '').strip(),
                     'charge_code': (row.get('charge_code') or '').strip(),
                     'amount': amount,
                     'ubi_period': (row.get('ubi_period') or '').strip(),
@@ -17165,9 +18110,7 @@ async def api_upload_manual_billback(
         # Store entries in DynamoDB
         for entry in entries:
             try:
-                ddb.put_item(
-                    TableName=MANUAL_BILLBACK_TABLE,
-                    Item={
+                item_to_store = {
                         'entry_id': {'S': entry['entry_id']},
                         'batch_id': {'S': entry['batch_id']},
                         'property_name': {'S': entry['property_name']},
@@ -17185,7 +18128,9 @@ async def api_upload_manual_billback(
                         'uploaded_at': {'S': entry['uploaded_at']},
                         'is_manual': {'BOOL': True}
                     }
-                )
+                if entry.get('property_code'):
+                    item_to_store['property_code'] = {'S': entry['property_code']}
+                ddb.put_item(TableName=MANUAL_BILLBACK_TABLE, Item=item_to_store)
             except Exception as e:
                 print(f"[MANUAL UPLOAD] Error storing entry {entry['entry_id']}: {e}")
 
@@ -17332,12 +18277,25 @@ def api_list_manual_entries(
 
 @app.delete("/api/master-bills/manual-entry/{entry_id}")
 def api_delete_manual_entry(entry_id: str, user: str = Depends(require_user)):
-    """Delete a single manual billback entry."""
+    """Delete a single manual billback entry (tries both tables)."""
     try:
         ddb.delete_item(
             TableName=MANUAL_BILLBACK_TABLE,
             Key={'entry_id': {'S': entry_id}}
         )
+        # Also try accrual entries table (covers both entry sources)
+        try:
+            ddb.delete_item(
+                TableName=MANUAL_ENTRIES_TABLE,
+                Key={'entry_id': {'S': entry_id}}
+            )
+        except Exception:
+            pass
+        # Bust completion tracker cache
+        keys_to_bust = [k for k in list(_CACHE.keys()) if isinstance(k, tuple) and len(k) > 0 and k[0] == "completion_tracker"]
+        for k in keys_to_bust:
+            _CACHE.pop(k, None)
+        print(f"[MANUAL DELETE] Deleted entry {entry_id} by {user}")
         return {"success": True, "deleted": entry_id}
     except Exception as e:
         print(f"[MANUAL DELETE] Error: {e}")
@@ -17514,7 +18472,8 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
 
                         if not property_id or not account_number:
                             continue
-                        acct_key = (property_id, account_number, vendor_name)
+                        norm_acct = _normalize_account_number(account_number)
+                        acct_key = (property_id, norm_acct, vendor_name)
 
                         # Get service dates from the line item
                         svc_start = parsed.get("Bill Period Start", parsed.get("billPeriodStart", ""))
@@ -17640,6 +18599,41 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
     except Exception as e:
         print(f"[COMPLETION TRACKER] Error loading manual entries: {e}")
 
+    # 2a-2. Also check accrual/manual entries (jrk-bill-manual-entries DDB table)
+    accrual_entries_map = {}  # (property_id, account_number, vendor_name) -> entry_type
+    if period:
+        try:
+            me_response = ddb.query(
+                TableName=MANUAL_ENTRIES_TABLE,
+                IndexName="period-index",
+                KeyConditionExpression="period = :p",
+                ExpressionAttributeValues={":p": {"S": period}}
+            )
+            me_items = me_response.get("Items", [])
+            while me_response.get("LastEvaluatedKey"):
+                me_response = ddb.query(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    IndexName="period-index",
+                    KeyConditionExpression="period = :p",
+                    ExpressionAttributeValues={":p": {"S": period}},
+                    ExclusiveStartKey=me_response["LastEvaluatedKey"]
+                )
+                me_items.extend(me_response.get("Items", []))
+
+            for me_item in me_items:
+                me_key = (
+                    me_item.get("property_id", {}).get("S", ""),
+                    _normalize_account_number(me_item.get("account_number", {}).get("S", "")),
+                    me_item.get("vendor_name", {}).get("S", "")
+                )
+                accrual_entries_map[me_key] = me_item.get("entry_type", {}).get("S", "MANUAL")
+                # Also mark as assigned so it counts toward completion
+                assigned_accounts.add(me_key)
+
+            print(f"[COMPLETION TRACKER] Found {len(accrual_entries_map)} accrual/manual entries for period {period}")
+        except Exception as e:
+            print(f"[COMPLETION TRACKER] Error loading accrual entries: {e}")
+
     # 2b. Check ACTUAL Stage 7 files for bills waiting to be assigned (not stale DDB data)
     # This ensures "posted" indicator only shows when there's a real file in BILLBACK
     posted_accounts = {}  # (property_id, account_number, vendor_name) -> list of s3_keys
@@ -17658,12 +18652,13 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
             pass
 
     # Build set of UBI account keys for filtering Stage 7 scan
+    # Normalize account numbers to strip punctuation for reliable matching
     _ubi_acct_lookup = set()
     for acc in ubi_accounts:
         pid = str(acc.get("propertyId", "")).strip()
         acct = str(acc.get("accountNumber", "")).strip()
         if pid and acct:
-            _ubi_acct_lookup.add((pid, acct))
+            _ubi_acct_lookup.add((pid, _normalize_account_number(acct)))
 
     try:
         # Scan Stage 7 files (last 90 days) to find actual bills waiting to be assigned
@@ -17707,9 +18702,10 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                 pid = str(rec.get("EnrichedPropertyID") or rec.get("Property ID") or "").strip()
                 acct = str(rec.get("Account Number") or rec.get("AccountNumber") or "").strip()
                 vname = str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or "").strip()
+                norm_acct = _normalize_account_number(acct)
                 # Only include if it's a UBI account
-                if pid and acct and (pid, acct) in _ubi_acct_lookup:
-                    return (pid, acct, vname), s3_key
+                if pid and acct and (pid, norm_acct) in _ubi_acct_lookup:
+                    return (pid, norm_acct, vname), s3_key
             except Exception:
                 pass
             return None, None
@@ -17792,17 +18788,42 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
     properties = {}  # property_id -> {name, accounts: [{account_number, vendor_name, has_bill}]}
     seen_accounts = set()  # Deduplicate entries
 
+    # Build secondary lookup: (property_id, normalized_account) -> True for vendor-agnostic matching
+    _assigned_by_prop_acct = set()
+    for k in assigned_accounts:
+        _assigned_by_prop_acct.add((k[0], k[1]))  # (property_id, normalized_account)
+    _posted_by_prop_acct = set()
+    for k in posted_accounts:
+        _posted_by_prop_acct.add((k[0], k[1]))
+    _accrual_by_prop_acct = {}
+    for k, v in accrual_entries_map.items():
+        _accrual_by_prop_acct[(k[0], k[1])] = v
+    # Build period lookup by (property_id, normalized_account) ignoring vendor
+    _periods_by_prop_acct = {}
+    for k, periods_set in account_all_periods.items():
+        pa_key = (k[0], k[1])
+        if pa_key not in _periods_by_prop_acct:
+            _periods_by_prop_acct[pa_key] = set()
+        _periods_by_prop_acct[pa_key].update(periods_set)
+    # Service dates by (property_id, normalized_account, period) ignoring vendor
+    _svc_by_prop_acct_period = {}
+    for k, v in service_dates.items():
+        pa_key = (k[0], _normalize_account_number(k[1]), k[3])  # (pid, norm_acct, period)
+        if pa_key not in _svc_by_prop_acct_period:
+            _svc_by_prop_acct_period[pa_key] = v
+
     for acc in ubi_accounts:
         property_id = str(acc.get("propertyId", "")).strip()
         property_name = str(acc.get("propertyName", "")).strip()
         account_number = str(acc.get("accountNumber", "")).strip()
         vendor_name = str(acc.get("vendorName", "")).strip()
+        norm_acct = _normalize_account_number(account_number)
 
         if not property_id or not account_number:
             continue
 
-        # Skip duplicate entries for the same property+account+vendor
-        dedup_key = (property_id, account_number, vendor_name)
+        # Skip duplicate entries for the same property+account (vendor-agnostic dedup)
+        dedup_key = (property_id, norm_acct, vendor_name)
         if dedup_key in seen_accounts:
             continue
         seen_accounts.add(dedup_key)
@@ -17818,19 +18839,27 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                 "posted_unassigned": 0
             }
 
-        has_bill = dedup_key in assigned_accounts
+        # Match by exact 3-tuple first, then fall back to (property_id, normalized_account) ignoring vendor
+        prop_acct_key = (property_id, norm_acct)
+        has_bill = dedup_key in assigned_accounts or prop_acct_key in _assigned_by_prop_acct
 
         # Check which periods this account actually has assignments for (from Stage 8)
-        acct_assigned_periods = account_all_periods.get(dedup_key, set())
+        acct_assigned_periods = account_all_periods.get(dedup_key, set()) or _periods_by_prop_acct.get(prop_acct_key, set())
 
         # Show "posted, not assigned" if there's a posted invoice and THIS period
         # doesn't have an assignment yet (could be assigned to other periods)
-        has_posted_bill = dedup_key in posted_accounts and not has_bill
+        has_posted_bill = (dedup_key in posted_accounts or prop_acct_key in _posted_by_prop_acct) and not has_bill
         has_prev = _sel_prev_period in acct_assigned_periods if _sel_prev_period else False
         has_next = _sel_next_period in acct_assigned_periods if _sel_next_period else False
 
         # Look up vacant stats for this account (from Stage 8 OR posted files)
         vs = vacant_stats.get(dedup_key, {"vacant": 0, "house": 0})
+        if vs["vacant"] == 0 and vs["house"] == 0:
+            # Try vendor-agnostic lookup
+            for vk, vcounts in vacant_stats.items():
+                if vk[0] == property_id and vk[1] == norm_acct:
+                    vs = vcounts
+                    break
         total_lines = vs["vacant"] + vs["house"]
         vpct = round(vs["vacant"] / total_lines * 100, 1) if total_lines > 0 else 0
 
@@ -17838,18 +18867,22 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
         _clean_acct = _re.sub(r'[^A-Za-z0-9]', '', account_number).lower()
         in_scraper = _clean_acct in _scraper_acct_ids_clean if _clean_acct else False
 
-        # Get service dates for this account+period (current period)
+        # Get service dates for this account+period (current period) - try normalized lookup
         svc_key = (property_id, account_number, vendor_name, period)
         svc_info = service_dates.get(svc_key, {})
+        if not svc_info:
+            svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, period), {})
         service_start = svc_info.get("start", "")
         service_end = svc_info.get("end", "")
         assignment_s3_key = svc_info.get("s3_key", "")
 
         # Get service dates for prev/next periods (for tooltip display)
-        prev_svc_key = (property_id, account_number, vendor_name, _sel_prev_period) if _sel_prev_period else None
-        next_svc_key = (property_id, account_number, vendor_name, _sel_next_period) if _sel_next_period else None
-        prev_svc_info = service_dates.get(prev_svc_key, {}) if prev_svc_key else {}
-        next_svc_info = service_dates.get(next_svc_key, {}) if next_svc_key else {}
+        prev_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_prev_period), {}) if _sel_prev_period else {}
+        next_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_next_period), {}) if _sel_next_period else {}
+
+        # Check for accrual/manual entry - try exact then vendor-agnostic
+        has_accrual_entry = dedup_key in accrual_entries_map or prop_acct_key in _accrual_by_prop_acct
+        accrual_entry_type = accrual_entries_map.get(dedup_key, "") or _accrual_by_prop_acct.get(prop_acct_key, "")
 
         properties[property_id]["accounts"].append({
             "account_number": account_number,
@@ -17858,17 +18891,19 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
             "has_posted_bill": has_posted_bill,
             "has_prev_period": has_prev,
             "has_next_period": has_next,
-            "prev_service_start": prev_svc_info.get("start", ""),
-            "prev_service_end": prev_svc_info.get("end", ""),
-            "next_service_start": next_svc_info.get("start", ""),
-            "next_service_end": next_svc_info.get("end", ""),
+            "prev_service_start": _normalize_date_display(prev_svc_info.get("start", "")),
+            "prev_service_end": _normalize_date_display(prev_svc_info.get("end", "")),
+            "next_service_start": _normalize_date_display(next_svc_info.get("start", "")),
+            "next_service_end": _normalize_date_display(next_svc_info.get("end", "")),
             "vacant_lines": vs["vacant"],
             "house_lines": vs["house"],
             "vacant_pct": vpct,
             "in_scraper": in_scraper,
-            "service_start": service_start,
-            "service_end": service_end,
-            "s3_key": assignment_s3_key
+            "service_start": _normalize_date_display(service_start),
+            "service_end": _normalize_date_display(service_end),
+            "s3_key": assignment_s3_key,
+            "has_manual_entry": has_accrual_entry,
+            "manual_entry_type": accrual_entry_type
         })
         properties[property_id]["total"] += 1
         if has_bill:
@@ -17910,6 +18945,350 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
     _CACHE[cache_key] = {"ts": time.time(), "data": result}
 
     return result
+
+
+# -------- Accrual / Manual Entries API --------
+
+@app.get("/api/accrual/calculate")
+def api_accrual_calculate(property_id: str = "", account_number: str = "", vendor_name: str = "", period: str = "", user: str = Depends(require_user)):
+    """Calculate a suggested accrual for a missing account based on historical data."""
+    try:
+        if not property_id or not account_number:
+            return JSONResponse({"error": "property_id and account_number required"}, status_code=400)
+
+        print(f"[ACCRUAL CALC] property_id={property_id}, account={account_number}, vendor={vendor_name}, period={period}")
+
+        accounts_track = _ddb_get_config("accounts-to-track")
+        if accounts_track is None:
+            accounts_track = _s3_get_json(CONFIG_BUCKET, ACCOUNTS_TRACK_KEY)
+        if not isinstance(accounts_track, list):
+            accounts_track = []
+
+        charge_code = ""
+        utility_name = ""
+        gl_account_number = ""
+        gl_account_name = ""
+        vendor_id = ""
+
+        for acc in accounts_track:
+            if (str(acc.get("propertyId", "")).strip() == property_id and
+                str(acc.get("accountNumber", "")).strip() == account_number):
+                charge_code = str(acc.get("chargeCode", "")).strip()
+                utility_name = str(acc.get("utilityType", acc.get("utilityName", ""))).strip()
+                vendor_id = str(acc.get("vendorId", "")).strip()
+                gl_account_number = str(acc.get("glAccountNumber", "")).strip()
+                gl_account_name = str(acc.get("glAccountName", "")).strip()
+                if not vendor_name:
+                    vendor_name = str(acc.get("vendorName", "")).strip()
+                break
+
+        if not charge_code:
+            gl_mapping = _ddb_get_config("gl-charge-code-mapping")
+            if isinstance(gl_mapping, list):
+                for m in gl_mapping:
+                    if (str(m.get("property_id", "")).strip() == property_id and
+                        str(m.get("utility_name", "")).strip().lower() == utility_name.lower()):
+                        charge_code = str(m.get("charge_code", "")).strip()
+                        break
+
+        historical = []
+        source = "none"
+        match_info = None
+
+        # Use precomputed INVOICES_MAT cache (instant, regex matching)
+        # This is the only source - no live Snowflake or DDB fallbacks that cause timeouts
+        if vendor_name:
+            historical, match_info = _read_historical_from_invoices_mat(property_id, account_number, vendor_name)
+            if historical:
+                source = "invoices_mat"
+                # Use GL info from INVOICES_MAT if not already set
+                if match_info:
+                    if not gl_account_number and match_info.get("gl_account"):
+                        gl_account_number = match_info["gl_account"]
+                    if not gl_account_name and match_info.get("gl_name"):
+                        gl_account_name = match_info["gl_name"]
+
+        # T-12: Limit historical data to the 12 months immediately before the target period
+        if historical and period:
+            try:
+                p_month, p_year = period.split("/")
+                # Target period as YYYY-MM for comparison
+                target_yyyymm = f"{p_year}-{p_month.zfill(2)}"
+                # Calculate 12 months before the target period
+                t_year, t_month = int(p_year), int(p_month)
+                # Go back 12 months
+                cutoff_month = t_month - 12
+                cutoff_year = t_year
+                while cutoff_month <= 0:
+                    cutoff_month += 12
+                    cutoff_year -= 1
+                cutoff_yyyymm = f"{cutoff_year}-{cutoff_month:02d}"
+                # Filter: keep only months where cutoff < period_month < target
+                filtered = []
+                for h in historical:
+                    h_period = h.get("period", "")  # "MM/YYYY"
+                    try:
+                        hm, hy = h_period.split("/")
+                        h_yyyymm = f"{hy}-{hm.zfill(2)}"
+                    except:
+                        continue
+                    if cutoff_yyyymm < h_yyyymm < target_yyyymm:
+                        filtered.append(h)
+                historical = filtered
+            except Exception:
+                pass  # If period parsing fails, use all data
+
+        accrual = _calculate_accrual(historical)
+
+        result = {
+            "property_id": property_id,
+            "account_number": account_number,
+            "vendor_name": vendor_name,
+            "vendor_id": vendor_id,
+            "charge_code": charge_code,
+            "utility_name": utility_name,
+            "gl_account_number": gl_account_number,
+            "gl_account_name": gl_account_name,
+            "period": period,
+            "source": source,
+            "calculated_amount": accrual["calculated_amount"],
+            "historical_months": accrual["historical_months"],
+            "avg_amount": accrual["avg_amount"],
+            "inflation_amount": accrual["inflation_amount"],
+            "monthly_amounts": accrual["monthly_amounts"],
+        }
+
+        # Add INVOICES_MAT match info if available
+        if match_info:
+            result["matched_vendor"] = match_info.get("matched_vendor", "")
+            result["match_type"] = match_info.get("match_type", "")
+            result["match_confidence"] = match_info.get("confidence", 0)
+
+        return result
+
+    except Exception as e:
+        print(f"[ACCRUAL CALC] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/accrual/cache-stats")
+def api_accrual_cache_stats(user: str = Depends(require_user)):
+    """Return current INVOICES_MAT cache status (for debugging)."""
+    cache = _INVOICE_HISTORY_CACHE
+    prop_count = len(cache.get("data", {}))
+    vendor_count = sum(len(v) for v in cache.get("vendor_index", {}).values())
+    record_count = sum(
+        len(records)
+        for vendors in cache.get("data", {}).values()
+        for records in vendors.values()
+    )
+    unique_accounts = sum(len(a) for a in cache.get("account_data", {}).values())
+    last_refresh = cache.get("last_refresh")
+    age_seconds = round(time.time() - last_refresh, 1) if last_refresh else None
+
+    return {
+        "loaded": last_refresh is not None,
+        "loading": cache.get("loading", False),
+        "last_refresh_utc": datetime.utcfromtimestamp(last_refresh).isoformat() if last_refresh else None,
+        "age_seconds": age_seconds,
+        "ttl_seconds": cache.get("ttl_seconds", 7200),
+        "property_count": prop_count,
+        "vendor_count": vendor_count,
+        "unique_accounts": unique_accounts,
+        "record_count": record_count,
+        "prop_code_map_size": len(cache.get("prop_code_map", {})),
+    }
+
+
+@app.get("/api/accrual/refresh-cache")
+def api_accrual_refresh_cache(user: str = Depends(require_user)):
+    """Force-refresh the INVOICES_MAT cache (admin only)."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+
+    import threading
+    def _do_refresh():
+        _load_invoice_history_cache()
+    threading.Thread(target=_do_refresh, daemon=True).start()
+
+    return {"ok": True, "message": "Cache refresh started in background"}
+
+
+@app.post("/api/accrual/create")
+async def api_accrual_create(request: Request, user: str = Depends(require_user)):
+    """Create a manual/accrual/true-up entry in DynamoDB."""
+    try:
+        payload = await request.json()
+
+        entry_type = str(payload.get("entry_type", "")).strip().upper()
+        if entry_type not in ("ACCRUAL", "MANUAL", "TRUE-UP"):
+            return JSONResponse({"error": "entry_type must be ACCRUAL, MANUAL, or TRUE-UP"}, status_code=400)
+
+        property_id = str(payload.get("property_id", "")).strip()
+        account_number = str(payload.get("account_number", "")).strip()
+        period = str(payload.get("period", "")).strip()
+        amount = payload.get("amount")
+
+        if not property_id or not account_number or not period:
+            return JSONResponse({"error": "property_id, account_number, and period required"}, status_code=400)
+        if amount is None:
+            return JSONResponse({"error": "amount required"}, status_code=400)
+
+        import uuid
+        entry_id = str(uuid.uuid4())
+
+        item = {
+            "entry_id": {"S": entry_id},
+            "property_id": {"S": property_id},
+            "property_name": {"S": str(payload.get("property_name", "")).strip()},
+            "account_number": {"S": account_number},
+            "vendor_name": {"S": str(payload.get("vendor_name", "")).strip()},
+            "vendor_id": {"S": str(payload.get("vendor_id", "")).strip()},
+            "charge_code": {"S": str(payload.get("charge_code", "")).strip()},
+            "utility_name": {"S": str(payload.get("utility_name", "")).strip()},
+            "gl_account_number": {"S": str(payload.get("gl_account_number", "")).strip()},
+            "gl_account_name": {"S": str(payload.get("gl_account_name", "")).strip()},
+            "amount": {"N": str(float(amount))},
+            "entry_type": {"S": entry_type},
+            "reason_code": {"S": str(payload.get("reason_code", "")).strip()},
+            "note": {"S": str(payload.get("note", "")).strip()},
+            "period": {"S": period},
+            "historical_months": {"N": str(int(payload.get("historical_months", 0)))},
+            "historical_avg": {"N": str(float(payload.get("historical_avg", 0)))},
+            "created_by": {"S": user},
+            "created_utc": {"S": datetime.utcnow().isoformat()}
+        }
+
+        ddb.put_item(TableName=MANUAL_ENTRIES_TABLE, Item=item)
+
+        print(f"[ACCRUAL CREATE] Created {entry_type} entry {entry_id} for {property_id}/{account_number} period {period} amount={amount}")
+
+        return {"ok": True, "entry_id": entry_id}
+
+    except Exception as e:
+        print(f"[ACCRUAL CREATE] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/accrual/entry/{entry_id}")
+def api_delete_accrual_entry(entry_id: str, user: str = Depends(require_user)):
+    """Delete an accrual/manual/true-up entry from MANUAL_ENTRIES_TABLE and bust caches."""
+    try:
+        # Delete from accrual entries table
+        ddb.delete_item(
+            TableName=MANUAL_ENTRIES_TABLE,
+            Key={'entry_id': {'S': entry_id}}
+        )
+        # Also try the CSV-upload manual billback table (covers both entry sources)
+        try:
+            ddb.delete_item(
+                TableName=MANUAL_BILLBACK_TABLE,
+                Key={'entry_id': {'S': entry_id}}
+            )
+        except Exception:
+            pass
+
+        # Bust completion tracker cache so it picks up the deletion
+        keys_to_bust = [k for k in list(_CACHE.keys()) if isinstance(k, tuple) and len(k) > 0 and k[0] == "completion_tracker"]
+        for k in keys_to_bust:
+            _CACHE.pop(k, None)
+
+        print(f"[ACCRUAL DELETE] Deleted entry {entry_id} by {user}")
+        return {"success": True, "deleted": entry_id}
+    except Exception as e:
+        print(f"[ACCRUAL DELETE] Error: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+
+@app.get("/api/accrual/entries")
+def api_accrual_entries(period: str = "", user: str = Depends(require_user)):
+    """List manual/accrual entries for a period."""
+    try:
+        items = []
+        if period:
+            response = ddb.query(
+                TableName=MANUAL_ENTRIES_TABLE,
+                IndexName="period-index",
+                KeyConditionExpression="period = :p",
+                ExpressionAttributeValues={":p": {"S": period}}
+            )
+            items = response.get("Items", [])
+            while response.get("LastEvaluatedKey"):
+                response = ddb.query(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    IndexName="period-index",
+                    KeyConditionExpression="period = :p",
+                    ExpressionAttributeValues={":p": {"S": period}},
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                items.extend(response.get("Items", []))
+        else:
+            response = ddb.scan(TableName=MANUAL_ENTRIES_TABLE)
+            items = response.get("Items", [])
+            while response.get("LastEvaluatedKey"):
+                response = ddb.scan(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                items.extend(response.get("Items", []))
+
+        results = []
+        for item in items:
+            results.append({
+                "entry_id": item.get("entry_id", {}).get("S", ""),
+                "property_id": item.get("property_id", {}).get("S", ""),
+                "property_name": item.get("property_name", {}).get("S", ""),
+                "account_number": item.get("account_number", {}).get("S", ""),
+                "vendor_name": item.get("vendor_name", {}).get("S", ""),
+                "vendor_id": item.get("vendor_id", {}).get("S", ""),
+                "charge_code": item.get("charge_code", {}).get("S", ""),
+                "utility_name": item.get("utility_name", {}).get("S", ""),
+                "gl_account_number": item.get("gl_account_number", {}).get("S", ""),
+                "gl_account_name": item.get("gl_account_name", {}).get("S", ""),
+                "amount": float(item.get("amount", {}).get("N", "0")),
+                "entry_type": item.get("entry_type", {}).get("S", ""),
+                "reason_code": item.get("reason_code", {}).get("S", ""),
+                "note": item.get("note", {}).get("S", ""),
+                "period": item.get("period", {}).get("S", ""),
+                "historical_months": int(item.get("historical_months", {}).get("N", "0")),
+                "historical_avg": float(item.get("historical_avg", {}).get("N", "0")),
+                "created_by": item.get("created_by", {}).get("S", ""),
+                "created_utc": item.get("created_utc", {}).get("S", "")
+            })
+
+        return {"items": results, "count": len(results)}
+
+    except Exception as e:
+        print(f"[ACCRUAL ENTRIES] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/accrual/entry")
+def api_accrual_delete(entry_id: str = "", user: str = Depends(require_user)):
+    """Delete a manual/accrual entry by entry_id."""
+    try:
+        if not entry_id:
+            return JSONResponse({"error": "entry_id required"}, status_code=400)
+
+        ddb.delete_item(
+            TableName=MANUAL_ENTRIES_TABLE,
+            Key={"entry_id": {"S": entry_id}}
+        )
+
+        print(f"[ACCRUAL DELETE] Deleted entry {entry_id} by {user}")
+        return {"ok": True}
+
+    except Exception as e:
+        print(f"[ACCRUAL DELETE] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # -------- UBI Batches --------
@@ -18624,6 +20003,157 @@ def api_debug_exclusion_hashes(user: str = Depends(require_user)):
     except Exception as e:
         import traceback
         return {"error": str(e), "trace": traceback.format_exc()}
+
+
+@app.get("/api/debug/orphaned-stage7")
+def api_debug_orphaned_stage7(user: str = Depends(require_user), days_back: int = 60):
+    """Find Stage 7 files that contain lines already assigned in Stage 8 (should have been deleted).
+
+    This diagnostic scans Stage 7, computes line hashes, and checks against
+    the DDB exclusion table. Any matches are 'orphaned' - they should have been
+    removed from Stage 7 during assignment.
+    """
+    from datetime import datetime, timedelta
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time as _time
+
+    t0 = _time.time()
+    excluded_hashes = _get_cached_exclusion_hashes(days_back)
+    print(f"[ORPHAN CHECK] Using {len(excluded_hashes)} exclusion hashes")
+
+    # Scan Stage 7 files
+    today = datetime.now()
+    all_keys = []
+    for i in range(days_back):
+        d = today - timedelta(days=i)
+        prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+        try:
+            paginator = s3.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                for obj in page.get('Contents', []):
+                    if obj['Key'].endswith('.jsonl'):
+                        all_keys.append(obj['Key'])
+        except Exception:
+            continue
+
+    print(f"[ORPHAN CHECK] Scanning {len(all_keys)} Stage 7 files")
+
+    orphaned_files = []
+    clean_files = 0
+
+    def check_file(key):
+        try:
+            body = _read_s3_text(BUCKET, key)
+            lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+            total_lines = 0
+            excluded_lines = 0
+            for line in lines:
+                try:
+                    rec = json.loads(line)
+                    lh = _compute_stable_line_hash(rec)
+                    total_lines += 1
+                    if lh in excluded_hashes:
+                        excluded_lines += 1
+                except Exception:
+                    continue
+            if excluded_lines > 0:
+                first = json.loads(lines[0])
+                return {
+                    "s3_key": key,
+                    "total_lines": total_lines,
+                    "excluded_lines": excluded_lines,
+                    "all_excluded": excluded_lines == total_lines,
+                    "account": first.get("Account Number", ""),
+                    "vendor": first.get("EnrichedVendorName", ""),
+                    "property": first.get("EnrichedPropertyName", ""),
+                }
+            return None
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(check_file, k): k for k in all_keys}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                orphaned_files.append(result)
+            else:
+                clean_files += 1
+
+    elapsed = _time.time() - t0
+    fully_orphaned = [f for f in orphaned_files if f["all_excluded"]]
+    partially_orphaned = [f for f in orphaned_files if not f["all_excluded"]]
+
+    return {
+        "total_stage7_files": len(all_keys),
+        "clean_files": clean_files,
+        "fully_orphaned": len(fully_orphaned),
+        "partially_orphaned": len(partially_orphaned),
+        "orphaned_details": orphaned_files[:50],
+        "exclusion_hash_count": len(excluded_hashes),
+        "scan_seconds": round(elapsed, 1),
+    }
+
+
+@app.post("/api/debug/cleanup-orphaned-stage7")
+async def api_debug_cleanup_orphaned_stage7(request: Request, user: str = Depends(require_user)):
+    """Delete Stage 7 files where ALL lines are already assigned (fully orphaned).
+
+    Only deletes files where every single line hash exists in the exclusion table.
+    Files with a mix of assigned/unassigned lines are rewritten to keep only unassigned lines.
+    """
+    from datetime import datetime
+    import time as _time
+
+    t0 = _time.time()
+    payload = await request.json()
+    s3_keys = payload.get("keys", [])
+    if not s3_keys:
+        return JSONResponse({"error": "No keys provided"}, status_code=400)
+
+    excluded_hashes = _get_cached_exclusion_hashes(90)
+    deleted = 0
+    rewritten = 0
+    errors = []
+
+    for key in s3_keys:
+        try:
+            body = _read_s3_text(BUCKET, key)
+            lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+            remaining = []
+            for line in lines:
+                try:
+                    rec = json.loads(line)
+                    lh = _compute_stable_line_hash(rec)
+                    if lh not in excluded_hashes:
+                        remaining.append(rec)
+                except Exception:
+                    remaining.append(json.loads(line))
+
+            if not remaining:
+                # All lines assigned - safe to delete
+                s3.delete_object(Bucket=BUCKET, Key=key)
+                deleted += 1
+                print(f"[ORPHAN CLEANUP] Deleted fully orphaned: {key}")
+            elif len(remaining) < len(lines):
+                # Some lines assigned - rewrite with only unassigned lines
+                y, m, d = _extract_ymd_from_key(key)
+                base = _basename_from_key(key)
+                new_key = _write_jsonl(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining)
+                if new_key != key:
+                    s3.delete_object(Bucket=BUCKET, Key=key)
+                rewritten += 1
+                print(f"[ORPHAN CLEANUP] Rewritten (removed {len(lines) - len(remaining)} assigned lines): {key}")
+        except Exception as e:
+            errors.append({"key": key, "error": str(e)})
+
+    elapsed = _time.time() - t0
+    return {
+        "deleted": deleted,
+        "rewritten": rewritten,
+        "errors": errors,
+        "seconds": round(elapsed, 1),
+    }
 
 
 @app.get("/api/debug/reports")
@@ -25382,14 +26912,17 @@ def api_billback_report_periods(user: str = Depends(require_user)):
             except Exception:
                 pass
 
-        # Generate last 18 months as options
+        # Generate 3 months ahead + 18 months back as options
         periods = []
-        for i in range(18):
+        for i in range(-3, 19):
             m = today.month - i
             y = today.year
             while m <= 0:
                 m += 12
                 y -= 1
+            while m > 12:
+                m -= 12
+                y += 1
             period = f"{y}-{m:02d}"
             periods.append({
                 "value": period,
@@ -29148,3 +30681,303 @@ def ai_review_dashboard(request: Request, user: str = Depends(require_user)):
             "error": "Access denied. Admin only."
         })
     return templates.TemplateResponse("ai_review_dashboard.html", {"request": request, "user": user})
+
+
+# ======================================================================
+# SUBMETER RATES – Audit water & sewer per-gallon submetering rates
+# ======================================================================
+
+# Manual UOM-to-gallons factors for the override dropdown
+_SUBMETER_UOM_OVERRIDES = {
+    "Gallons":     1.0,
+    "kGal":        1000.0,
+    "HCF":         748.05,
+    "CCF":         748.05,
+    "100 Gallons": 100.0,
+    "Acre-Feet":   325851.0,
+}
+
+
+def _consumption_to_gallons(raw_consumption, raw_uom: str, utility_type: str,
+                            uom_override: str | None = None) -> float:
+    """Convert consumption value to gallons for water/sewer utilities.
+
+    Uses _parse_consumption() for value parsing and _normalize_uom() for
+    unit detection.  If *uom_override* is set (not None / not "Auto"),
+    the override factor is used instead of the auto-detected UOM.
+    Returns 0.0 when consumption or UOM is missing or unrecognisable.
+    """
+    parsed = _parse_consumption(raw_consumption)
+    if parsed is None or parsed == 0:
+        return 0.0
+
+    # ---- Manual override takes precedence ----
+    if uom_override and uom_override != "Auto":
+        override_factor = _SUBMETER_UOM_OVERRIDES.get(uom_override)
+        if override_factor is not None:
+            return parsed * override_factor
+        # Unrecognised override string — fall through to auto-detect
+
+    # ---- Auto-detect from the invoice UOM field ----
+    canonical, category, factor = _normalize_uom(raw_uom or "")
+
+    # Accept water-category UOMs, or fallback for sewer (often uses water UOMs)
+    ut = (utility_type or "").lower()
+    if category == "water" or ut in ("water", "sewer"):
+        if canonical == "Gallons":
+            return parsed * factor
+        # Unrecognised UOM but utility is water/sewer — return 0 so it
+        # shows as N/A and the user knows to set an override
+        if category not in ("water",):
+            return 0.0
+        return parsed * factor
+
+    return 0.0
+
+
+@app.get("/submeter-rates", response_class=HTMLResponse)
+def submeter_rates_view(request: Request, user: str = Depends(require_user)):
+    """Submeter Rates page – audit water & sewer submetering rates by property."""
+    return templates.TemplateResponse("submeter-rates.html", {"request": request, "user": user})
+
+
+@app.get("/api/submeter-rates/generate")
+def api_submeter_rates_generate(ubi_period: str = "03/2026", bust_cache: str = "",
+                                user: str = Depends(require_user)):
+    """Scan Stage 8 and compute per-gallon water/sewer rates by property."""
+    cache_key = ("submeter-rates-generate", ubi_period)
+    if not bust_cache:
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 120):
+            return cached.get("data")
+
+    print(f"[SUBMETER RATES] Generating for period {ubi_period} ...")
+
+    # ---- Scan Stage 8 ----
+    prefixes_to_scan = []
+    today = datetime.now()
+    for i in range(365):
+        d = today - timedelta(days=i)
+        prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+        prefixes_to_scan.append(prefix)
+
+    all_keys: list[str] = []
+    for prefix in prefixes_to_scan:
+        try:
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    key = obj["Key"]
+                    if key.endswith(".jsonl"):
+                        all_keys.append(key)
+        except Exception:
+            pass
+
+    print(f"[SUBMETER RATES] Found {len(all_keys)} Stage 8 files")
+
+    # ---- Read files concurrently ----
+    matched_items: list[dict] = []
+
+    def _process_file(key: str) -> list[dict]:
+        try:
+            body = _read_s3_text(BUCKET, key)
+            items = []
+            for line in body.splitlines():
+                line = (line or "").strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                # Only Water / Sewer
+                util = (rec.get("Utility Name") or rec.get("utility_name") or "").strip()
+                if util.lower() not in ("water", "sewer"):
+                    continue
+                # Check if this record has the requested period
+                ubi_assignments = rec.get("ubi_assignments", [])
+                if not ubi_assignments:
+                    lp = rec.get("ubi_period", "")
+                    if lp == ubi_period:
+                        items.append(rec)
+                else:
+                    for asn in ubi_assignments:
+                        if asn.get("period") == ubi_period:
+                            items.append(rec)
+                            break
+            return items
+        except Exception as e:
+            print(f"[SUBMETER RATES] Error reading {key}: {e}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(_process_file, key): key for key in all_keys}
+        for future in as_completed(futures):
+            matched_items.extend(future.result())
+
+    print(f"[SUBMETER RATES] {len(matched_items)} records match period {ubi_period}")
+
+    # ---- Load config for calculation_desc + uom_override ----
+    cfg_items = _ddb_get_config("submeter-rate-config") or []
+    cfg_calc_map: dict[str, str] = {}
+    cfg_uom_map: dict[str, str] = {}
+    for c in cfg_items:
+        k = f"{c.get('property_name')}|{c.get('utility_name')}"
+        cfg_calc_map[k] = c.get("calculation_desc", "From Invoice & Volume")
+        cfg_uom_map[k] = c.get("uom_override", "Auto")
+
+    # ---- Aggregate by (property_name, utility_type) ----
+    agg: dict[str, dict] = {}  # key = "prop|utility"
+
+    for rec in matched_items:
+        property_name = rec.get("EnrichedPropertyName") or rec.get("Property Name") or ""
+        property_id = rec.get("EnrichedPropertyID") or rec.get("Property ID") or ""
+        utility_name = (rec.get("Utility Name") or rec.get("utility_name") or "").strip()
+        ar_code = rec.get("Charge Code") or ""
+
+        # Determine amount following the master-bills override logic
+        ubi_assignments = rec.get("ubi_assignments", [])
+        amount_overridden = rec.get("Amount Overridden") or rec.get("amount_overridden")
+
+        if not ubi_assignments:
+            # Legacy single-period
+            if amount_overridden:
+                ubi_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
+            else:
+                ubi_amount = float(rec.get("ubi_amount", 0))
+                if ubi_amount == 0:
+                    charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+                    ubi_amount = float(charge_str) if charge_str else 0.0
+            total_bill_amount = ubi_amount
+            period_amount = ubi_amount
+        else:
+            # Multi-period: find the assignment for the requested period
+            period_amount = 0.0
+            total_bill_amount = 0.0
+            for asn in ubi_assignments:
+                total_bill_amount += float(asn.get("amount", 0))
+                if asn.get("period") == ubi_period:
+                    if amount_overridden:
+                        period_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
+                        # For multi-period with override, prorate by original ratio
+                        orig_total = sum(float(a.get("amount", 0)) for a in ubi_assignments)
+                        orig_this = float(asn.get("amount", 0))
+                        if orig_total > 0:
+                            period_amount = period_amount * (orig_this / orig_total)
+                    else:
+                        period_amount = float(asn.get("amount", 0))
+
+        # Consumption → gallons (apply UOM override from config if set)
+        raw_consumption = rec.get("Consumption") or rec.get("consumption") or rec.get("Line Item Consumption")
+        raw_uom = rec.get("UOM") or rec.get("uom") or rec.get("Unit of Measure") or ""
+        agg_key = f"{property_name}|{utility_name}"
+        uom_override = cfg_uom_map.get(agg_key, "Auto")
+        gallons = _consumption_to_gallons(raw_consumption, raw_uom, utility_name,
+                                          uom_override=uom_override)
+
+        # Prorate consumption for multi-period splits
+        if ubi_assignments and len(ubi_assignments) > 1 and total_bill_amount > 0 and gallons > 0:
+            gallons = gallons * (period_amount / total_bill_amount) if total_bill_amount else 0.0
+
+        if agg_key not in agg:
+            agg[agg_key] = {
+                "property_name": property_name,
+                "property_id": property_id,
+                "ar_code": ar_code,
+                "invoice_total": 0.0,
+                "volume_total_gals": 0.0,
+                "utility_name": utility_name,
+                "line_count": 0,
+                "raw_uoms": set(),
+            }
+        agg[agg_key]["invoice_total"] += period_amount
+        agg[agg_key]["volume_total_gals"] += gallons
+        agg[agg_key]["line_count"] += 1
+        if raw_uom:
+            agg[agg_key]["raw_uoms"].add(raw_uom.strip())
+        # Keep the first non-empty ar_code
+        if ar_code and not agg[agg_key]["ar_code"]:
+            agg[agg_key]["ar_code"] = ar_code
+
+    # ---- Build rows ----
+    run_dt = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = []
+    for entry in agg.values():
+        vol = entry["volume_total_gals"]
+        total = entry["invoice_total"]
+        rate = (total / vol) if vol and vol > 0 else None
+        cfg_key = f"{entry['property_name']}|{entry['utility_name']}"
+        raw_uoms_sorted = sorted(entry.get("raw_uoms", set()))
+        rows.append({
+            "property_name": entry["property_name"],
+            "property_id": entry["property_id"],
+            "ar_code": entry["ar_code"],
+            "invoice_total": round(total, 2),
+            "volume_total_gals": round(vol, 2),
+            "utility_name": entry["utility_name"],
+            "rate": round(rate, 6) if rate is not None else None,
+            "calculation_desc": cfg_calc_map.get(cfg_key, "From Invoice & Volume"),
+            "raw_uom": ", ".join(raw_uoms_sorted) if raw_uoms_sorted else "",
+            "uom_override": cfg_uom_map.get(cfg_key, "Auto"),
+            "run_datetime": run_dt,
+            "line_count": entry["line_count"],
+        })
+
+    rows.sort(key=lambda r: (r["property_name"].lower(), r["utility_name"]))
+
+    result = {
+        "ok": True,
+        "ubi_period": ubi_period,
+        "rows": rows,
+        "run_datetime": run_dt,
+        "files_scanned": len(all_keys),
+        "records_matched": len(matched_items),
+    }
+    _CACHE[cache_key] = {"ts": time.time(), "data": result}
+    return result
+
+
+@app.get("/api/submeter-rates/config")
+def api_submeter_rates_config_get(user: str = Depends(require_user)):
+    """Return saved Calculation_Desc config for submeter rates."""
+    items = _ddb_get_config("submeter-rate-config") or []
+    return {"ok": True, "items": items}
+
+
+@app.post("/api/submeter-rates/config")
+def api_submeter_rates_config_save(request: Request, body: dict = Body(...), user: str = Depends(require_user)):
+    """Save Calculation_Desc config for submeter rates."""
+    try:
+        items = body.get("items", [])
+        ok = _ddb_put_config("submeter-rate-config", items)
+        if ok:
+            return {"ok": True, "saved": len(items)}
+        return JSONResponse({"error": "Failed to save config"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "save submeter config")}, status_code=500)
+
+
+@app.get("/api/submeter-rates/export-csv")
+def api_submeter_rates_export_csv(ubi_period: str = "03/2026", user: str = Depends(require_user)):
+    """Export submeter rates as CSV download."""
+    # Re-use generate (will hit cache if recently generated)
+    data = api_submeter_rates_generate(ubi_period=ubi_period, user=user)
+    rows = data.get("rows", []) if isinstance(data, dict) else []
+
+    from io import StringIO
+    output = StringIO()
+    output.write("Property_Name,AR_CODE,Invoice_Total,Volume_Total_Gals,Utility_Name,Rate,Calculation_Desc,Raw_UOM,UOM_Override,RunDateTime\n")
+    for row in rows:
+        prop = f'"{row["property_name"]}"' if "," in row.get("property_name", "") else row.get("property_name", "")
+        ar = f'"{row["ar_code"]}"' if "," in row.get("ar_code", "") else row.get("ar_code", "")
+        rate_str = f'{row["rate"]:.6f}' if row.get("rate") is not None else ""
+        raw_uom = f'"{row.get("raw_uom", "")}"' if "," in row.get("raw_uom", "") else row.get("raw_uom", "")
+        output.write(f'{prop},{ar},{row.get("invoice_total", 0)},{row.get("volume_total_gals", 0)},{row.get("utility_name", "")},{rate_str},{row.get("calculation_desc", "")},{raw_uom},{row.get("uom_override", "Auto")},{row.get("run_datetime", "")}\n')
+
+    csv_content = output.getvalue()
+    safe_period = ubi_period.replace("/", "-")
+    return StreamingResponse(
+        BytesIO(csv_content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=submeter_rates_{safe_period}.csv"},
+    )

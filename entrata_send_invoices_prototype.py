@@ -99,7 +99,8 @@ def _normalize_location(loc_item) -> Dict[str, str]:
     """Convert a location item to {id, name, vendorCode, isPrimary} dict. Handles both old (string) and new (object) formats."""
     if isinstance(loc_item, dict):
         lid = str(loc_item.get("id") or loc_item.get("locationId") or "").strip()
-        lname = str(loc_item.get("name") or "").strip()
+        # Prefer locationName (the actual location), fall back to displayName, then name
+        lname = str(loc_item.get("locationName") or loc_item.get("displayName") or loc_item.get("name") or "").strip()
         lcode = str(loc_item.get("vendorCode") or "").strip()
         is_primary = loc_item.get("isPrimary", False)
         if isinstance(is_primary, str):
@@ -123,10 +124,10 @@ def _parse_vendor_data(data) -> Dict[str, List[Dict[str, str]]]:
                 vid = str(it.get("vendorId") or it.get("VendorId") or it.get("vendorID") or it.get("vendor_id") or "").strip()
                 if not vid:
                     continue
-                # Single location
+                # Single location - pass full dict so locationName/displayName are preserved
                 loc = it.get("vendorLocationId") or it.get("VendorLocationId") or it.get("locationId")
                 if loc:
-                    out.setdefault(vid, []).append(_normalize_location(loc))
+                    out.setdefault(vid, []).append(_normalize_location(it))
                 # Multiple locations
                 locs = it.get("locations") if isinstance(it.get("locations"), list) else None
                 if locs:
@@ -160,7 +161,7 @@ def _parse_vendor_data(data) -> Dict[str, List[Dict[str, str]]]:
                 continue
             loc = it.get("vendorLocationId") or it.get("VendorLocationId") or it.get("locationId")
             if loc:
-                out.setdefault(vid, []).append(_normalize_location(loc))
+                out.setdefault(vid, []).append(_normalize_location(it))
             locs = it.get("locations") if isinstance(it.get("locations"), list) else None
             if locs:
                 for loc_item in locs:

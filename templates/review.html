@@ -3299,6 +3299,8 @@
           }
 
           closeKnowledgeModal();
+          lastVendorId = '';  // Reset cache so loadKnowledge re-fetches
+          lastPropertyId = '';
           loadKnowledge(); // Refresh the knowledge panel
 
           // Show success toast

@@ -64,7 +64,7 @@
           <input type="text" id="searchProperty" placeholder="e.g. Oak Grove" />
         </div>
         <div class="search-field">
-          <label>Date Range</label>
+          <label>Parse Date Range (optional)</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="date" id="searchStartDate" style="min-width:140px" />
             <span style="color:#64748b">to</span>
@@ -168,7 +168,11 @@
         document.getElementById('loading').style.display = 'none';
 
         if (!resp.ok) {
-          showToast(data.error || 'Search failed', 'err');
+          if (data.indexing) {
+            showToast('Search index is still building after startup. Please wait a minute and try again.', 'err');
+          } else {
+            showToast(data.error || 'Search failed', 'err');
+          }
           return;
         }
 
@@ -178,7 +182,8 @@
           return;
         }
 
-        document.getElementById('resultCount').textContent = `Found ${results.length} result${results.length === 1 ? '' : 's'}${data.truncated ? ' (showing first 500)' : ''}`;
+        const indexInfo = data.index_size ? ` (index: ${data.index_size.toLocaleString()} invoices across ${data.index_dates} dates)` : '';
+        document.getElementById('resultCount').textContent = `Found ${results.length} result${results.length === 1 ? '' : 's'}${data.truncated ? ' (showing first 500)' : ''}${indexInfo}`;
         document.getElementById('resultCount').style.display = 'block';
 
         const tbody = document.getElementById('resultsBody');
@@ -216,12 +221,8 @@
       });
     });
 
-    // Set default date range to last 60 days
-    const today = new Date();
-    const sixtyDaysAgo = new Date(today);
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    document.getElementById('searchEndDate').value = today.toISOString().split('T')[0];
-    document.getElementById('searchStartDate').value = sixtyDaysAgo.toISOString().split('T')[0];
+    // No default date range - index is in-memory so searching everything is instant
+    // Users can optionally narrow by date if needed
 
     // Check for URL parameter and auto-search
     const urlParams = new URLSearchParams(window.location.search);

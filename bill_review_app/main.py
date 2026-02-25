@@ -103,6 +103,7 @@ POST_ENTRATA_PREFIX = os.getenv("POST_ENTRATA_PREFIX", "Bill_Parser_7_PostEntrat
 HIST_ARCHIVE_PREFIX = os.getenv("HIST_ARCHIVE_PREFIX", "Bill_Parser_99_Historical Archive/")
 FAILED_JOBS_PREFIX = os.getenv("FAILED_JOBS_PREFIX", "Bill_Parser_Failed_Jobs/")
 ERRORS_TABLE = os.getenv("ERRORS_TABLE", "jrk-bill-parser-errors")
+MANUAL_ENTRIES_TABLE = os.getenv("MANUAL_ENTRIES_TABLE", "jrk-bill-manual-entries")
 PARSED_INPUTS_PREFIX = os.getenv("PARSED_INPUTS_PREFIX", "Bill_Parser_2_Parsed_Inputs/")
 REWORK_PREFIX = os.getenv("REWORK_PREFIX", "Bill_Parser_Rework_Input/")
 
@@ -4143,9 +4144,20 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
 
         cursor = conn.cursor()
 
-        # Prepare data for batch insert (NEW schema with Batch_ID column)
+        # Prepare data for batch insert (with Source_Type column)
         rows_to_insert = []
         for mb in master_bills:
+            # Determine Source_Type from source line items
+            source_type = None  # NULL = ACTUAL (existing behavior)
+            if mb.get('has_non_actual'):
+                entry_types = set()
+                for sl in mb.get('source_line_items', []):
+                    et = sl.get('entry_type', '')
+                    if et:
+                        entry_types.add(et)
+                if entry_types:
+                    source_type = "MIXED" if len(entry_types) > 1 or (entry_types and any(not sl.get('entry_type') for sl in mb.get('source_line_items', []))) else entry_types.pop()
+
             row = (
                 str(mb.get('property_id', '')),
                 str(mb.get('ar_code_mapping', '')),
@@ -4155,16 +4167,18 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
                 str(mb.get('billback_month_end', '')),
                 str(run_date),
                 str(memo),
-                str(batch_id)  # Add Batch_ID for traceability
+                str(batch_id),  # Add Batch_ID for traceability
+                source_type  # Source_Type: NULL=ACTUAL, ACCRUAL, MANUAL, TRUE-UP, MIXED
             )
             rows_to_insert.append(row)
 
-        # Insert into Snowflake (NEW table "_Master_Bills_Prod" with Batch_ID column)
+        # Insert into Snowflake (with Source_Type column)
         insert_sql = """
         INSERT INTO "_Master_Bills_Prod"
         ("Property_ID", "AR_Code_Mapping", "Utility_Name", "Utility_Amount",
-         "Billback_Month_Start", "Billback_Month_End", "RunDate", "Memo", "Batch_ID")
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+         "Billback_Month_Start", "Billback_Month_End", "RunDate", "Memo", "Batch_ID",
+         "Source_Type")
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
 
         cursor.executemany(insert_sql, rows_to_insert)
@@ -4183,6 +4197,158 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
         import traceback
         traceback.print_exc()
         return False, str(e), 0
+
+
+# -------- Accrual / Manual Entry Helpers --------
+
+def _read_historical_from_snowflake(property_id: str, account_number: str, charge_code: str, utility_name: str) -> list[dict]:
+    """Query Snowflake _Master_Bills_Prod for historical amounts matching property + charge code + utility."""
+    try:
+        credentials = _get_snowflake_credentials()
+        if not credentials:
+            return []
+
+        conn = snowflake.connector.connect(
+            account=credentials.get('account'),
+            user=credentials.get('user'),
+            password=credentials.get('password'),
+            database=credentials.get('database'),
+            schema=credentials.get('schema'),
+            warehouse=credentials.get('warehouse'),
+            role=credentials.get('role') if credentials.get('role') else None
+        )
+
+        cursor = conn.cursor()
+        query = """
+        SELECT "Billback_Month_Start", "Utility_Amount"
+        FROM "_Master_Bills_Prod"
+        WHERE "Property_ID" = %s
+          AND "AR_Code_Mapping" = %s
+          AND "Utility_Name" = %s
+        ORDER BY "Billback_Month_Start" ASC
+        """
+        cursor.execute(query, (property_id, charge_code, utility_name))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        results = []
+        for row in rows:
+            billback_start = str(row[0]) if row[0] else ""
+            amount = float(row[1]) if row[1] else 0.0
+            # Convert billback_month_start (MM/DD/YYYY) to period (MM/YYYY)
+            period = ""
+            if billback_start:
+                parts = billback_start.split("/")
+                if len(parts) == 3:
+                    period = f"{parts[0]}/{parts[2]}"
+            results.append({"period": period, "amount": amount})
+
+        print(f"[ACCRUAL] Snowflake returned {len(results)} historical records for {property_id}/{charge_code}/{utility_name}")
+        return results
+
+    except Exception as e:
+        print(f"[ACCRUAL] Snowflake historical query error: {e}")
+        return []
+
+
+def _get_historical_from_assignments(property_id: str, account_number: str, vendor_name: str) -> list[dict]:
+    """Fallback: scan jrk-bill-ubi-assignments and load S3 files to find historical amounts."""
+    try:
+        response = ddb.scan(TableName="jrk-bill-ubi-assignments")
+        assignments = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = ddb.scan(
+                TableName="jrk-bill-ubi-assignments",
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            assignments.extend(response.get("Items", []))
+
+        # Group assignments by S3 key
+        s3_cache = {}
+        period_amounts = {}  # period -> total_amount
+
+        for assignment in assignments:
+            s3_key = assignment.get("s3_key", {}).get("S", "")
+            line_hash = assignment.get("line_hash", {}).get("S", "")
+            ubi_period = assignment.get("ubi_period", {}).get("S", "")
+            amount = float(assignment.get("amount", {}).get("N", "0"))
+
+            if not s3_key or not line_hash:
+                continue
+
+            # Load S3 file
+            if s3_key not in s3_cache:
+                try:
+                    obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
+                    body = obj["Body"].read()
+                    if s3_key.endswith('.gz'):
+                        import gzip
+                        body = gzip.decompress(body)
+                    s3_cache[s3_key] = body.decode('utf-8')
+                except Exception:
+                    continue
+
+            # Parse lines and match
+            for line_str in s3_cache[s3_key].strip().split("\n"):
+                try:
+                    parsed = json.loads(line_str)
+                    computed_hash = _compute_stable_line_hash(parsed)
+                    if computed_hash != line_hash:
+                        continue
+                    p_id = parsed.get("EnrichedPropertyID", parsed.get("Property ID", ""))
+                    acc_num = parsed.get("Account Number", parsed.get("AccountNumber", ""))
+                    v_name = parsed.get("EnrichedVendorName", parsed.get("Vendor Name", ""))
+                    if p_id == property_id and acc_num == account_number:
+                        # Extract period from ubi_period ("MM/YYYY" or "MM/YYYY to MM/YYYY")
+                        period_key = ubi_period.split(" to ")[0].strip() if ubi_period else ""
+                        if period_key:
+                            period_amounts[period_key] = period_amounts.get(period_key, 0) + amount
+                except Exception:
+                    continue
+
+        results = [{"period": p, "amount": a} for p, a in sorted(period_amounts.items())]
+        print(f"[ACCRUAL] Assignments fallback returned {len(results)} historical records for {property_id}/{account_number}")
+        return results
+
+    except Exception as e:
+        print(f"[ACCRUAL] Assignments historical query error: {e}")
+        return []
+
+
+def _calculate_accrual(historical_amounts: list[dict], annual_inflation_rate: float = 0.03) -> dict:
+    """Calculate accrual from historical amounts with annual inflation adjustment."""
+    if not historical_amounts:
+        return {
+            "calculated_amount": 0,
+            "historical_months": 0,
+            "avg_amount": 0,
+            "inflation_amount": 0,
+            "monthly_amounts": []
+        }
+
+    amounts = [h["amount"] for h in historical_amounts if h.get("amount", 0) != 0]
+    if not amounts:
+        return {
+            "calculated_amount": 0,
+            "historical_months": len(historical_amounts),
+            "avg_amount": 0,
+            "inflation_amount": 0,
+            "monthly_amounts": historical_amounts
+        }
+
+    avg = sum(amounts) / len(amounts)
+    monthly_inflation = annual_inflation_rate / 12
+    calculated = round(avg * (1 + monthly_inflation), 2)
+    inflation_amount = round(calculated - avg, 2)
+
+    return {
+        "calculated_amount": calculated,
+        "historical_months": len(amounts),
+        "avg_amount": round(avg, 2),
+        "inflation_amount": inflation_amount,
+        "monthly_amounts": historical_amounts
+    }
 
 
 # -------- DynamoDB helpers for config --------
@@ -5511,10 +5677,120 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                 traceback.print_exc()
                 continue
 
+        # Merge manual/accrual entries for the same period range
+        try:
+            me_items = []
+            # Scan manual entries and filter by period range (same logic as assignments)
+            me_response = ddb.scan(TableName=MANUAL_ENTRIES_TABLE)
+            me_items = me_response.get("Items", [])
+            while me_response.get("LastEvaluatedKey"):
+                me_response = ddb.scan(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    ExclusiveStartKey=me_response["LastEvaluatedKey"]
+                )
+                me_items.extend(me_response.get("Items", []))
+
+            manual_count = 0
+            for me_item in me_items:
+                me_period = me_item.get("period", {}).get("S", "")  # MM/YYYY
+                me_amount = float(me_item.get("amount", {}).get("N", "0"))
+                me_property_id = me_item.get("property_id", {}).get("S", "")
+                me_property_name = me_item.get("property_name", {}).get("S", "")
+                me_charge_code = me_item.get("charge_code", {}).get("S", "")
+                me_utility_name = me_item.get("utility_name", {}).get("S", "")
+                me_entry_type = me_item.get("entry_type", {}).get("S", "")
+                me_reason_code = me_item.get("reason_code", {}).get("S", "")
+                me_note = me_item.get("note", {}).get("S", "")
+                me_account_number = me_item.get("account_number", {}).get("S", "")
+                me_vendor_name = me_item.get("vendor_name", {}).get("S", "")
+                me_entry_id = me_item.get("entry_id", {}).get("S", "")
+
+                if not me_period or not me_property_id:
+                    continue
+
+                # Apply same period filter
+                if start_period or end_period:
+                    try:
+                        p_month, p_year = me_period.split("/")
+                        period_yyyymm = f"{p_year}-{p_month.zfill(2)}"
+                    except:
+                        continue
+                    if start_period:
+                        try:
+                            s_month, s_year = start_period.split("/")
+                            if period_yyyymm < f"{s_year}-{s_month.zfill(2)}":
+                                continue
+                        except:
+                            pass
+                    if end_period:
+                        try:
+                            e_month, e_year = end_period.split("/")
+                            if period_yyyymm > f"{e_year}-{e_month.zfill(2)}":
+                                continue
+                        except:
+                            pass
+
+                # Build period dates
+                import calendar
+                try:
+                    p_month, p_year = me_period.split("/")
+                    period_start = f"{p_month}/01/{p_year}"
+                    last_day = calendar.monthrange(int(p_year), int(p_month))[1]
+                    period_end = f"{p_month}/{last_day:02d}/{p_year}"
+                except:
+                    continue
+
+                # Create master bill key using same format
+                mb_key = f"{me_property_id}|{me_charge_code}|{me_utility_name}|{me_period}|{me_period}"
+
+                if mb_key not in master_bills:
+                    master_bills[mb_key] = {
+                        "master_bill_id": mb_key,
+                        "property_id": me_property_id,
+                        "property_name": me_property_name,
+                        "ar_code_mapping": me_charge_code,
+                        "utility_name": me_utility_name,
+                        "billback_month_start": period_start,
+                        "billback_month_end": period_end,
+                        "utility_amount": 0,
+                        "source_line_items": [],
+                        "has_non_actual": False,
+                        "created_utc": datetime.utcnow().isoformat(),
+                        "created_by": user,
+                        "status": "draft"
+                    }
+
+                master_bills[mb_key]["utility_amount"] += me_amount
+                master_bills[mb_key]["has_non_actual"] = True
+
+                master_bills[mb_key]["source_line_items"].append({
+                    "bill_id": me_entry_id,
+                    "line_index": 0,
+                    "account_number": me_account_number,
+                    "vendor_name": me_vendor_name,
+                    "gl_code": me_item.get("gl_account_number", {}).get("S", ""),
+                    "gl_code_name": me_item.get("gl_account_name", {}).get("S", ""),
+                    "description": f"{me_entry_type}: {me_reason_code}",
+                    "amount": me_amount,
+                    "overridden": False,
+                    "override_reason": "",
+                    "entry_type": me_entry_type,
+                    "reason_code": me_reason_code,
+                    "note": me_note
+                })
+                manual_count += 1
+
+            print(f"[GENERATE MASTER BILLS] Merged {manual_count} manual/accrual entries")
+
+        except Exception as e:
+            print(f"[GENERATE MASTER BILLS] Error merging manual entries: {e}")
+            import traceback
+            traceback.print_exc()
+
         # Convert to list and save to DynamoDB
         master_bills_list = list(master_bills.values())
 
-        print(f"[GENERATE MASTER BILLS] Created {len(master_bills_list)} master bills from {len(assignments)} assignments")
+        print(f"[GENERATE MASTER BILLS] Created {len(master_bills_list)} master bills from {len(assignments)} assignments + manual entries")
 
         # Store master bills in config for now (TODO: create dedicated table)
         save_ok = _ddb_put_config("master-bills-latest", master_bills_list)
@@ -5646,7 +5922,8 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
 
     # 2. Get assigned accounts from master bills for this period
     # This is much faster than loading individual S3 files
-    assigned_accounts = set()  # Set of (property_id, account_number) tuples that have assignments
+    assigned_accounts = set()  # Set of (property_id, account_number, vendor_name) tuples that have assignments
+    assigned_accounts_info = {}  # (property_id, account_number, vendor_name) -> {service_period}
 
     try:
         # Query assignments for the period
@@ -5711,8 +5988,17 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                             property_id = parsed.get("EnrichedPropertyID", parsed.get("Property ID", ""))
                             account_number = parsed.get("Account Number", parsed.get("AccountNumber", ""))
                             vendor_name = parsed.get("EnrichedVendorName", parsed.get("Vendor Name", parsed.get("VendorName", "")))
+                            bill_period_start = _format_date_compact(parsed.get("Bill Period Start", ""))
+                            bill_period_end = _format_date_compact(parsed.get("Bill Period End", ""))
                             if property_id and account_number:
-                                assigned_accounts.add((property_id, account_number, vendor_name))
+                                # Store as dict so we can track service dates per account
+                                key = (property_id, account_number, vendor_name)
+                                if key not in assigned_accounts_info:
+                                    assigned_accounts_info[key] = {"service_period": ""}
+                                if bill_period_start or bill_period_end:
+                                    sp = f"{bill_period_start} - {bill_period_end}".strip(" -")
+                                    assigned_accounts_info[key]["service_period"] = sp
+                                assigned_accounts.add(key)
                     except:
                         continue
             except Exception as e:
@@ -5726,9 +6012,42 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
 
     print(f"[COMPLETION TRACKER] Found {len(assigned_accounts)} unique property+account+vendor combinations with assignments")
 
+    # 2b. Query manual entries for this period
+    manual_entries_map = {}  # (property_id, account_number, vendor_name) -> entry_type
+    if period:
+        try:
+            me_response = ddb.query(
+                TableName=MANUAL_ENTRIES_TABLE,
+                IndexName="period-index",
+                KeyConditionExpression="period = :p",
+                ExpressionAttributeValues={":p": {"S": period}}
+            )
+            me_items = me_response.get("Items", [])
+            while me_response.get("LastEvaluatedKey"):
+                me_response = ddb.query(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    IndexName="period-index",
+                    KeyConditionExpression="period = :p",
+                    ExpressionAttributeValues={":p": {"S": period}},
+                    ExclusiveStartKey=me_response["LastEvaluatedKey"]
+                )
+                me_items.extend(me_response.get("Items", []))
+
+            for me_item in me_items:
+                me_key = (
+                    me_item.get("property_id", {}).get("S", ""),
+                    me_item.get("account_number", {}).get("S", ""),
+                    me_item.get("vendor_name", {}).get("S", "")
+                )
+                manual_entries_map[me_key] = me_item.get("entry_type", {}).get("S", "MANUAL")
+
+            print(f"[COMPLETION TRACKER] Found {len(manual_entries_map)} manual entries for period {period}")
+        except Exception as e:
+            print(f"[COMPLETION TRACKER] Error loading manual entries: {e}")
+
     # 3. Build rollup structure
     # Group by property -> accounts
-    properties = {}  # property_id -> {name, accounts: [{account_number, vendor_name, has_bill}]}
+    properties = {}  # property_id -> {name, accounts: [{account_number, vendor_name, has_bill, has_manual_entry, manual_entry_type}]}
 
     for acc in ubi_accounts:
         property_id = str(acc.get("propertyId", "")).strip()
@@ -5748,15 +6067,22 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                 "complete": 0
             }
 
-        has_bill = (property_id, account_number, vendor_name) in assigned_accounts
+        acc_key = (property_id, account_number, vendor_name)
+        has_bill = acc_key in assigned_accounts
+        has_manual = acc_key in manual_entries_map
+        manual_type = manual_entries_map.get(acc_key, "")
+        service_period = assigned_accounts_info.get(acc_key, {}).get("service_period", "")
 
         properties[property_id]["accounts"].append({
             "account_number": account_number,
             "vendor_name": vendor_name,
-            "has_bill": has_bill
+            "has_bill": has_bill,
+            "has_manual_entry": has_manual,
+            "manual_entry_type": manual_type,
+            "service_period": service_period
         })
         properties[property_id]["total"] += 1
-        if has_bill:
+        if has_bill or has_manual:
             properties[property_id]["complete"] += 1
 
     # Calculate percentages and convert to list
@@ -5786,6 +6112,239 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
     print(f"[COMPLETION TRACKER] Returning {len(properties_list)} properties, {total_complete}/{total_accounts} complete ({overall_percentage}%)")
 
     return result
+
+
+# -------- Accrual / Manual Entries API --------
+
+@app.get("/api/accrual/calculate")
+def api_accrual_calculate(property_id: str = "", account_number: str = "", vendor_name: str = "", period: str = "", user: str = Depends(require_user)):
+    """Calculate a suggested accrual for a missing account based on historical data."""
+    try:
+        if not property_id or not account_number:
+            return JSONResponse({"error": "property_id and account_number required"}, status_code=400)
+
+        print(f"[ACCRUAL CALC] property_id={property_id}, account={account_number}, vendor={vendor_name}, period={period}")
+
+        # Look up charge_code and utility_name from accounts-to-track config
+        accounts_track = _ddb_get_config("accounts-to-track")
+        if accounts_track is None:
+            accounts_track = _s3_get_json(CONFIG_BUCKET, ACCOUNTS_TRACK_KEY)
+        if not isinstance(accounts_track, list):
+            accounts_track = []
+
+        charge_code = ""
+        utility_name = ""
+        gl_account_number = ""
+        gl_account_name = ""
+        vendor_id = ""
+
+        for acc in accounts_track:
+            if (str(acc.get("propertyId", "")).strip() == property_id and
+                str(acc.get("accountNumber", "")).strip() == account_number):
+                charge_code = str(acc.get("chargeCode", "")).strip()
+                utility_name = str(acc.get("utilityType", acc.get("utilityName", ""))).strip()
+                vendor_id = str(acc.get("vendorId", "")).strip()
+                gl_account_number = str(acc.get("glAccountNumber", "")).strip()
+                gl_account_name = str(acc.get("glAccountName", "")).strip()
+                if not vendor_name:
+                    vendor_name = str(acc.get("vendorName", "")).strip()
+                break
+
+        # If no charge_code from accounts-to-track, try GL mapping config
+        if not charge_code:
+            gl_mapping = _ddb_get_config("gl-charge-code-mapping")
+            if isinstance(gl_mapping, list):
+                for m in gl_mapping:
+                    if (str(m.get("property_id", "")).strip() == property_id and
+                        str(m.get("utility_name", "")).strip().lower() == utility_name.lower()):
+                        charge_code = str(m.get("charge_code", "")).strip()
+                        break
+
+        # Try Snowflake first, then fall back to DDB assignments
+        historical = []
+        source = "none"
+        if charge_code and utility_name:
+            historical = _read_historical_from_snowflake(property_id, account_number, charge_code, utility_name)
+            if historical:
+                source = "snowflake"
+
+        if not historical:
+            historical = _get_historical_from_assignments(property_id, account_number, vendor_name)
+            if historical:
+                source = "assignments"
+
+        # Calculate accrual
+        accrual = _calculate_accrual(historical)
+
+        return {
+            "property_id": property_id,
+            "account_number": account_number,
+            "vendor_name": vendor_name,
+            "vendor_id": vendor_id,
+            "charge_code": charge_code,
+            "utility_name": utility_name,
+            "gl_account_number": gl_account_number,
+            "gl_account_name": gl_account_name,
+            "period": period,
+            "source": source,
+            "calculated_amount": accrual["calculated_amount"],
+            "historical_months": accrual["historical_months"],
+            "avg_amount": accrual["avg_amount"],
+            "inflation_amount": accrual["inflation_amount"],
+            "monthly_amounts": accrual["monthly_amounts"]
+        }
+
+    except Exception as e:
+        print(f"[ACCRUAL CALC] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/accrual/create")
+async def api_accrual_create(request: Request, user: str = Depends(require_user)):
+    """Create a manual/accrual/true-up entry in DynamoDB."""
+    try:
+        payload = await request.json()
+
+        entry_type = str(payload.get("entry_type", "")).strip().upper()
+        if entry_type not in ("ACCRUAL", "MANUAL", "TRUE-UP"):
+            return JSONResponse({"error": "entry_type must be ACCRUAL, MANUAL, or TRUE-UP"}, status_code=400)
+
+        property_id = str(payload.get("property_id", "")).strip()
+        account_number = str(payload.get("account_number", "")).strip()
+        period = str(payload.get("period", "")).strip()
+        amount = payload.get("amount")
+
+        if not property_id or not account_number or not period:
+            return JSONResponse({"error": "property_id, account_number, and period required"}, status_code=400)
+        if amount is None:
+            return JSONResponse({"error": "amount required"}, status_code=400)
+
+        import uuid
+        entry_id = str(uuid.uuid4())
+
+        item = {
+            "entry_id": {"S": entry_id},
+            "property_id": {"S": property_id},
+            "property_name": {"S": str(payload.get("property_name", "")).strip()},
+            "account_number": {"S": account_number},
+            "vendor_name": {"S": str(payload.get("vendor_name", "")).strip()},
+            "vendor_id": {"S": str(payload.get("vendor_id", "")).strip()},
+            "charge_code": {"S": str(payload.get("charge_code", "")).strip()},
+            "utility_name": {"S": str(payload.get("utility_name", "")).strip()},
+            "gl_account_number": {"S": str(payload.get("gl_account_number", "")).strip()},
+            "gl_account_name": {"S": str(payload.get("gl_account_name", "")).strip()},
+            "amount": {"N": str(float(amount))},
+            "entry_type": {"S": entry_type},
+            "reason_code": {"S": str(payload.get("reason_code", "")).strip()},
+            "note": {"S": str(payload.get("note", "")).strip()},
+            "period": {"S": period},
+            "historical_months": {"N": str(int(payload.get("historical_months", 0)))},
+            "historical_avg": {"N": str(float(payload.get("historical_avg", 0)))},
+            "created_by": {"S": user},
+            "created_utc": {"S": datetime.utcnow().isoformat()}
+        }
+
+        ddb.put_item(TableName=MANUAL_ENTRIES_TABLE, Item=item)
+
+        print(f"[ACCRUAL CREATE] Created {entry_type} entry {entry_id} for {property_id}/{account_number} period {period} amount={amount}")
+
+        return {"ok": True, "entry_id": entry_id}
+
+    except Exception as e:
+        print(f"[ACCRUAL CREATE] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/accrual/entries")
+def api_accrual_entries(period: str = "", user: str = Depends(require_user)):
+    """List manual/accrual entries for a period (or all if no period specified)."""
+    try:
+        items = []
+        if period:
+            response = ddb.query(
+                TableName=MANUAL_ENTRIES_TABLE,
+                IndexName="period-index",
+                KeyConditionExpression="period = :p",
+                ExpressionAttributeValues={":p": {"S": period}}
+            )
+            items = response.get("Items", [])
+            while response.get("LastEvaluatedKey"):
+                response = ddb.query(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    IndexName="period-index",
+                    KeyConditionExpression="period = :p",
+                    ExpressionAttributeValues={":p": {"S": period}},
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                items.extend(response.get("Items", []))
+        else:
+            response = ddb.scan(TableName=MANUAL_ENTRIES_TABLE)
+            items = response.get("Items", [])
+            while response.get("LastEvaluatedKey"):
+                response = ddb.scan(
+                    TableName=MANUAL_ENTRIES_TABLE,
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                items.extend(response.get("Items", []))
+
+        # Convert DynamoDB items to plain dicts
+        results = []
+        for item in items:
+            results.append({
+                "entry_id": item.get("entry_id", {}).get("S", ""),
+                "property_id": item.get("property_id", {}).get("S", ""),
+                "property_name": item.get("property_name", {}).get("S", ""),
+                "account_number": item.get("account_number", {}).get("S", ""),
+                "vendor_name": item.get("vendor_name", {}).get("S", ""),
+                "vendor_id": item.get("vendor_id", {}).get("S", ""),
+                "charge_code": item.get("charge_code", {}).get("S", ""),
+                "utility_name": item.get("utility_name", {}).get("S", ""),
+                "gl_account_number": item.get("gl_account_number", {}).get("S", ""),
+                "gl_account_name": item.get("gl_account_name", {}).get("S", ""),
+                "amount": float(item.get("amount", {}).get("N", "0")),
+                "entry_type": item.get("entry_type", {}).get("S", ""),
+                "reason_code": item.get("reason_code", {}).get("S", ""),
+                "note": item.get("note", {}).get("S", ""),
+                "period": item.get("period", {}).get("S", ""),
+                "historical_months": int(item.get("historical_months", {}).get("N", "0")),
+                "historical_avg": float(item.get("historical_avg", {}).get("N", "0")),
+                "created_by": item.get("created_by", {}).get("S", ""),
+                "created_utc": item.get("created_utc", {}).get("S", "")
+            })
+
+        return {"items": results, "count": len(results)}
+
+    except Exception as e:
+        print(f"[ACCRUAL ENTRIES] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/accrual/entry")
+def api_accrual_delete(entry_id: str = "", user: str = Depends(require_user)):
+    """Delete a manual/accrual entry by entry_id."""
+    try:
+        if not entry_id:
+            return JSONResponse({"error": "entry_id required"}, status_code=400)
+
+        ddb.delete_item(
+            TableName=MANUAL_ENTRIES_TABLE,
+            Key={"entry_id": {"S": entry_id}}
+        )
+
+        print(f"[ACCRUAL DELETE] Deleted entry {entry_id} by {user}")
+        return {"ok": True}
+
+    except Exception as e:
+        print(f"[ACCRUAL DELETE] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # -------- UBI Batches --------
