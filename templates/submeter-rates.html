@@ -167,23 +167,61 @@ function setStatus(msg, loading) {
 }
 function clearStatus() { document.getElementById("status-msg").textContent = ""; }
 
-/* ---- Generate ---- */
-async function generateReport() {
+let pollTimer = null;
+
+/* ---- Generate (async: kick off then poll) ---- */
+async function generateReport(bustCache) {
   const period = document.getElementById("period-select").value;
-  setStatus("Scanning Stage 8...", true);
+  setStatus("Starting scan...", true);
   try {
-    const resp = await fetch(`/api/submeter-rates/generate?ubi_period=${encodeURIComponent(period)}`);
+    const qs = `ubi_period=${encodeURIComponent(period)}${bustCache ? "&bust_cache=1" : ""}`;
+    const resp = await fetch(`/api/submeter-rates/generate?${qs}`, {method: "POST"});
     const data = await resp.json();
-    if (!resp.ok || data.error) {
-      setStatus("Error: " + (data.error || resp.statusText), false);
+    if (data.rows) {
+      // Came back from cache — already done
+      allRows = data.rows;
+      setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
+      renderSummary();
+      renderTable();
       return;
     }
-    allRows = data.rows || [];
-    setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
-    renderSummary();
-    renderTable();
+    // Scan kicked off — start polling
+    startPolling();
   } catch (e) {
     setStatus("Error: " + e.message, false);
+  }
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollStatus, 1500);
+}
+
+async function pollStatus() {
+  try {
+    const resp = await fetch("/api/submeter-rates/status");
+    const data = await resp.json();
+    if (data.rows) {
+      // Scan complete — result returned
+      clearInterval(pollTimer);
+      pollTimer = null;
+      allRows = data.rows;
+      setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
+      renderSummary();
+      renderTable();
+      return;
+    }
+    if (data.error) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      setStatus("Error: " + data.error, false);
+      return;
+    }
+    // Still running — show progress
+    const pct = data.files_total > 0 ? Math.round(data.files_done / data.files_total * 100) : 0;
+    setStatus(`${data.progress} (${pct}% — ${data.files_done}/${data.files_total} files)`, true);
+  } catch (e) {
+    // Network blip — keep polling
   }
 }
 
@@ -206,32 +244,12 @@ async function saveConfig() {
     const data = await resp.json();
     if (data.ok) {
       setStatus("Config saved. Regenerating with new UOM settings...", true);
-      // Bust the server cache so the override is applied on next generate
-      await regenerateAfterOverrideChange();
+      generateReport(true);
     } else {
       setStatus("Save failed: " + (data.error || "unknown"), false);
     }
   } catch (e) {
     setStatus("Save error: " + e.message, false);
-  }
-}
-
-/* Regenerate with cache-bust so saved UOM overrides take effect */
-async function regenerateAfterOverrideChange() {
-  const period = document.getElementById("period-select").value;
-  try {
-    const resp = await fetch(`/api/submeter-rates/generate?ubi_period=${encodeURIComponent(period)}&bust_cache=1`);
-    const data = await resp.json();
-    if (!resp.ok || data.error) {
-      setStatus("Regenerate error: " + (data.error || resp.statusText), false);
-      return;
-    }
-    allRows = data.rows || [];
-    setStatus(`Config saved. ${data.records_matched} records recalculated.`, false);
-    renderSummary();
-    renderTable();
-  } catch (e) {
-    setStatus("Regenerate error: " + e.message, false);
   }
 }
 

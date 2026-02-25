@@ -30741,200 +30741,272 @@ def submeter_rates_view(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse("submeter-rates.html", {"request": request, "user": user})
 
 
-@app.get("/api/submeter-rates/generate")
+# ---- Async scan state ----
+_SUBMETER_RATES_STATUS: dict = {
+    "running": False,
+    "ubi_period": None,
+    "progress": "",       # human-readable progress string
+    "files_total": 0,
+    "files_done": 0,
+    "result": None,       # final result dict once done
+    "error": None,
+}
+_SUBMETER_RATES_LOCK = threading.Lock()
+
+
+def _submeter_rates_scan(ubi_period: str):
+    """Background worker: scan Stage 8 and compute submeter rates."""
+    st = _SUBMETER_RATES_STATUS
+    try:
+        st["progress"] = "Listing Stage 8 files..."
+        print(f"[SUBMETER RATES] Generating for period {ubi_period} ...")
+
+        # ---- Scan Stage 8 ----
+        prefixes_to_scan = []
+        today = datetime.now()
+        for i in range(365):
+            d = today - timedelta(days=i)
+            prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+            prefixes_to_scan.append(prefix)
+
+        all_keys: list[str] = []
+        for prefix in prefixes_to_scan:
+            try:
+                paginator = s3.get_paginator("list_objects_v2")
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith(".jsonl"):
+                            all_keys.append(key)
+            except Exception:
+                pass
+
+        st["files_total"] = len(all_keys)
+        st["progress"] = f"Reading {len(all_keys)} files..."
+        print(f"[SUBMETER RATES] Found {len(all_keys)} Stage 8 files")
+
+        # ---- Read files concurrently ----
+        matched_items: list[dict] = []
+        files_done_counter = [0]
+
+        def _process_file(key: str) -> list[dict]:
+            try:
+                body = _read_s3_text(BUCKET, key)
+                items = []
+                for line in body.splitlines():
+                    line = (line or "").strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    # Only Water / Sewer
+                    util = (rec.get("Utility Type") or rec.get("Mapped Utility Name") or rec.get("Utility Name") or rec.get("utility_name") or "").strip()
+                    if util.lower() not in ("water", "sewer"):
+                        continue
+                    # Check if this record has the requested period
+                    ubi_assignments = rec.get("ubi_assignments", [])
+                    if not ubi_assignments:
+                        lp = rec.get("ubi_period", "")
+                        if lp == ubi_period:
+                            items.append(rec)
+                    else:
+                        for asn in ubi_assignments:
+                            if asn.get("period") == ubi_period:
+                                items.append(rec)
+                                break
+                return items
+            except Exception as e:
+                print(f"[SUBMETER RATES] Error reading {key}: {e}")
+                return []
+            finally:
+                files_done_counter[0] += 1
+                st["files_done"] = files_done_counter[0]
+
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = {executor.submit(_process_file, key): key for key in all_keys}
+            for future in as_completed(futures):
+                matched_items.extend(future.result())
+
+        st["progress"] = f"Aggregating {len(matched_items)} records..."
+        print(f"[SUBMETER RATES] {len(matched_items)} records match period {ubi_period}")
+
+        # ---- Load config for calculation_desc + uom_override ----
+        cfg_items = _ddb_get_config("submeter-rate-config") or []
+        cfg_calc_map: dict[str, str] = {}
+        cfg_uom_map: dict[str, str] = {}
+        for c in cfg_items:
+            k = f"{c.get('property_name')}|{c.get('utility_name')}"
+            cfg_calc_map[k] = c.get("calculation_desc", "From Invoice & Volume")
+            cfg_uom_map[k] = c.get("uom_override", "Auto")
+
+        # ---- Aggregate by (property_name, utility_type) ----
+        agg: dict[str, dict] = {}
+
+        for rec in matched_items:
+            property_name = rec.get("EnrichedPropertyName") or rec.get("Property Name") or ""
+            property_id = rec.get("EnrichedPropertyID") or rec.get("Property ID") or ""
+            utility_name = (rec.get("Utility Type") or rec.get("Mapped Utility Name") or rec.get("Utility Name") or rec.get("utility_name") or "").strip()
+            ar_code = rec.get("Charge Code") or ""
+
+            ubi_assignments = rec.get("ubi_assignments", [])
+            amount_overridden = rec.get("Amount Overridden") or rec.get("amount_overridden")
+
+            if not ubi_assignments:
+                if amount_overridden:
+                    ubi_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
+                else:
+                    ubi_amount = float(rec.get("ubi_amount", 0))
+                    if ubi_amount == 0:
+                        charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+                        ubi_amount = float(charge_str) if charge_str else 0.0
+                total_bill_amount = ubi_amount
+                period_amount = ubi_amount
+            else:
+                period_amount = 0.0
+                total_bill_amount = 0.0
+                for asn in ubi_assignments:
+                    total_bill_amount += float(asn.get("amount", 0))
+                    if asn.get("period") == ubi_period:
+                        if amount_overridden:
+                            period_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
+                            orig_total = sum(float(a.get("amount", 0)) for a in ubi_assignments)
+                            orig_this = float(asn.get("amount", 0))
+                            if orig_total > 0:
+                                period_amount = period_amount * (orig_this / orig_total)
+                        else:
+                            period_amount = float(asn.get("amount", 0))
+
+            raw_consumption = rec.get("ENRICHED CONSUMPTION") or rec.get("Consumption Amount") or rec.get("Consumption") or rec.get("consumption") or rec.get("Line Item Consumption")
+            raw_uom = rec.get("ENRICHED UOM") or rec.get("Unit of Measure") or rec.get("UOM") or rec.get("uom") or ""
+            agg_key = f"{property_name}|{utility_name}"
+            uom_override = cfg_uom_map.get(agg_key, "Auto")
+            gallons = _consumption_to_gallons(raw_consumption, raw_uom, utility_name,
+                                              uom_override=uom_override)
+
+            if ubi_assignments and len(ubi_assignments) > 1 and total_bill_amount > 0 and gallons > 0:
+                gallons = gallons * (period_amount / total_bill_amount) if total_bill_amount else 0.0
+
+            if agg_key not in agg:
+                agg[agg_key] = {
+                    "property_name": property_name,
+                    "property_id": property_id,
+                    "ar_code": ar_code,
+                    "invoice_total": 0.0,
+                    "volume_total_gals": 0.0,
+                    "utility_name": utility_name,
+                    "line_count": 0,
+                    "raw_uoms": set(),
+                }
+            agg[agg_key]["invoice_total"] += period_amount
+            agg[agg_key]["volume_total_gals"] += gallons
+            agg[agg_key]["line_count"] += 1
+            if raw_uom:
+                agg[agg_key]["raw_uoms"].add(raw_uom.strip())
+            if ar_code and not agg[agg_key]["ar_code"]:
+                agg[agg_key]["ar_code"] = ar_code
+
+        # ---- Build rows ----
+        run_dt = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = []
+        for entry in agg.values():
+            vol = entry["volume_total_gals"]
+            total = entry["invoice_total"]
+            rate = (total / vol) if vol and vol > 0 else None
+            cfg_key = f"{entry['property_name']}|{entry['utility_name']}"
+            raw_uoms_sorted = sorted(entry.get("raw_uoms", set()))
+            rows.append({
+                "property_name": entry["property_name"],
+                "property_id": entry["property_id"],
+                "ar_code": entry["ar_code"],
+                "invoice_total": round(total, 2),
+                "volume_total_gals": round(vol, 2),
+                "utility_name": entry["utility_name"],
+                "rate": round(rate, 6) if rate is not None else None,
+                "calculation_desc": cfg_calc_map.get(cfg_key, "From Invoice & Volume"),
+                "raw_uom": ", ".join(raw_uoms_sorted) if raw_uoms_sorted else "",
+                "uom_override": cfg_uom_map.get(cfg_key, "Auto"),
+                "run_datetime": run_dt,
+                "line_count": entry["line_count"],
+            })
+
+        rows.sort(key=lambda r: (r["property_name"].lower(), r["utility_name"]))
+
+        result = {
+            "ok": True,
+            "ubi_period": ubi_period,
+            "rows": rows,
+            "run_datetime": run_dt,
+            "files_scanned": len(all_keys),
+            "records_matched": len(matched_items),
+        }
+        # Cache result
+        cache_key = ("submeter-rates-generate", ubi_period)
+        _CACHE[cache_key] = {"ts": time.time(), "data": result}
+
+        with _SUBMETER_RATES_LOCK:
+            st["result"] = result
+            st["running"] = False
+            st["progress"] = "Done"
+        print(f"[SUBMETER RATES] Done — {len(rows)} rows, {len(matched_items)} records")
+
+    except Exception as e:
+        print(f"[SUBMETER RATES] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        with _SUBMETER_RATES_LOCK:
+            st["running"] = False
+            st["error"] = str(e)
+            st["progress"] = f"Error: {e}"
+
+
+@app.post("/api/submeter-rates/generate")
 def api_submeter_rates_generate(ubi_period: str = "03/2026", bust_cache: str = "",
                                 user: str = Depends(require_user)):
-    """Scan Stage 8 and compute per-gallon water/sewer rates by property."""
-    cache_key = ("submeter-rates-generate", ubi_period)
+    """Kick off async Stage 8 scan. Returns immediately; poll /status for progress."""
+    st = _SUBMETER_RATES_STATUS
+
+    # If not busting cache, check for a recent cached result
     if not bust_cache:
+        cache_key = ("submeter-rates-generate", ubi_period)
         cached = _CACHE.get(cache_key)
         if cached and (time.time() - cached.get("ts", 0) < 120):
             return cached.get("data")
 
-    print(f"[SUBMETER RATES] Generating for period {ubi_period} ...")
+    # If already running for same period, just acknowledge
+    if st["running"] and st["ubi_period"] == ubi_period:
+        return {"ok": True, "status": "running", "progress": st["progress"],
+                "files_total": st["files_total"], "files_done": st["files_done"]}
 
-    # ---- Scan Stage 8 ----
-    prefixes_to_scan = []
-    today = datetime.now()
-    for i in range(365):
-        d = today - timedelta(days=i)
-        prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-        prefixes_to_scan.append(prefix)
+    # Reset state and kick off background thread
+    with _SUBMETER_RATES_LOCK:
+        st["running"] = True
+        st["ubi_period"] = ubi_period
+        st["progress"] = "Starting..."
+        st["files_total"] = 0
+        st["files_done"] = 0
+        st["result"] = None
+        st["error"] = None
 
-    all_keys: list[str] = []
-    for prefix in prefixes_to_scan:
-        try:
-            paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.endswith(".jsonl"):
-                        all_keys.append(key)
-        except Exception:
-            pass
+    threading.Thread(target=_submeter_rates_scan, args=(ubi_period,), daemon=True).start()
+    return {"ok": True, "status": "started", "progress": "Starting..."}
 
-    print(f"[SUBMETER RATES] Found {len(all_keys)} Stage 8 files")
 
-    # ---- Read files concurrently ----
-    matched_items: list[dict] = []
-
-    def _process_file(key: str) -> list[dict]:
-        try:
-            body = _read_s3_text(BUCKET, key)
-            items = []
-            for line in body.splitlines():
-                line = (line or "").strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                # Only Water / Sewer
-                util = (rec.get("Utility Name") or rec.get("utility_name") or "").strip()
-                if util.lower() not in ("water", "sewer"):
-                    continue
-                # Check if this record has the requested period
-                ubi_assignments = rec.get("ubi_assignments", [])
-                if not ubi_assignments:
-                    lp = rec.get("ubi_period", "")
-                    if lp == ubi_period:
-                        items.append(rec)
-                else:
-                    for asn in ubi_assignments:
-                        if asn.get("period") == ubi_period:
-                            items.append(rec)
-                            break
-            return items
-        except Exception as e:
-            print(f"[SUBMETER RATES] Error reading {key}: {e}")
-            return []
-
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(_process_file, key): key for key in all_keys}
-        for future in as_completed(futures):
-            matched_items.extend(future.result())
-
-    print(f"[SUBMETER RATES] {len(matched_items)} records match period {ubi_period}")
-
-    # ---- Load config for calculation_desc + uom_override ----
-    cfg_items = _ddb_get_config("submeter-rate-config") or []
-    cfg_calc_map: dict[str, str] = {}
-    cfg_uom_map: dict[str, str] = {}
-    for c in cfg_items:
-        k = f"{c.get('property_name')}|{c.get('utility_name')}"
-        cfg_calc_map[k] = c.get("calculation_desc", "From Invoice & Volume")
-        cfg_uom_map[k] = c.get("uom_override", "Auto")
-
-    # ---- Aggregate by (property_name, utility_type) ----
-    agg: dict[str, dict] = {}  # key = "prop|utility"
-
-    for rec in matched_items:
-        property_name = rec.get("EnrichedPropertyName") or rec.get("Property Name") or ""
-        property_id = rec.get("EnrichedPropertyID") or rec.get("Property ID") or ""
-        utility_name = (rec.get("Utility Name") or rec.get("utility_name") or "").strip()
-        ar_code = rec.get("Charge Code") or ""
-
-        # Determine amount following the master-bills override logic
-        ubi_assignments = rec.get("ubi_assignments", [])
-        amount_overridden = rec.get("Amount Overridden") or rec.get("amount_overridden")
-
-        if not ubi_assignments:
-            # Legacy single-period
-            if amount_overridden:
-                ubi_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
-            else:
-                ubi_amount = float(rec.get("ubi_amount", 0))
-                if ubi_amount == 0:
-                    charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
-                    ubi_amount = float(charge_str) if charge_str else 0.0
-            total_bill_amount = ubi_amount
-            period_amount = ubi_amount
-        else:
-            # Multi-period: find the assignment for the requested period
-            period_amount = 0.0
-            total_bill_amount = 0.0
-            for asn in ubi_assignments:
-                total_bill_amount += float(asn.get("amount", 0))
-                if asn.get("period") == ubi_period:
-                    if amount_overridden:
-                        period_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
-                        # For multi-period with override, prorate by original ratio
-                        orig_total = sum(float(a.get("amount", 0)) for a in ubi_assignments)
-                        orig_this = float(asn.get("amount", 0))
-                        if orig_total > 0:
-                            period_amount = period_amount * (orig_this / orig_total)
-                    else:
-                        period_amount = float(asn.get("amount", 0))
-
-        # Consumption → gallons (apply UOM override from config if set)
-        raw_consumption = rec.get("Consumption") or rec.get("consumption") or rec.get("Line Item Consumption")
-        raw_uom = rec.get("UOM") or rec.get("uom") or rec.get("Unit of Measure") or ""
-        agg_key = f"{property_name}|{utility_name}"
-        uom_override = cfg_uom_map.get(agg_key, "Auto")
-        gallons = _consumption_to_gallons(raw_consumption, raw_uom, utility_name,
-                                          uom_override=uom_override)
-
-        # Prorate consumption for multi-period splits
-        if ubi_assignments and len(ubi_assignments) > 1 and total_bill_amount > 0 and gallons > 0:
-            gallons = gallons * (period_amount / total_bill_amount) if total_bill_amount else 0.0
-
-        if agg_key not in agg:
-            agg[agg_key] = {
-                "property_name": property_name,
-                "property_id": property_id,
-                "ar_code": ar_code,
-                "invoice_total": 0.0,
-                "volume_total_gals": 0.0,
-                "utility_name": utility_name,
-                "line_count": 0,
-                "raw_uoms": set(),
-            }
-        agg[agg_key]["invoice_total"] += period_amount
-        agg[agg_key]["volume_total_gals"] += gallons
-        agg[agg_key]["line_count"] += 1
-        if raw_uom:
-            agg[agg_key]["raw_uoms"].add(raw_uom.strip())
-        # Keep the first non-empty ar_code
-        if ar_code and not agg[agg_key]["ar_code"]:
-            agg[agg_key]["ar_code"] = ar_code
-
-    # ---- Build rows ----
-    run_dt = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = []
-    for entry in agg.values():
-        vol = entry["volume_total_gals"]
-        total = entry["invoice_total"]
-        rate = (total / vol) if vol and vol > 0 else None
-        cfg_key = f"{entry['property_name']}|{entry['utility_name']}"
-        raw_uoms_sorted = sorted(entry.get("raw_uoms", set()))
-        rows.append({
-            "property_name": entry["property_name"],
-            "property_id": entry["property_id"],
-            "ar_code": entry["ar_code"],
-            "invoice_total": round(total, 2),
-            "volume_total_gals": round(vol, 2),
-            "utility_name": entry["utility_name"],
-            "rate": round(rate, 6) if rate is not None else None,
-            "calculation_desc": cfg_calc_map.get(cfg_key, "From Invoice & Volume"),
-            "raw_uom": ", ".join(raw_uoms_sorted) if raw_uoms_sorted else "",
-            "uom_override": cfg_uom_map.get(cfg_key, "Auto"),
-            "run_datetime": run_dt,
-            "line_count": entry["line_count"],
-        })
-
-    rows.sort(key=lambda r: (r["property_name"].lower(), r["utility_name"]))
-
-    result = {
+@app.get("/api/submeter-rates/status")
+def api_submeter_rates_status(user: str = Depends(require_user)):
+    """Poll for async scan progress. Returns result when done."""
+    st = _SUBMETER_RATES_STATUS
+    if st["result"] and not st["running"]:
+        return st["result"]
+    return {
         "ok": True,
-        "ubi_period": ubi_period,
-        "rows": rows,
-        "run_datetime": run_dt,
-        "files_scanned": len(all_keys),
-        "records_matched": len(matched_items),
+        "status": "running" if st["running"] else "idle",
+        "progress": st["progress"],
+        "files_total": st["files_total"],
+        "files_done": st["files_done"],
+        "error": st["error"],
     }
-    _CACHE[cache_key] = {"ts": time.time(), "data": result}
-    return result
 
 
 @app.get("/api/submeter-rates/config")
@@ -30960,8 +31032,10 @@ def api_submeter_rates_config_save(request: Request, body: dict = Body(...), use
 @app.get("/api/submeter-rates/export-csv")
 def api_submeter_rates_export_csv(ubi_period: str = "03/2026", user: str = Depends(require_user)):
     """Export submeter rates as CSV download."""
-    # Re-use generate (will hit cache if recently generated)
-    data = api_submeter_rates_generate(ubi_period=ubi_period, user=user)
+    # Pull from cache or the last completed scan result
+    cache_key = ("submeter-rates-generate", ubi_period)
+    cached = _CACHE.get(cache_key)
+    data = cached.get("data") if cached else (_SUBMETER_RATES_STATUS.get("result") or {})
     rows = data.get("rows", []) if isinstance(data, dict) else []
 
     from io import StringIO
