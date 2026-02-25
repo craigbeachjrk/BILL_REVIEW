@@ -217,9 +217,11 @@ async function pollStatus() {
       setStatus("Error: " + data.error, false);
       return;
     }
-    // Still running — show progress
-    const pct = data.files_total > 0 ? Math.round(data.files_done / data.files_total * 100) : 0;
-    setStatus(`${data.progress} (${pct}% — ${data.files_done}/${data.files_total} files)`, true);
+    // Still running — show progress (keep "Starting scan..." until files_total is known)
+    if (data.files_total > 0) {
+      const pct = Math.round(data.files_done / data.files_total * 100);
+      setStatus(`${data.progress} (${pct}% — ${data.files_done}/${data.files_total} files)`, true);
+    }
   } catch (e) {
     // Network blip — keep polling
   }
