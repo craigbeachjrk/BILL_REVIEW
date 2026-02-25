@@ -123,10 +123,8 @@
       <span id="status-msg" class="status-msg"></span>
     </div>
     <div class="hint">
-      <b>Invoice UOM</b> = what the parser found on the bill.
-      <b>Raw Consumption</b> = original value from invoice.
-      <b>Volume (Gal)</b> = raw &times; conversion factor.
-      If Volume is wrong, set <b>UOM Override</b>, <b>Save Config</b>, then <b>Generate Report</b>.
+      <b>Raw Consumption</b> = value from invoice. <b>Conversion</b> = factor applied. <b>Volume</b> = raw &times; factor.
+      Change <b>UOM Override</b> and volume/rate update instantly. Settings auto-save.
     </div>
 
     <div id="summary-bar" class="summary-bar" style="display:none;">
@@ -146,16 +144,17 @@
 
 <script>
 const CALC_OPTIONS = ["From Invoice & Volume", "Set by NCUC", "Sewer is RUBS"];
-// value : display label  (label shows gallon equivalent so user knows what they're picking)
 const UOM_OPTIONS = [
-  {val: "Auto",        label: "Auto (detect from invoice)"},
-  {val: "Gallons",     label: "Gallons (1 gal)"},
-  {val: "kGal",        label: "kGal (1,000 gal)"},
-  {val: "HCF",         label: "HCF / 100 cu ft (748 gal)"},
-  {val: "CCF",         label: "CCF / 100 cu ft (748 gal)"},
-  {val: "100 Gallons",label: "100 Gallons"},
-  {val: "Acre-Feet",   label: "Acre-Feet (325,851 gal)"},
+  {val: "Auto",        label: "Auto (detect from invoice)", factor: null},
+  {val: "Gallons",     label: "Gallons (1 gal)",            factor: 1},
+  {val: "kGal",        label: "kGal (1,000 gal)",           factor: 1000},
+  {val: "HCF",         label: "HCF / 100 cu ft (748 gal)",  factor: 748.05},
+  {val: "CCF",         label: "CCF / 100 cu ft (748 gal)",  factor: 748.05},
+  {val: "100 Gallons", label: "100 Gallons",                 factor: 100},
+  {val: "Acre-Feet",   label: "Acre-Feet (325,851 gal)",    factor: 325851},
 ];
+const UOM_FACTOR_MAP = {};
+UOM_OPTIONS.forEach(o => { UOM_FACTOR_MAP[o.val] = o.factor; });
 
 let allRows = [];
 let sortCol = "property_name";
@@ -235,6 +234,43 @@ function setStatus(msg, loading) {
 function clearStatus() { document.getElementById("status-msg").textContent = ""; }
 
 let pollTimer = null;
+let saveTimer = null;
+
+/* Snapshot original server-computed values so "Auto" can revert */
+function snapshotOriginals(rows) {
+  rows.forEach(r => {
+    r._orig_volume = r.volume_total_gals;
+    r._orig_conversion = r.conversion;
+    r._orig_factor = r.factor_used;
+  });
+}
+
+/* Debounced auto-save: fires 1.5s after the last override change */
+function debouncedSaveConfig() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(autoSaveConfig, 1500);
+}
+
+async function autoSaveConfig() {
+  const items = allRows.map(row => ({
+    property_name: row.property_name,
+    property_id: row.property_id || "",
+    utility_name: row.utility_name,
+    calculation_desc: row.calculation_desc || "From Invoice & Volume",
+    uom_override: row.uom_override || "Auto"
+  }));
+  try {
+    const resp = await fetch("/api/submeter-rates/config", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({items})
+    });
+    const data = await resp.json();
+    if (data.ok) setStatus("Config auto-saved.", false);
+  } catch (e) {
+    console.warn("Auto-save failed:", e);
+  }
+}
 
 /* ---- Generate (async: kick off then poll) ---- */
 async function generateReport(bustCache) {
@@ -246,6 +282,7 @@ async function generateReport(bustCache) {
     const data = await resp.json();
     if (data.rows) {
       allRows = data.rows;
+      snapshotOriginals(allRows);
       setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
       renderSummary();
       renderTable();
@@ -269,6 +306,7 @@ async function pollStatus() {
     if (data.rows) {
       clearInterval(pollTimer); pollTimer = null;
       allRows = data.rows;
+      snapshotOriginals(allRows);
       setStatus(`${data.records_matched} records from ${data.files_scanned} files`, false);
       renderSummary();
       renderTable();
@@ -429,7 +467,35 @@ function doSort(col) {
 }
 
 function setCalcDesc(rowIdx, val) { allRows[rowIdx].calculation_desc = val; }
-function setUomOverride(rowIdx, val) { allRows[rowIdx].uom_override = val; }
+
+function setUomOverride(rowIdx, val) {
+  const row = allRows[rowIdx];
+  row.uom_override = val;
+  // Recalculate volume and rate instantly in the UI
+  const factor = UOM_FACTOR_MAP[val];
+  if (factor !== null && factor !== undefined && row.raw_consumption) {
+    // Override: raw_consumption × override factor
+    row.volume_total_gals = Math.round(row.raw_consumption * factor * 100) / 100;
+    row.conversion = `×${factor} (${val}→Gal)`;
+    row.factor_used = factor;
+  } else if (val === "Auto") {
+    // Revert to the server-calculated values — need to regenerate for true Auto,
+    // but use the original factor if we have it stored
+    if (row._orig_volume != null) {
+      row.volume_total_gals = row._orig_volume;
+      row.conversion = row._orig_conversion;
+      row.factor_used = row._orig_factor;
+    }
+  }
+  // Recalculate rate
+  row.rate = (row.volume_total_gals && row.volume_total_gals > 0)
+    ? Math.round((row.invoice_total / row.volume_total_gals) * 1e6) / 1e6
+    : null;
+  renderSummary();
+  renderTable();
+  // Auto-save config in background
+  debouncedSaveConfig();
+}
 
 /* ---- Helpers ---- */
 function fmtNum(n) { return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
