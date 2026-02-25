@@ -30866,10 +30866,20 @@ def _submeter_rates_scan(ubi_period: str):
                 total_bill_amount = ubi_amount
                 period_amount = ubi_amount
             else:
+                # Get the line-item charge as fallback when assignment amounts are 0
+                line_charge = 0.0
+                if rec.get("Current Amount") is not None:
+                    line_charge = float(rec.get("Current Amount") or 0)
+                else:
+                    charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+                    line_charge = float(charge_str) if charge_str else 0.0
+
                 period_amount = 0.0
                 total_bill_amount = 0.0
+                num_periods = len(ubi_assignments)
                 for asn in ubi_assignments:
-                    total_bill_amount += float(asn.get("amount", 0))
+                    asn_amt = float(asn.get("amount", 0))
+                    total_bill_amount += asn_amt
                     if asn.get("period") == ubi_period:
                         if amount_overridden:
                             period_amount = float(rec.get("Current Amount") or rec.get("current_amount") or 0)
@@ -30878,7 +30888,12 @@ def _submeter_rates_scan(ubi_period: str):
                             if orig_total > 0:
                                 period_amount = period_amount * (orig_this / orig_total)
                         else:
-                            period_amount = float(asn.get("amount", 0))
+                            period_amount = asn_amt
+                # If all assignment amounts are 0, fall back to line item charge
+                if total_bill_amount == 0 and line_charge > 0:
+                    total_bill_amount = line_charge
+                    # Split evenly across periods if multi, or full amount if single
+                    period_amount = line_charge / num_periods if num_periods > 1 else line_charge
 
             raw_consumption = rec.get("ENRICHED CONSUMPTION") or rec.get("Consumption Amount") or rec.get("Consumption") or rec.get("consumption") or rec.get("Line Item Consumption")
             raw_uom = rec.get("ENRICHED UOM") or rec.get("Unit of Measure") or rec.get("UOM") or rec.get("uom") or ""
