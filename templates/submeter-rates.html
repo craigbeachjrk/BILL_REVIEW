@@ -119,6 +119,7 @@
       <button class="secondary" onclick="exportCSV()">Export CSV</button>
       <button class="save-btn" onclick="saveConfig()">Save Config</button>
       <button class="warn-btn" id="issuesBtn" onclick="toggleIssuesFilter()">Show Issues</button>
+      <button class="secondary" id="submeteredBtn" onclick="toggleSubmetered()" style="background:#7c3aed">Submetered Only</button>
       <span id="status-msg" class="status-msg"></span>
     </div>
     <div class="hint">
@@ -160,6 +161,26 @@ let allRows = [];
 let sortCol = "property_name";
 let sortAsc = true;
 let showIssuesOnly = false;
+let showSubmeteredOnly = false;
+
+// Submetered properties — loaded from config, with these as defaults
+let SUBMETERED_PROPERTIES = new Set([
+  "Arwen Vista",
+  "Cadence at Crown",
+  "Charles At Bellingham",
+  "Citra Luxe",
+  "Concierge Rocky Hill",
+  "Duo Apartments",
+  "Enclave at Pamalee Square",
+  "Essex Apartment Homes",
+  "Halstead",
+  "Inigo's Crossing",
+  "Liberty Commons",
+  "One Webster",
+  "Residences at Tewksbury",
+  "Summerbrooke",
+  "Motion at Dadeland",
+]);
 
 /* ---- Period dropdown ---- */
 function populatePeriods() {
@@ -181,17 +202,29 @@ function populatePeriods() {
   });
 }
 
-/* ---- Issues filter toggle ---- */
+/* ---- Filter toggles ---- */
 function toggleIssuesFilter() {
   showIssuesOnly = !showIssuesOnly;
   const btn = document.getElementById("issuesBtn");
-  btn.textContent = showIssuesOnly ? "Show All" : "Show Issues";
+  btn.textContent = showIssuesOnly ? "All (Issues Off)" : "Show Issues";
   if (showIssuesOnly) btn.classList.add("active"); else btn.classList.remove("active");
+  renderTable();
+}
+
+function toggleSubmetered() {
+  showSubmeteredOnly = !showSubmeteredOnly;
+  const btn = document.getElementById("submeteredBtn");
+  btn.textContent = showSubmeteredOnly ? "All Properties" : "Submetered Only";
+  if (showSubmeteredOnly) { btn.style.background = "#ef4444"; } else { btn.style.background = "#7c3aed"; }
   renderTable();
 }
 
 function isIssueRow(row) {
   return row.rate == null || row.volume_total_gals === 0 || !row.raw_uom;
+}
+
+function isSubmetered(row) {
+  return SUBMETERED_PROPERTIES.has(row.property_name);
 }
 
 /* ---- Status helpers ---- */
@@ -292,9 +325,11 @@ function renderSummary() {
   const bar = document.getElementById("summary-bar");
   if (!allRows.length) { bar.style.display = "none"; return; }
   bar.style.display = "flex";
-  const props = new Set(allRows.map(r => r.property_name));
-  const waterRows = allRows.filter(r => r.utility_name === "Water");
-  const sewerRows = allRows.filter(r => r.utility_name === "Sewer");
+  let visibleRows = allRows;
+  if (showSubmeteredOnly) visibleRows = visibleRows.filter(isSubmetered);
+  const props = new Set(visibleRows.map(r => r.property_name));
+  const waterRows = visibleRows.filter(r => r.utility_name === "Water");
+  const sewerRows = visibleRows.filter(r => r.utility_name === "Sewer");
   const waterVol = waterRows.reduce((s, r) => s + (r.volume_total_gals || 0), 0);
   const sewerVol = sewerRows.reduce((s, r) => s + (r.volume_total_gals || 0), 0);
   const waterRates = waterRows.filter(r => r.rate != null).map(r => r.rate);
@@ -316,7 +351,9 @@ function renderTable() {
     return;
   }
 
-  let rows = showIssuesOnly ? allRows.filter(isIssueRow) : allRows;
+  let rows = allRows;
+  if (showSubmeteredOnly) rows = rows.filter(isSubmetered);
+  if (showIssuesOnly) rows = rows.filter(isIssueRow);
 
   const sorted = [...rows].sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
