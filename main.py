@@ -1081,9 +1081,28 @@ def invalidate_exclusion_cache():
     _EXCLUSION_HASH_CACHE["hashes"] = set()
     print("[UBI EXCLUSION CACHE] Cache invalidated")
 
+def _vendor_pair_refresh_loop():
+    """Background loop that keeps the vendor pair cache permanently warm.
+    Refreshes every 50 minutes so the 60-minute TTL never expires mid-request."""
+    _REFRESH_INTERVAL = 50 * 60  # 50 minutes (well before 60-min TTL)
+    # Initial load
+    try:
+        _get_cached_vendor_pairs()
+        print("[VENDOR PAIRS BG] Initial cache load complete")
+    except Exception as e:
+        print(f"[VENDOR PAIRS BG] Initial load error: {e}")
+    while True:
+        time.sleep(_REFRESH_INTERVAL)
+        try:
+            _get_cached_vendor_pairs(force_refresh=True)
+            print("[VENDOR PAIRS BG] Proactive refresh complete")
+        except Exception as e:
+            print(f"[VENDOR PAIRS BG] Refresh error (will retry next cycle): {e}")
+
+
 @app.on_event("startup")
 async def startup_prewarm_caches():
-    """Pre-warm the exclusion hash cache on startup so first request is fast."""
+    """Pre-warm caches on startup so first request is fast."""
     import threading
 
     def prewarm():
@@ -1093,12 +1112,6 @@ async def startup_prewarm_caches():
             print("[STARTUP] Exclusion hash cache pre-warmed successfully")
         except Exception as e:
             print(f"[STARTUP] Error pre-warming exclusion cache: {e}")
-        print("[STARTUP] Pre-warming vendor pair cache in background...")
-        try:
-            _get_cached_vendor_pairs()
-            print("[STARTUP] Vendor pair cache pre-warmed successfully")
-        except Exception as e:
-            print(f"[STARTUP] Error pre-warming vendor pair cache: {e}")
 
     def prewarm_invoice_cache():
         print("[STARTUP] Pre-warming invoice history cache...")
@@ -1108,9 +1121,37 @@ async def startup_prewarm_caches():
         except Exception as e:
             print(f"[STARTUP] Error loading invoice history: {e}")
 
-    # Run in separate background threads so they don't block each other
+    # Vendor pair cache runs in a permanent background thread that refreshes proactively
+    threading.Thread(target=_vendor_pair_refresh_loop, daemon=True, name="vendor-pair-refresh").start()
+    # Other caches pre-warm once on startup
     threading.Thread(target=prewarm, daemon=True).start()
     threading.Thread(target=prewarm_invoice_cache, daemon=True).start()
+
+    # Pre-warm POST helper caches (GL maps, vendor cache, accounts-to-track)
+    def prewarm_post_helpers():
+        print("[STARTUP] Pre-warming POST helper caches...")
+        try:
+            _POST_HELPER_CACHE["vendor_cache"] = {"ts": time.time(), "data": load_vendor_cache()}
+            print("[STARTUP] Vendor cache warmed")
+        except Exception as e:
+            print(f"[STARTUP] Vendor cache warm failed: {e}")
+        try:
+            _load_gl_number_to_id_map()
+            print("[STARTUP] GL number-to-id map warmed")
+        except Exception as e:
+            print(f"[STARTUP] GL number map warm failed: {e}")
+        try:
+            _load_gl_name_to_id_map()
+            print("[STARTUP] GL name-to-id map warmed")
+        except Exception as e:
+            print(f"[STARTUP] GL name map warm failed: {e}")
+        try:
+            _index_accounts_to_track_by_key()
+            print("[STARTUP] Accounts-to-track index warmed")
+        except Exception as e:
+            print(f"[STARTUP] Accounts-to-track warm failed: {e}")
+        print("[STARTUP] POST helper caches ready")
+    threading.Thread(target=prewarm_post_helpers, daemon=True, name="post-helper-prewarm").start()
 
     # Background refresh thread for invoice history cache (every 2 hours)
     def _invoice_history_refresh_loop():
@@ -2331,7 +2372,13 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
         if not sel:
             return JSONResponse({"error": "no_keys"}, status_code=400)
         print(f"[POST] user={user}, keys={len(sel)}, vendor_overrides={vendor_overrides!r}")
-        cache = load_vendor_cache()
+        # Use cached vendor data to avoid S3 read on every POST
+        _vc = _POST_HELPER_CACHE.get("vendor_cache")
+        if _vc and (time.time() - _vc["ts"] < _POST_HELPER_TTL):
+            cache = _vc["data"]
+        else:
+            cache = load_vendor_cache()
+            _POST_HELPER_CACHE["vendor_cache"] = {"ts": time.time(), "data": cache}
         # Parse optional vendor overrides { vendorId: locationId }
         overrides: dict[str, str] = {}
         try:
@@ -14381,9 +14428,16 @@ def _s3_put_json(bucket: str, key: str, data: Any) -> None:
     s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
 
 
-# -------- GL Override helpers --------
+# -------- GL Override helpers (cached to avoid repeated S3 reads per POST) --------
+_POST_HELPER_CACHE: dict[str, dict] = {}  # key -> {"ts": float, "data": ...}
+_POST_HELPER_TTL = 600  # 10 minutes
+
 def _load_gl_number_to_id_map() -> dict:
     """Build a map from GL account number (formatted or raw) to Entrata GL Account ID using DIM_GL."""
+    ck = "gl_num_to_id"
+    cached = _POST_HELPER_CACHE.get(ck)
+    if cached and (time.time() - cached["ts"] < _POST_HELPER_TTL):
+        return cached["data"]
     recs = _load_dim_records(DIM_GL_PREFIX)
     m: dict[str, str] = {}
     for r in recs:
@@ -14406,11 +14460,16 @@ def _load_gl_number_to_id_map() -> dict:
                 key = str(n).strip()
                 if key:
                     m[key] = gid
+    _POST_HELPER_CACHE[ck] = {"ts": time.time(), "data": m}
     return m
 
 
 def _load_gl_name_to_id_map() -> dict:
     """Build a map from GL account name to Entrata GL Account ID using DIM_GL."""
+    ck = "gl_name_to_id"
+    cached = _POST_HELPER_CACHE.get(ck)
+    if cached and (time.time() - cached["ts"] < _POST_HELPER_TTL):
+        return cached["data"]
     recs = _load_dim_records(DIM_GL_PREFIX)
     m: dict[str, str] = {}
     for r in recs:
@@ -14428,10 +14487,15 @@ def _load_gl_name_to_id_map() -> dict:
             key = raw.upper()
             if key:
                 m[key] = gid
+    _POST_HELPER_CACHE[ck] = {"ts": time.time(), "data": m}
     return m
 
 def _index_accounts_to_track_by_key() -> dict[tuple[str, str, str], dict]:
     """Return a dict keyed by (propertyId,vendorId,accountNumber) from Accounts-To-Track config rows."""
+    ck = "att_index"
+    cached = _POST_HELPER_CACHE.get(ck)
+    if cached and (time.time() - cached["ts"] < _POST_HELPER_TTL):
+        return cached["data"]
     base = _get_accounts_to_track()
     out: dict[tuple[str, str, str], dict] = {}
     if isinstance(base, list):
@@ -14443,6 +14507,7 @@ def _index_accounts_to_track_by_key() -> dict[tuple[str, str, str], dict]:
             acct = str(r.get("accountNumber") or "").strip()
             if pid or vid or acct:
                 out[(pid, vid, acct)] = r
+    _POST_HELPER_CACHE[ck] = {"ts": time.time(), "data": out}
     return out
 
 
@@ -23522,6 +23587,9 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
             "WATER": "57200000",
             "SEWER": "57210000",
         }
+        # Only these utility GL types can be swapped between House/Vacant.
+        # Everything else (Penalties, Late Fee, Taxes, etc.) is left alone.
+        _UTILITY_GL_KEYWORDS = {"ELECTRIC", "GAS", "WATER", "SEWER"}
         import re as _re
         # Match unit numbers: explicit keywords OR street suffix followed by unit number
         # NOTE: APARTMENT/SUITE must come before APT/AP/STE to avoid partial matches
@@ -23554,6 +23622,11 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
 
             # SKIP GL auto-modification if user explicitly edited GL fields
             if user_edited_gl:
+                return
+
+            # Only modify GL for utility types (Electric, Gas, Water, Sewer).
+            # Everything else (Penalties, Late Fee, Taxes, etc.) is never a House/Vacant GL.
+            if not any(kw in gln_upper for kw in _UTILITY_GL_KEYWORDS):
                 return
 
             # adjust GL Name if it conflicts with desired

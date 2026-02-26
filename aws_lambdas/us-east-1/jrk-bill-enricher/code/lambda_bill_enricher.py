@@ -830,8 +830,15 @@ def _enrich_lines(lines: list) -> list:
                         "line_desc": rec.get("Line Item Description"),
                     })
                     gbest = _resolve_best_from_model(gm, cands, target)
+                # Only utility GLs (electric, gas, water, sewer) can be swapped by
+                # House/Vacant or utility-affinity guards. Everything else is left alone.
+                _utility_gl_kw = {"electric", "gas", "water", "sewer"}
+                _gbest_nm = _norm_name(gbest.get("name", ""))
+                _is_non_utility_gl = not any(kw in _gbest_nm for kw in _utility_gl_kw)
+
                 # Final guard: never map to Vacant GL unless House Or Vacant == Vacant
-                if (rec.get("House Or Vacant") or "").strip().lower() != "vacant" and "vacant" in _norm_name(gbest.get("name", "")):
+                # BUT skip this guard if the GL is a non-utility type (e.g. Penalties)
+                if not _is_non_utility_gl and (rec.get("House Or Vacant") or "").strip().lower() != "vacant" and "vacant" in _gbest_nm:
                     util = (rec.get("Utility Type") or "").strip().lower()
                     if util == "stormwater":
                         util = "sewer"
@@ -848,15 +855,17 @@ def _enrich_lines(lines: list) -> list:
                     if replacement:
                         gbest = replacement
                 # Additional guard: if util=gas but chosen name looks electric, try gas replacement
-                try:
-                    util_now = (rec.get("Utility Type") or "").strip().lower()
-                    nm = _norm_name(gbest.get("name", ""))
-                    if util_now == "gas" and ("electric" in nm or "elec" in nm) and "gas" not in nm:
-                        repl = _choose_gl_deterministic({**rec, "House Or Vacant": (rec.get("House Or Vacant") or "House"), "Utility Type": "Gas"})
-                        if repl:
-                            gbest = repl
-                except Exception:
-                    pass
+                # Skip if GL is a non-utility type (e.g. Penalties)
+                if not _is_non_utility_gl:
+                    try:
+                        util_now = (rec.get("Utility Type") or "").strip().lower()
+                        nm = _norm_name(gbest.get("name", ""))
+                        if util_now == "gas" and ("electric" in nm or "elec" in nm) and "gas" not in nm:
+                            repl = _choose_gl_deterministic({**rec, "House Or Vacant": (rec.get("House Or Vacant") or "House"), "Utility Type": "Gas"})
+                            if repl:
+                                gbest = repl
+                    except Exception:
+                        pass
                 rec["EnrichedGLAccountID"] = gbest.get("id")
                 rec["EnrichedGLAccountName"] = gbest.get("name")
                 rec["EnrichedGLAccountNumber"] = gbest.get("number")
