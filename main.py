@@ -1200,6 +1200,9 @@ async def startup_prewarm_caches():
     threading.Thread(target=_search_index_backfill, daemon=True).start()
     threading.Thread(target=_search_index_refresh_loop, daemon=True).start()
 
+    # Workflow completion tracker — keep cache permanently warm
+    threading.Thread(target=_workflow_tracker_refresh_loop, daemon=True, name="workflow-tracker-refresh").start()
+
 # -------- VACANT GL DESC Helpers --------
 # GL codes that trigger the special VACANT description format
 VACANT_GL_CODES = {
@@ -2650,6 +2653,8 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
             _TRACK_CACHE.clear(); _TRACK_CACHE_TS.clear()
         except Exception:
             pass
+        # Invalidate workflow tracker cache so new bill shows immediately
+        _CACHE.pop(("workflow_tracker",), None)
         return {"ok": True, "updated": updated, "errors": errors, "unresolved": unresolved, "results": results}
     except Exception as e:
         # Safety net: release post lock if we crashed mid-post (e.g., AppRunner timeout)
@@ -9793,6 +9798,391 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
         "cacheStatus": "empty",
         "computedAt": None,
     }
+
+
+# -------- WORKFLOW COMPLETION TRACKER --------
+# In-memory cache for workflow completion tracker (same pattern as _VENDOR_PAIR_CACHE)
+_WORKFLOW_TRACKER_LOCK = threading.Lock()
+
+
+def _compute_workflow_tracker(months_back: int = 6) -> dict:
+    """Compute completion tracker data: for every tracked account × every month,
+    determine whether a bill exists in the pipeline (stages 4/6/7/archive).
+    Returns structured data for the completion tracker UI.
+    """
+    import calendar
+    start_time = time.time()
+    today = dt.date.today()
+
+    # Step 1: Load accounts + AP mapping
+    all_accounts = _get_accounts_to_track()
+    active = [a for a in all_accounts
+              if a.get("status") != "archived" and a.get("is_tracked", True)]
+    print(f"[WORKFLOW TRACKER] {len(active)} active tracked accounts")
+
+    mapping = _ddb_get_config("ap-mapping") or []
+    ap_by_pid = {str(r.get("propertyId") or "").strip(): str(r.get("name") or "").strip()
+                 for r in mapping if isinstance(r, dict) and r.get("propertyId") and r.get("name")}
+
+    # Step 2: Generate month list (MM/YYYY strings + date objects)
+    months_list = []  # list of (MM/YYYY string, first_day_date, last_day_date)
+    for i in range(months_back, 0, -1):
+        # Calculate month offset from today
+        total_months = today.year * 12 + today.month - 1 - i
+        y = total_months // 12
+        m = total_months % 12 + 1
+        last_day = calendar.monthrange(y, m)[1]
+        months_list.append((f"{m:02d}/{y}", dt.date(y, m, 1), dt.date(y, m, last_day)))
+    # Add current month
+    cur_last = calendar.monthrange(today.year, today.month)[1]
+    months_list.append((f"{today.month:02d}/{today.year}", dt.date(today.year, today.month, 1),
+                        dt.date(today.year, today.month, cur_last)))
+
+    month_strings = [m[0] for m in months_list]
+
+    # Step 3: Scan pipeline for bills (stages 4, 6, 7, archive)
+    # Scan 3 extra months before the display window to catch bills whose
+    # service period extends into our window (e.g., quarterly bill processed
+    # in JUL with service period JUL-SEP should mark SEP as covered)
+    scan_months = []
+    first_window = months_list[0][1]  # first_day of earliest display month
+    for extra in range(3, 0, -1):
+        total_m = first_window.year * 12 + first_window.month - 1 - extra
+        scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
+    scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
+
+    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, scan_months))
+    stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months))
+    stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months))
+    archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months))
+
+    total_keys = len(stage4_keys) + len(stage6_keys) + len(stage7_keys) + len(archive_keys)
+    print(f"[WORKFLOW TRACKER] Found {total_keys} S3 keys (S4={len(stage4_keys)}, S6={len(stage6_keys)}, S7={len(stage7_keys)}, Archive={len(archive_keys)})")
+
+    # Read first record from each file
+    stage4 = _read_first_record_from_s3(stage4_keys)
+    stage6 = _read_first_record_from_s3(stage6_keys)
+    stage7 = _read_first_record_from_s3(stage7_keys)
+    archive = _read_first_record_from_s3(archive_keys)
+
+    # Build lookup: (normalized_property_id, normalized_account) -> { month_str: stage_label }
+    bills_found: dict[tuple, dict[str, str]] = {}  # key -> {month: stage}
+
+    def _extract_bill_months(rec: dict) -> list[str]:
+        """Extract ALL months covered by a bill using service period dates.
+        A quarterly bill with service AUG-OCT marks AUG, SEP, OCT all covered.
+        Falls back to bill date month if no service period available."""
+        # Try service period first
+        ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
+        pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
+        ps = _parse_date_any(str(ps_str))
+        pe = _parse_date_any(str(pe_str))
+        if ps and pe and ps <= pe:
+            covered = []
+            cur = dt.date(ps.year, ps.month, 1)
+            end_m = dt.date(pe.year, pe.month, 1)
+            while cur <= end_m:
+                covered.append(f"{cur.month:02d}/{cur.year}")
+                if cur.month == 12:
+                    cur = dt.date(cur.year + 1, 1, 1)
+                else:
+                    cur = dt.date(cur.year, cur.month + 1, 1)
+            if covered:
+                return covered
+        # Fallback: bill date
+        bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
+        bd = _parse_date_any(str(bd_str))
+        if bd:
+            return [f"{bd.month:02d}/{bd.year}"]
+        # Fallback: S3 key path
+        s3k = rec.get("__s3_key__", "")
+        _m = re.search(r'yyyy=(\d{4})/mm=(\d{2})', s3k)
+        if _m:
+            return [f"{int(_m.group(2)):02d}/{int(_m.group(1))}"]
+        return []
+
+    stage_labels = [
+        (stage7, "S7"),
+        (archive, "S99"),
+        (stage6, "S6"),
+        (stage4, "S4"),
+    ]
+
+    for records, stage_label in stage_labels:
+        for rec in records:
+            pid = str(rec.get("EnrichedPropertyID") or rec.get("propertyId")
+                      or rec.get("PropertyID") or rec.get("Property ID") or "").strip()
+            acct = str(rec.get("Account Number") or rec.get("accountNumber")
+                       or rec.get("AccountNumber") or "").strip()
+            if not pid or not acct:
+                continue
+            norm_acct = _normalize_account_number(acct)
+            bill_months = _extract_bill_months(rec)
+            key = (pid, norm_acct)
+            if key not in bills_found:
+                bills_found[key] = {}
+            for bm in bill_months:
+                # First stage seen wins (stage7 > archive > stage6 > stage4)
+                if bm not in bills_found[key]:
+                    bills_found[key][bm] = stage_label
+
+    print(f"[WORKFLOW TRACKER] Indexed bills for {len(bills_found)} account keys")
+
+    # Load scraper mappings for badge
+    import re as _re
+    _load_scraper_mappings()
+    _scraper_acct_ids_clean = set()
+    for _sa in _scraper_account_map.values():
+        _aid = _sa.get("account_id", "")
+        if _aid:
+            _scraper_acct_ids_clean.add(_re.sub(r'[^A-Za-z0-9]', '', _aid).lower())
+
+    # Step 4: For each account, generate entries at its billing cadence
+    # Only start from the first month we have a bill (avoids retroactive
+    # missing entries for properties acquired mid-window).
+    # Group by property for rollup.
+    property_data: dict[str, dict] = {}  # property_id -> { info, items[] }
+
+    for a in active:
+        pid = str(a.get("propertyId") or "").strip()
+        acct = str(a.get("accountNumber") or "").strip()
+        vendor_name = str(a.get("vendorName") or "").strip()
+        days_between = int(a.get("daysBetweenBills") or 30)
+        norm_acct = _normalize_account_number(acct)
+        acct_key = (pid, norm_acct)
+        ap_name = ap_by_pid.get(pid, "")
+
+        # Scraper check
+        _clean_acct = _re.sub(r'[^A-Za-z0-9]', '', acct).lower() if acct else ""
+        in_scraper = _clean_acct in _scraper_acct_ids_clean if _clean_acct else False
+
+        if pid not in property_data:
+            property_data[pid] = {
+                "property_id": pid,
+                "property_name": str(a.get("propertyName") or "").strip(),
+                "ap_name": ap_name,
+                "items": [],
+            }
+
+        acct_bills = bills_found.get(acct_key, {})
+        months_per_cycle = max(1, round(days_between / 30))
+
+        # Find earliest covered month in our display window as baseline.
+        # Only generate entries starting from the first month we have a bill.
+        # This prevents showing 6 months of "missing" for a property
+        # acquired last month or an account that just started tracking.
+        earliest_idx = None
+        for idx, (ms, _, _) in enumerate(months_list):
+            if ms in acct_bills:
+                earliest_idx = idx
+                break
+
+        if earliest_idx is None:
+            # No bills found in window at all — only show current period
+            # so user sees the account exists but we don't retroactively
+            # flag months we have no history for
+            start_idx = len(months_list) - 1
+        else:
+            # Start from the first covered month (it will show as COMPLETE)
+            start_idx = earliest_idx
+
+        # Generate entries at billing cadence (step by months_per_cycle)
+        i = start_idx
+        while i < len(months_list):
+            cycle_end_idx = min(i + months_per_cycle - 1, len(months_list) - 1)
+            cycle_months = months_list[i:cycle_end_idx + 1]
+            if not cycle_months:
+                break
+
+            # Display label: single month or range for multi-month cycles
+            if months_per_cycle == 1:
+                display_month = cycle_months[-1][0]
+            else:
+                if len(cycle_months) == 1:
+                    display_month = cycle_months[0][0]
+                else:
+                    display_month = cycle_months[0][0] + "-" + cycle_months[-1][0]
+
+            cycle_end_date = cycle_months[-1][2]  # Last day of last month in cycle
+
+            # Check if ANY month in this cycle has a bill
+            has_bill = any(m[0] in acct_bills for m in cycle_months)
+            pipeline_stage = None
+            for m in cycle_months:
+                if m[0] in acct_bills:
+                    pipeline_stage = acct_bills[m[0]]
+                    break
+
+            # Status calculation
+            if has_bill:
+                status_label = "COMPLETE"
+                days_overdue = 0
+            elif today <= cycle_end_date:
+                # Cycle hasn't ended yet
+                days_until_end = (cycle_end_date - today).days
+                if days_until_end <= 7:
+                    status_label = "DUE_SOON"
+                else:
+                    status_label = "ON_TRACK"
+                days_overdue = 0
+            else:
+                # Cycle ended — expect bill within ~15 days after period end
+                # (time for utility company to generate + deliver the bill).
+                # This gives a realistic window instead of using the full
+                # daysBetweenBills as grace, which pushed everything to VERY_LATE.
+                expected_arrival = cycle_end_date + dt.timedelta(days=15)
+                days_overdue = (today - expected_arrival).days
+                if days_overdue <= 0:
+                    status_label = "DUE_SOON"
+                    days_overdue = 0
+                elif days_overdue <= 7:
+                    status_label = "SLIGHTLY_LATE"
+                elif days_overdue <= 14:
+                    status_label = "LATE"
+                else:
+                    status_label = "VERY_LATE"
+
+            property_data[pid]["items"].append({
+                "vendor_name": vendor_name,
+                "account_number": acct,
+                "month": display_month,
+                "status": "COMPLETE" if has_bill else "MISSING",
+                "days_overdue": days_overdue,
+                "status_label": status_label,
+                "days_between_bills": days_between,
+                "in_scraper": in_scraper,
+                "has_bill_in_pipeline": has_bill,
+                "pipeline_stage": pipeline_stage,
+            })
+
+            i += months_per_cycle
+
+    # Step 5: Build rollups
+    summary_by_status = {
+        "VERY_LATE": 0, "LATE": 0, "SLIGHTLY_LATE": 0,
+        "DUE_SOON": 0, "ON_TRACK": 0, "COMPLETE": 0,
+    }
+    total_account_months = 0
+    total_complete = 0
+
+    ap_rollup: dict[str, dict] = {}  # ap_name -> {total, complete, missing}
+
+    properties_out = []
+    for pid, pdata in sorted(property_data.items(), key=lambda x: x[1]["property_name"]):
+        items = pdata["items"]
+        prop_complete = sum(1 for it in items if it["status_label"] == "COMPLETE")
+        prop_missing = len(items) - prop_complete
+        prop_pct = round(100 * prop_complete / len(items), 1) if items else 0
+
+        for it in items:
+            summary_by_status[it["status_label"]] += 1
+            total_account_months += 1
+            if it["status_label"] == "COMPLETE":
+                total_complete += 1
+
+        ap_name = pdata["ap_name"] or "Unassigned"
+        if ap_name not in ap_rollup:
+            ap_rollup[ap_name] = {"total": 0, "complete": 0, "missing": 0}
+        ap_rollup[ap_name]["total"] += len(items)
+        ap_rollup[ap_name]["complete"] += prop_complete
+        ap_rollup[ap_name]["missing"] += prop_missing
+
+        # Sort items: missing first (oldest first), then complete
+        items.sort(key=lambda it: (
+            0 if it["status_label"] != "COMPLETE" else 1,
+            -it["days_overdue"],
+            it["month"],
+        ))
+
+        properties_out.append({
+            "property_id": pid,
+            "property_name": pdata["property_name"],
+            "ap_name": pdata["ap_name"],
+            "total_account_months": len(items),
+            "complete": prop_complete,
+            "missing": prop_missing,
+            "percentage": prop_pct,
+            "items": items,
+        })
+
+    # Sort properties: lowest completion first
+    properties_out.sort(key=lambda p: (p["percentage"], p["property_name"]))
+
+    overall_pct = round(100 * total_complete / total_account_months, 1) if total_account_months else 0
+
+    ap_summary = []
+    for ap_name in sorted(ap_rollup.keys()):
+        r = ap_rollup[ap_name]
+        ap_summary.append({
+            "ap_name": ap_name,
+            "total": r["total"],
+            "complete": r["complete"],
+            "missing": r["missing"],
+            "percentage": round(100 * r["complete"] / r["total"], 1) if r["total"] else 0,
+        })
+
+    elapsed = time.time() - start_time
+    print(f"[WORKFLOW TRACKER] Complete in {elapsed:.1f}s — {total_account_months} account-months, {total_complete} complete ({overall_pct}%)")
+
+    return {
+        "generated_at": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "months": month_strings,
+        "summary": {
+            "total_account_months": total_account_months,
+            "complete": total_complete,
+            "missing": total_account_months - total_complete,
+            "percentage": overall_pct,
+            "by_status": summary_by_status,
+        },
+        "ap_summary": ap_summary,
+        "properties": properties_out,
+    }
+
+
+def _workflow_tracker_refresh_loop():
+    """Background loop that keeps workflow tracker cache warm.
+    Refreshes every 4 minutes (cache TTL is 5 minutes)."""
+    _REFRESH_INTERVAL = 240  # 4 minutes
+    # Initial load
+    try:
+        data = _compute_workflow_tracker()
+        _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
+        print("[WORKFLOW TRACKER BG] Initial cache load complete")
+    except Exception as e:
+        print(f"[WORKFLOW TRACKER BG] Initial load error: {e}")
+    while True:
+        time.sleep(_REFRESH_INTERVAL)
+        try:
+            data = _compute_workflow_tracker()
+            _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
+            print("[WORKFLOW TRACKER BG] Proactive refresh complete")
+        except Exception as e:
+            print(f"[WORKFLOW TRACKER BG] Refresh error (will retry): {e}")
+
+
+@app.get("/api/workflow/completion-tracker")
+def api_workflow_completion_tracker(
+    months_back: int = 6,
+    refresh: int = 0,
+    user: str = Depends(require_user),
+):
+    """Completion tracker for ALL tracked accounts across multiple months.
+    Each account × each month = one row. Accounts behind appear multiple times.
+    """
+    cache_key = ("workflow_tracker",)
+
+    if not refresh:
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 300):
+            return cached["data"]
+
+    # Cache miss or forced refresh — compute now
+    try:
+        data = _compute_workflow_tracker(months_back)
+        _CACHE[cache_key] = {"ts": time.time(), "data": data}
+        return data
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "completion tracker")}, status_code=500)
 
 
 def _get_ubi_account_amounts_from_stage8() -> dict:

@@ -18,90 +18,82 @@
     h1{margin:0 0 16px 0;color:#fff}
 
     /* Summary Cards */
-    .summary-cards{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
-    .summary-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:12px 20px;min-width:120px;text-align:center;cursor:pointer;transition:transform .1s}
+    .summary-cards{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
+    .summary-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:12px 20px;min-width:110px;text-align:center;cursor:pointer;transition:transform .1s,outline .1s}
     .summary-card:hover{transform:translateY(-2px)}
-    .summary-card.active{outline:3px solid #fff}
+    .summary-card.active{outline:3px solid #fff;box-shadow:0 4px 16px rgba(0,0,0,.2)}
     .summary-card .count{font-size:28px;font-weight:700;display:block}
-    .summary-card .label{font-size:12px;opacity:.8}
+    .summary-card .label{font-size:11px;opacity:.8}
     .summary-card.very-late .count{color:#b91c1c}
     .summary-card.late .count{color:#c2410c}
     .summary-card.slightly-late .count{color:#a16207}
     .summary-card.due-soon .count{color:#1d4ed8}
     .summary-card.on-track .count{color:#166534}
+    .summary-card.complete .count{color:#059669}
+    .summary-card.all-card .count{color:#334155}
+
+    /* Overall progress area */
+    .overall-progress{display:flex;align-items:center;gap:16px;margin-left:auto;padding:8px 0}
+    .overall-progress .pct{font-size:22px;font-weight:700;color:#fff}
+    .overall-progress .bar-wrap{width:180px;height:10px;background:rgba(255,255,255,.3);border-radius:5px;overflow:hidden}
+    .overall-progress .bar-fill{height:100%;border-radius:5px;transition:width .5s}
+    .overall-progress .bar-fill.green{background:#10b981}
+    .overall-progress .bar-fill.yellow{background:#f59e0b}
+    .overall-progress .bar-fill.red{background:#ef4444}
+
+    /* AP Cards */
+    .ap-cards{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+    .ap-card{background:var(--glass);backdrop-filter:blur(10px);border:2px solid var(--border);border-radius:12px;padding:10px 18px;min-width:120px;text-align:center;cursor:pointer;transition:transform .1s,outline .1s}
+    .ap-card:hover{transform:translateY(-2px)}
+    .ap-card.active{outline:3px solid #fff;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+    .ap-card .ap-name{font-size:13px;font-weight:700}
+    .ap-card .ap-count{font-size:11px;opacity:.7;margin-top:2px}
+    .ap-card.health-green{border-color:#10b981;background:rgba(16,185,129,.15)}
+    .ap-card.health-yellow{border-color:#f59e0b;background:rgba(245,158,11,.15)}
+    .ap-card.health-red{border-color:#ef4444;background:rgba(239,68,68,.15)}
 
     /* Toolbar */
     .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap}
     .toolbar-left{display:flex;gap:8px;align-items:center}
     .toolbar-right{display:flex;gap:8px;align-items:center}
-    .search-box{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;width:280px;font-size:13px}
+    .search-box{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;width:320px;font-size:13px}
 
-    /* Table */
-    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden}
-    .tableWrap{overflow:auto;max-height:calc(100vh - 340px)}
-    table{width:100%;border-collapse:collapse;background:#fff}
-    th,td{padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px;white-space:nowrap}
-    th{background:#f8fafc;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer}
-    th:hover{background:#f1f5f9}
-    tr:hover{background:rgba(14,165,233,0.05)}
-    tr.has-note{background:rgba(251,191,36,0.1)}
+    /* Property Cards Grid */
+    .property-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+    .property-card{background:#fff;border-radius:12px;padding:14px;border:2px solid #e5e7eb;cursor:pointer;transition:all .2s}
+    .property-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.1);transform:translateY(-1px)}
+    .property-card.complete{border-color:#10b981;background:#f0fdf4}
+    .property-card.partial{border-color:#f59e0b;background:#fffbeb}
+    .property-card.missing{border-color:#ef4444;background:#fef2f2}
+    .property-name{font-weight:700;font-size:14px;margin-bottom:2px}
+    .property-ap{font-size:11px;color:#7c3aed;font-weight:500;margin-bottom:6px}
+    .property-stats{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#64748b;margin-bottom:6px}
+    .progress-bar{height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden}
+    .progress-fill{height:100%;border-radius:3px;transition:width .5s}
+    .progress-green{background:#10b981}
+    .progress-yellow{background:#f59e0b}
+    .progress-red{background:#ef4444}
 
-    /* Status Badges */
-    .status-badge{display:inline-block;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600}
-    .status-VERY_LATE{background:#fecaca;color:#b91c1c}
-    .status-LATE{background:#fed7aa;color:#c2410c}
-    .status-SLIGHTLY_LATE{background:#fef08a;color:#a16207}
-    .status-DUE_SOON{background:#bfdbfe;color:#1d4ed8}
-    .status-ON_TRACK{background:#bbf7d0;color:#166534}
-
-    /* Note indicator */
-    .note-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:4px 8px;border-radius:6px}
-    .note-btn:hover{background:#f1f5f9}
-    .note-btn.has-note{background:#fef3c7}
-    .search-link{opacity:0.5;transition:opacity 0.15s}
-    tr:hover .search-link{opacity:1}
-
-    /* Days overdue styling */
-    .days-overdue{font-weight:600}
-    .days-overdue.positive{color:#b91c1c}
-    .days-overdue.negative{color:#166534}
-
-    /* Drawer */
-    .drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
-    .drawer-mask.open{opacity:1;pointer-events:auto}
-    .drawer{position:fixed;top:0;right:-420px;width:420px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:41;display:flex;flex-direction:column}
-    .drawer.open{right:0}
-    .drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
-    .drawer .body{flex:1;overflow:auto;padding:16px 18px}
-    .drawer .sect{margin-bottom:16px}
-    .drawer .sect-title{font-weight:600;margin-bottom:8px;font-size:13px}
-    .drawer .chiplist{display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto}
-    .drawer .chip{display:flex;align-items:center;gap:6px;font-size:12px}
-    .drawer .chip input{margin:0}
-    .drawer .actions{padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
-
-    /* Modal */
-    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center}
-    .modal-overlay.show{display:flex}
-    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px}
-    .modal-box h2{margin:0 0 16px 0;font-size:18px}
-    .form-group{margin-bottom:16px}
-    .form-group label{display:block;margin-bottom:6px;font-weight:600;font-size:13px;color:#475569}
-    .form-group select,.form-group textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit}
-    .form-group textarea{min-height:80px;resize:vertical}
-    .form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
-
-    /* Edit button */
-    .edit-btn{background:none;border:none;cursor:pointer;font-size:14px;padding:4px 8px;border-radius:6px;opacity:0.5}
-    .edit-btn:hover{background:#e0f2fe;opacity:1}
-
-    /* Searchable list in modal */
-    .searchable-list{max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;margin-top:4px}
-    .searchable-list .item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px}
-    .searchable-list .item:last-child{border-bottom:none}
-    .searchable-list .item:hover{background:#f0f9ff}
-    .searchable-list .item.selected{background:#dbeafe;font-weight:600}
-    .current-value{padding:8px 12px;background:#f8fafc;border-radius:6px;margin-bottom:8px;font-size:12px;color:#64748b}
+    /* Account Items inside property card */
+    .account-list{display:none;margin-top:10px;border-top:1px solid #e5e7eb;padding-top:8px}
+    .property-card.expanded .account-list{display:block}
+    .account-item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;font-size:12px;transition:background .15s}
+    .account-item:hover{background:#f1f5f9}
+    .account-item .acct-info{flex:1;min-width:0}
+    .account-item .acct-label{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .month-badge{display:inline-block;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap}
+    .month-badge.VERY_LATE{background:#fecaca;color:#b91c1c}
+    .month-badge.LATE{background:#fed7aa;color:#c2410c}
+    .month-badge.SLIGHTLY_LATE{background:#fef08a;color:#a16207}
+    .month-badge.DUE_SOON{background:#bfdbfe;color:#1d4ed8}
+    .month-badge.ON_TRACK{background:#e2e8f0;color:#475569}
+    .month-badge.COMPLETE{background:#bbf7d0;color:#166534}
+    .status-icon{font-size:14px;font-weight:700;min-width:18px;text-align:center}
+    .status-icon.miss{color:#ef4444}
+    .status-icon.wait{color:#3b82f6}
+    .status-icon.ok{color:#10b981}
+    .stage-tag{font-size:9px;padding:1px 5px;border-radius:4px;background:#e0f2fe;color:#0369a1;font-weight:600;margin-left:4px}
+    .scraper-tag{font-size:9px;padding:1px 4px;border-radius:3px;background:#7c3aed;color:#fff;font-weight:600;margin-left:4px}
 
     /* Toast */
     .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:60;opacity:0;transition:opacity .3s}
@@ -110,7 +102,7 @@
     .toast.err{background:#b91c1c}
 
     /* Loading */
-    .loading{text-align:center;padding:40px;color:#64748b}
+    .loading{text-align:center;padding:60px;color:#64748b;font-size:14px}
 
     /* Tabs */
     .tab-bar{display:flex;gap:4px;margin-bottom:20px}
@@ -120,35 +112,8 @@
     .tab-content{display:none}
     .tab-content.active{display:block}
 
-    /* AP Priority specific styles */
-    .priority-summary{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap}
-    .priority-stat{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:16px 24px;text-align:center}
-    .priority-stat .value{font-size:32px;font-weight:700;color:#0f172a}
-    .priority-stat .label{font-size:12px;color:#64748b}
-    .priority-stat.magnitude .value{color:#b91c1c}
-    .months-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
-    .months-1{background:#fef08a;color:#a16207}
-    .months-2{background:#fed7aa;color:#c2410c}
-    .months-3{background:#fecaca;color:#b91c1c}
-    .amount-col{text-align:right;font-family:monospace}
-    .view-link{color:#0284c7;text-decoration:none;font-size:12px;font-weight:600}
-    .view-link:hover{text-decoration:underline}
-    .scraper-badge{background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.3px}
-    .dup-badge{background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:5px;cursor:help}
-    .acct-copy{cursor:pointer;border-bottom:1px dashed #94a3b8}
-    .acct-copy:hover{color:#0284c7;border-bottom-color:#0284c7}
-
-    /* Row checkbox */
-    .row-select{width:16px;height:16px;cursor:pointer;accent-color:#0ea5e9}
-    th .row-select{margin:0}
-
-    /* Floating bulk toolbar */
-    .bulk-toolbar{position:fixed;bottom:-70px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.92);backdrop-filter:blur(12px);color:#fff;padding:12px 24px;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.35);display:flex;align-items:center;gap:16px;z-index:45;transition:bottom .25s ease;font-size:13px}
-    .bulk-toolbar.visible{bottom:24px}
-    .bulk-toolbar .sel-count{font-weight:700;min-width:90px}
-    .bulk-toolbar .btn{font-size:12px;padding:6px 14px}
-    .bulk-toolbar .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff}
-    .bulk-toolbar .btn.ghost:hover{background:rgba(255,255,255,.12)}
+    /* Generated timestamp */
+    .meta-info{color:rgba(255,255,255,.6);font-size:11px}
   </style>
 </head>
 <body>
@@ -169,144 +134,153 @@
 
     <!-- Tab Bar -->
     <div class="tab-bar">
-      <button class="tab-btn active" data-tab="lateBills">Late Bills</button>
-      <button class="tab-btn" data-tab="apPriority">AP Priority (UBI)</button>
+      <button class="tab-btn active" data-tab="tracker">Completion Tracker</button>
+      <button class="tab-btn" data-tab="lateBills">Late Bills (Table)</button>
     </div>
 
-    <!-- Late Bills Tab Content -->
-    <div class="tab-content active" id="lateBillsTab">
-    <div class="summary-cards" id="summaryCards">
-      <div class="summary-card very-late" data-status="VERY_LATE">
-        <span class="count" id="countVeryLate">-</span>
-        <span class="label">Very Late (15+)</span>
-      </div>
-      <div class="summary-card late" data-status="LATE">
-        <span class="count" id="countLate">-</span>
-        <span class="label">Late (8-14)</span>
-      </div>
-      <div class="summary-card slightly-late" data-status="SLIGHTLY_LATE">
-        <span class="count" id="countSlightlyLate">-</span>
-        <span class="label">Slightly Late (1-7)</span>
-      </div>
-      <div class="summary-card due-soon" data-status="DUE_SOON">
-        <span class="count" id="countDueSoon">-</span>
-        <span class="label">Due Soon (7 days)</span>
-      </div>
-      <div class="summary-card on-track" data-status="ON_TRACK">
-        <span class="count" id="countOnTrack">-</span>
-        <span class="label">On Track</span>
-      </div>
-    </div>
+    <!-- COMPLETION TRACKER TAB -->
+    <div class="tab-content active" id="trackerTab">
 
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <input type="text" class="search-box" id="searchBox" placeholder="Search property, vendor, account, AP rep..." />
-        <label style="color:#fff;font-size:12px;display:flex;align-items:center;gap:4px">
-          <input type="checkbox" id="filterHasNote" /> Has Notes
-        </label>
-        <span id="lastUpdated" style="color:rgba(255,255,255,0.7);font-size:11px;margin-left:8px"></span>
-      </div>
-      <div class="toolbar-right">
-        <button class="btn secondary" id="recalculateBtn" title="Recalculate workflow data (may take 1-2 minutes)">Recalculate</button>
-        <button class="btn secondary" id="refreshBtn">Refresh</button>
-        <button class="btn" id="openDrawer">Filter & Sort</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tableWrap">
-        <table id="workflowTable">
-          <thead>
-            <tr>
-              <th style="width:36px"><input type="checkbox" class="row-select" id="selectAll" title="Select all visible" /></th>
-              <th data-col="note" style="width:50px">Note</th>
-              <th style="width:40px">Edit</th>
-              <th data-col="status" style="width:100px">Status</th>
-              <th data-col="propertyName">Property</th>
-              <th data-col="vendorName">Vendor</th>
-              <th data-col="accountNumber">Account #</th>
-              <th data-col="apName">AP Rep</th>
-              <th data-col="nextExpectedDate">Next Expected</th>
-              <th data-col="daysOverdue" style="width:80px">Days</th>
-              <th data-col="lastBillDate">Last Bill</th>
-              <th style="width:45px">View</th>
-              <th data-col="servicePeriodDays" style="width:80px">Period</th>
-              <th data-col="hasScraper" style="width:55px">Scraper</th>
-            </tr>
-          </thead>
-          <tbody id="tableBody">
-            <tr><td colspan="14" class="loading">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    </div><!-- End Late Bills Tab -->
-
-    <!-- AP Priority Tab Content -->
-    <div class="tab-content" id="apPriorityTab">
-      <div class="priority-summary">
-        <div class="priority-stat">
-          <span class="value" id="priorityCount">-</span>
-          <span class="label">Accounts Missing Bills</span>
+      <!-- Row 1: Status Summary Cards + Progress -->
+      <div class="summary-cards" id="statusCards">
+        <div class="summary-card very-late" data-status="VERY_LATE">
+          <span class="count" id="ctVeryLate">-</span>
+          <span class="label">Very Late (15+)</span>
         </div>
-        <div class="priority-stat magnitude">
-          <span class="value" id="priorityMagnitude">-</span>
-          <span class="label">Est. Monthly Total</span>
+        <div class="summary-card late" data-status="LATE">
+          <span class="count" id="ctLate">-</span>
+          <span class="label">Late (8-14)</span>
         </div>
-        <div class="priority-stat">
-          <span class="value" id="priorityPeriod">-</span>
-          <span class="label">Upcoming UBI Period</span>
+        <div class="summary-card slightly-late" data-status="SLIGHTLY_LATE">
+          <span class="count" id="ctSlightlyLate">-</span>
+          <span class="label">Slightly Late (1-7)</span>
+        </div>
+        <div class="summary-card due-soon" data-status="DUE_SOON">
+          <span class="count" id="ctDueSoon">-</span>
+          <span class="label">Due Soon</span>
+        </div>
+        <div class="summary-card on-track" data-status="ON_TRACK">
+          <span class="count" id="ctOnTrack">-</span>
+          <span class="label">On Track</span>
+        </div>
+        <div class="summary-card complete" data-status="COMPLETE">
+          <span class="count" id="ctComplete">-</span>
+          <span class="label">Complete</span>
+        </div>
+        <div class="summary-card all-card" data-status="ALL">
+          <span class="count" id="ctAll">-</span>
+          <span class="label">All</span>
+        </div>
+        <div class="overall-progress">
+          <div class="bar-wrap"><div class="bar-fill green" id="overallBar" style="width:0%"></div></div>
+          <span class="pct" id="overallPct">0%</span>
+          <button class="btn small" id="recalcBtn" title="Recalculate from S3">Recalculate</button>
+        </div>
+      </div>
+
+      <!-- Row 2: AP Person Cards -->
+      <div class="ap-cards" id="apCards"></div>
+
+      <!-- Toolbar: Search -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <input type="text" class="search-box" id="trackerSearch" placeholder="Search property, vendor, account..." />
+          <span class="meta-info" id="trackerMeta"></span>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn secondary" id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Property Cards -->
+      <div id="trackerContent">
+        <div class="loading">Loading completion tracker...</div>
+      </div>
+    </div><!-- End Tracker Tab -->
+
+    <!-- LATE BILLS TABLE TAB (preserved from original) -->
+    <div class="tab-content" id="lateBillsTab">
+      <div class="summary-cards" id="summaryCards">
+        <div class="summary-card very-late" data-status="VERY_LATE">
+          <span class="count" id="countVeryLate">-</span>
+          <span class="label">Very Late (15+)</span>
+        </div>
+        <div class="summary-card late" data-status="LATE">
+          <span class="count" id="countLate">-</span>
+          <span class="label">Late (8-14)</span>
+        </div>
+        <div class="summary-card slightly-late" data-status="SLIGHTLY_LATE">
+          <span class="count" id="countSlightlyLate">-</span>
+          <span class="label">Slightly Late (1-7)</span>
+        </div>
+        <div class="summary-card due-soon" data-status="DUE_SOON">
+          <span class="count" id="countDueSoon">-</span>
+          <span class="label">Due Soon (7 days)</span>
+        </div>
+        <div class="summary-card on-track" data-status="ON_TRACK">
+          <span class="count" id="countOnTrack">-</span>
+          <span class="label">On Track</span>
         </div>
       </div>
 
       <div class="toolbar">
         <div class="toolbar-left">
-          <input type="text" class="search-box" id="prioritySearchBox" placeholder="Search property, vendor, account, AP rep..." />
-          <span id="priorityLastUpdated" style="color:rgba(255,255,255,0.7);font-size:11px;margin-left:8px"></span>
+          <input type="text" class="search-box" id="searchBox" placeholder="Search property, vendor, account, AP rep..." />
+          <label style="color:#fff;font-size:12px;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="filterHasNote" /> Has Notes
+          </label>
+          <span id="lastUpdated" style="color:rgba(255,255,255,0.7);font-size:11px;margin-left:8px"></span>
         </div>
         <div class="toolbar-right">
-          <button class="btn secondary" id="priorityFilterBtn">Filter</button>
-          <button class="btn secondary" id="priorityRefreshBtn">Refresh</button>
+          <button class="btn secondary" id="tableRecalcBtn" title="Recalculate workflow data">Recalculate</button>
+          <button class="btn secondary" id="tableRefreshBtn">Refresh</button>
+          <button class="btn" id="openDrawer">Filter & Sort</button>
         </div>
       </div>
 
       <div class="card">
-        <div class="tableWrap">
-          <table id="priorityTable">
+        <div class="tableWrap" style="overflow:auto;max-height:calc(100vh - 340px)">
+          <table id="workflowTable" style="width:100%;border-collapse:collapse;background:#fff">
             <thead>
               <tr>
-                <th data-col="avgAmount" style="width:100px">Avg Amount</th>
-                <th data-col="propertyName">Property</th>
-                <th data-col="vendorName">Vendor</th>
-                <th data-col="accountNumber">Account #</th>
-                <th data-col="apName">AP Rep</th>
-                <th data-col="monthsBehind" style="width:100px">Months Behind</th>
-                <th data-col="lastUbiPeriod">Last UBI Period</th>
-                <th data-col="historicalBillCount" style="width:80px">Bill Count</th>
+                <th style="width:36px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10"><input type="checkbox" class="row-select" id="selectAll" title="Select all visible" style="width:16px;height:16px;cursor:pointer;accent-color:#0ea5e9" /></th>
+                <th data-col="note" style="width:50px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Note</th>
+                <th style="width:40px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10">Edit</th>
+                <th data-col="status" style="width:100px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Status</th>
+                <th data-col="propertyName" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Property</th>
+                <th data-col="vendorName" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Vendor</th>
+                <th data-col="accountNumber" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Account #</th>
+                <th data-col="apName" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">AP Rep</th>
+                <th data-col="nextExpectedDate" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Next Expected</th>
+                <th data-col="daysOverdue" style="width:80px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Days</th>
+                <th data-col="lastBillDate" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Last Bill</th>
+                <th style="width:45px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10">View</th>
+                <th data-col="servicePeriodDays" style="width:80px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Period</th>
+                <th data-col="hasScraper" style="width:55px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;font-size:12px;font-weight:600;position:sticky;top:0;z-index:10;cursor:pointer">Scraper</th>
               </tr>
             </thead>
-            <tbody id="priorityTableBody">
-              <tr><td colspan="8" class="loading">Click to load AP Priority data...</td></tr>
+            <tbody id="tableBody">
+              <tr><td colspan="14" class="loading">Switch to this tab to load table view...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
-    </div><!-- End AP Priority Tab -->
+    </div><!-- End Late Bills Tab -->
 
   </div>
 
-  <!-- Filter Drawer -->
-  <div class="drawer-mask" id="drawerMask"></div>
-  <aside class="drawer" id="drawer">
-    <header>
+  <!-- Filter Drawer (for Late Bills table tab) -->
+  <div class="drawer-mask" id="drawerMask" style="position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40"></div>
+  <aside class="drawer" id="drawer" style="position:fixed;top:0;right:-420px;width:420px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:41;display:flex;flex-direction:column">
+    <header style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb">
       <div style="font-weight:700">Filter & Sort</div>
       <button class="btn small" id="closeDrawer">Close</button>
     </header>
-    <div class="body">
-      <div class="sect">
-        <div class="sect-title">Sort By</div>
-        <select id="sortBy" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px">
-          <option value="urgency">Urgency (Most Urgent First)</option>
+    <div class="body" style="flex:1;overflow:auto;padding:16px 18px">
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:13px">Sort By</div>
+        <select id="sortBy" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px">
+          <option value="urgency">Urgency (default)</option>
           <option value="daysOverdue">Days Overdue</option>
           <option value="propertyName">Property Name</option>
           <option value="vendorName">Vendor Name</option>
@@ -315,1415 +289,787 @@
           <option value="nextExpectedDate">Next Expected Date</option>
         </select>
       </div>
-      <div class="sect">
-        <div class="sect-title">Status</div>
-        <div class="chiplist" id="statusFilters"></div>
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:13px">Status</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto" id="drawerStatusFilters"></div>
       </div>
-      <div class="sect">
-        <div class="sect-title">AP Rep</div>
-        <div class="chiplist" id="apFilters"></div>
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:13px">AP Rep</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto" id="drawerApFilters"></div>
       </div>
-      <div class="sect">
-        <div class="sect-title">Property</div>
-        <input type="text" id="propSearch" placeholder="Search properties..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
-        <div class="chiplist" id="propFilters" style="max-height:150px"></div>
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:13px">Property <input type="text" id="drawerPropSearch" placeholder="Search..." style="padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;width:120px;margin-left:8px" /></div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto" id="drawerPropFilters"></div>
       </div>
-      <div class="sect">
-        <div class="sect-title">Vendor</div>
-        <input type="text" id="vendorSearch" placeholder="Search vendors..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
-        <div class="chiplist" id="vendorFilters" style="max-height:150px"></div>
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:13px">Vendor <input type="text" id="drawerVendorSearch" placeholder="Search..." style="padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;width:120px;margin-left:8px" /></div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto" id="drawerVendorFilters"></div>
       </div>
     </div>
-    <div class="actions">
-      <button class="btn secondary" id="clearFilters">Clear All</button>
-      <button class="btn" id="applyFilters">Apply</button>
+    <div style="padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn secondary" id="drawerClear">Clear All</button>
+      <button class="btn" id="drawerApply">Apply</button>
     </div>
   </aside>
 
-  <!-- AP Priority Filter Drawer -->
-  <div class="drawer-mask" id="priorityDrawerMask"></div>
-  <aside class="drawer" id="priorityDrawer">
-    <header>
-      <div style="font-weight:700">AP Priority Filters</div>
-      <button class="btn small" id="closePriorityDrawer">Close</button>
-    </header>
-    <div class="body">
-      <div class="sect">
-        <div class="sect-title">Sort By</div>
-        <select id="prioritySortBy" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px">
-          <option value="avgAmount">Avg Amount (Highest First)</option>
-          <option value="monthsBehind">Months Behind (Most First)</option>
-          <option value="propertyName">Property Name</option>
-          <option value="vendorName">Vendor Name</option>
-          <option value="apName">AP Rep</option>
+  <!-- Note Modal (for Late Bills tab) -->
+  <div class="modal-overlay" id="noteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center">
+    <div class="modal-box" style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px">
+      <h2 style="margin:0 0 16px 0;font-size:18px">Account Note</h2>
+      <div id="noteAccountInfo" style="padding:8px 12px;background:#f8fafc;border-radius:6px;margin-bottom:12px;font-size:12px;color:#64748b"></div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;margin-bottom:6px;font-weight:600;font-size:13px;color:#475569">Reason Code</label>
+        <select id="noteReasonCode" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px">
+          <option value="">-- Select --</option>
         </select>
       </div>
-      <div class="sect">
-        <div class="sect-title">AP Rep</div>
-        <div class="chiplist" id="priorityApFilters"></div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;margin-bottom:6px;font-weight:600;font-size:13px;color:#475569">Additional Notes</label>
+        <textarea id="noteText" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit;min-height:80px;resize:vertical"></textarea>
       </div>
-      <div class="sect">
-        <div class="sect-title">Property</div>
-        <input type="text" id="priorityPropSearch" placeholder="Search properties..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
-        <div class="chiplist" id="priorityPropFilters" style="max-height:150px"></div>
-      </div>
-      <div class="sect">
-        <div class="sect-title">Vendor</div>
-        <input type="text" id="priorityVendorSearch" placeholder="Search vendors..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px" />
-        <div class="chiplist" id="priorityVendorFilters" style="max-height:150px"></div>
-      </div>
-      <div class="sect">
-        <div class="sect-title">Months Behind</div>
-        <div class="chiplist" id="priorityMonthsFilters">
-          <label class="chip"><input type="checkbox" value="1" /> 1 month</label>
-          <label class="chip"><input type="checkbox" value="2" /> 2 months</label>
-          <label class="chip"><input type="checkbox" value="3" /> 3+ months</label>
-        </div>
-      </div>
-    </div>
-    <div class="actions">
-      <button class="btn secondary" id="clearPriorityFilters">Clear All</button>
-      <button class="btn" id="applyPriorityFilters">Apply</button>
-    </div>
-  </aside>
-
-  <!-- Note Modal -->
-  <div class="modal-overlay" id="noteModal">
-    <div class="modal-box">
-      <h2>Add/Edit Note</h2>
-      <div style="margin-bottom:16px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px">
-        <div><strong id="noteAccountInfo"></strong></div>
-      </div>
-      <div class="form-group">
-        <label>Reason Code</label>
-        <select id="noteReasonCode">
-          <option value="">-- Select Reason --</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Additional Notes</label>
-        <textarea id="noteCustomText" placeholder="Enter any additional details..."></textarea>
-      </div>
-      <div class="form-actions">
-        <button class="btn secondary" id="clearNote">Clear Note</button>
-        <button class="btn secondary" id="cancelNote">Cancel</button>
-        <button class="btn" id="saveNote">Save</button>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+        <button class="btn secondary" id="noteClear">Clear Note</button>
+        <button class="btn secondary" onclick="document.getElementById('noteModal').style.display='none'">Cancel</button>
+        <button class="btn" id="noteSave">Save</button>
       </div>
     </div>
   </div>
 
-  <!-- Bulk Vendor Modal -->
-  <div class="modal-overlay" id="bulkVendorModal">
-    <div class="modal-box" style="max-width:500px">
-      <h2 id="bulkVendorTitle">Set Vendor</h2>
-      <div class="form-group">
-        <label>Vendor</label>
-        <input type="text" id="bulkVendorSearch" placeholder="Search vendors..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" />
-        <div class="searchable-list" id="bulkVendorList"></div>
-        <input type="hidden" id="bulkVendorId" />
-        <div class="current-value" id="bulkVendorSelected" style="margin-top:8px">Selected: <strong>none</strong></div>
+  <!-- Edit Account Modal (for Late Bills tab) -->
+  <div class="modal-overlay" id="editModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center">
+    <div class="modal-box" style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px">
+      <h2 style="margin:0 0 16px 0;font-size:18px">Edit Account Mapping</h2>
+      <div id="editAccountInfo" style="padding:8px 12px;background:#f8fafc;border-radius:6px;margin-bottom:12px;font-size:12px;color:#64748b"></div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;margin-bottom:6px;font-weight:600;font-size:13px;color:#475569">Property</label>
+        <input type="text" id="editPropSearch" placeholder="Search properties..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;margin-bottom:4px" />
+        <div id="editPropList" style="max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px"></div>
       </div>
-      <div class="form-actions">
-        <button class="btn secondary" onclick="document.getElementById('bulkVendorModal').classList.remove('show')">Cancel</button>
-        <button class="btn" id="bulkVendorApply">Apply to <span id="bulkVendorCount">0</span> accounts</button>
+      <div style="margin-bottom:16px">
+        <label style="display:block;margin-bottom:6px;font-weight:600;font-size:13px;color:#475569">Vendor</label>
+        <input type="text" id="editVendorSearch" placeholder="Search vendors..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;margin-bottom:4px" />
+        <div id="editVendorList" style="max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px"></div>
       </div>
-    </div>
-  </div>
-
-  <!-- Bulk Reason Code Modal -->
-  <div class="modal-overlay" id="bulkNoteModal">
-    <div class="modal-box">
-      <h2 id="bulkNoteTitle">Set Reason Code</h2>
-      <div class="form-group">
-        <label>Reason Code</label>
-        <select id="bulkNoteReasonCode">
-          <option value="">-- Select Reason --</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Additional Notes</label>
-        <textarea id="bulkNoteCustomText" placeholder="Enter any additional details..."></textarea>
-      </div>
-      <div class="form-actions">
-        <button class="btn secondary" onclick="document.getElementById('bulkNoteModal').classList.remove('show')">Cancel</button>
-        <button class="btn" id="bulkNoteApply">Apply to <span id="bulkNoteCount">0</span> accounts</button>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+        {% if is_admin %}<button class="btn" id="editDelete" style="background:#dc2626;margin-right:auto">Delete Account</button>{% endif %}
+        <button class="btn secondary" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
+        <button class="btn" id="editSave">Save Changes</button>
       </div>
     </div>
   </div>
 
-  <!-- Floating Bulk Toolbar -->
-  <div class="bulk-toolbar" id="bulkToolbar">
-    <span class="sel-count" id="selCount">0 selected</span>
-    <button class="btn" id="bulkVendorBtn">Set Vendor</button>
-    <button class="btn" id="bulkNoteBtn">Set Reason Code</button>
-    <button class="btn ghost" id="deselectAllBtn">Deselect All</button>
+  <!-- Bulk Toolbar (for Late Bills tab) -->
+  <div class="bulk-toolbar" id="bulkToolbar" style="position:fixed;bottom:-70px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.92);backdrop-filter:blur(12px);color:#fff;padding:12px 24px;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.35);display:flex;align-items:center;gap:16px;z-index:45;transition:bottom .25s ease;font-size:13px">
+    <span class="sel-count" style="font-weight:700;min-width:90px" id="selCount">0 selected</span>
+    <button class="btn small" id="bulkVendorBtn">Set Vendor</button>
+    <button class="btn small" id="bulkReasonBtn">Set Reason Code</button>
+    <button class="btn small" id="bulkDeselectBtn" style="background:transparent;border:1px solid rgba(255,255,255,.4)">Deselect All</button>
   </div>
 
-  <!-- Edit Account Modal -->
-  <div class="modal-overlay" id="editModal">
-    <div class="modal-box" style="max-width:550px">
-      <h2>Edit Account Mapping</h2>
-      <div style="margin-bottom:16px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px">
-        <div><strong>Account:</strong> <span id="editAccountNumber"></span></div>
-      </div>
+<script>
+/* ======== STATE ======== */
+let trackerData = null;       // Full completion tracker response
+let activeStatus = null;      // Selected status filter (null = all)
+let activeAp = null;          // Selected AP filter (null = all)
+let searchText = '';          // Search filter text
 
-      <div class="form-group">
-        <label>Property</label>
-        <div class="current-value">Current: <span id="editCurrentProperty"></span></div>
-        <input type="text" id="editPropertySearch" placeholder="Search properties..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" />
-        <div class="searchable-list" id="editPropertyList"></div>
-        <input type="hidden" id="editPropertyId" />
-      </div>
+/* Late Bills tab state (lazy loaded) */
+let allData = [];
+let filteredData = [];
+let selectedKeys = new Set();
+let filterState = {status: null, ap: [], properties: [], vendors: [], hasNote: false, sort: 'urgency'};
+let reasonCodes = [];
+let lateBillsLoaded = false;
+let catalogProperties = [];
+let catalogVendors = [];
 
-      <div class="form-group">
-        <label>Vendor</label>
-        <div class="current-value">Current: <span id="editCurrentVendor"></span></div>
-        <input type="text" id="editVendorSearch" placeholder="Search vendors..." style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" />
-        <div class="searchable-list" id="editVendorList"></div>
-        <input type="hidden" id="editVendorId" />
-      </div>
+/* ======== INIT ======== */
+document.addEventListener('DOMContentLoaded', () => {
+  loadTrackerData();
+  initTabs();
+  initTrackerEvents();
+  initLateBillsEvents();
+});
 
-      <div class="form-actions" style="justify-content:space-between">
-        <div>
-          {% if is_admin %}
-          <button class="btn" id="deleteAccountBtn" style="background:#dc2626" title="Remove this account from tracking">Delete Account</button>
-          {% endif %}
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn secondary" id="cancelEdit">Cancel</button>
-          <button class="btn" id="saveEdit">Save Changes</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    let allData = [];
-    let filteredData = [];
-    let selectedKeys = new Set();
-    let filterState = {
-      search: '',
-      hasNote: false,
-      statuses: [],
-      apReps: [],
-      properties: [],
-      vendors: [],
-      sortBy: 'urgency'
-    };
-    let reasonCodes = [];
-    let currentNoteAccountKey = null;
-
-    // Escape string for use in JavaScript onclick handlers (handles apostrophes, quotes, backslashes)
-    function escapeJs(str) {
-      if (!str) return '';
-      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    }
-
-    async function fetchJSON(url) {
-      const r = await fetch(url, {credentials: 'same-origin'});
-      if (!r.ok) throw new Error('fetch failed');
-      return r.json();
-    }
-
-    function copyAcct(el, text) {
-      navigator.clipboard.writeText(text).then(() => {
-        el.style.color = '#059669';
-        setTimeout(() => el.style.color = '', 600);
-        showToast('Copied: ' + text, 'ok');
-      }).catch(() => showToast('Copy failed', 'err'));
-    }
-
-    function showToast(msg, type) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2500);
-    }
-
-    function fmtDate(s) {
-      if (!s) return '-';
-      const d = new Date(s);
-      if (isNaN(d)) return s;
-      return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`;
-    }
-    function fmtDateParam(s) {
-      if (!s) return '';
-      const d = new Date(s);
-      if (isNaN(d)) return '';
-      return d.toISOString().slice(0, 10);
-    }
-
-    async function loadData(refresh = false) {
-      try {
-        document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Loading...</td></tr>';
-        const url = refresh ? '/api/workflow?refresh=1' : '/api/workflow';
-        const data = await fetchJSON(url);
-
-        // Check if cache is empty - trigger recalculation
-        if (data.cacheStatus === 'empty') {
-          document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">No cached data. Starting recalculation...</td></tr>';
-          document.getElementById('lastUpdated').textContent = 'No data yet';
-          triggerRecalculate(true); // Auto-trigger with auto-refresh
-          return;
-        }
-
-        allData = data.rows || [];
-        reasonCodes = data.filters?.reasonCodes || [];
-
-        // Update last updated timestamp
-        if (data.computedAt) {
-          const d = new Date(data.computedAt);
-          document.getElementById('lastUpdated').textContent = `Updated: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
-        } else {
-          document.getElementById('lastUpdated').textContent = '';
-        }
-
-        // Summary cards are computed from filteredData in applyFilters()
-
-        // Populate filter options
-        populateFilters(data.filters || {});
-
-        applyFilters();
-      } catch (e) {
-        document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Error loading data</td></tr>';
-        showToast('Failed to load data', 'err');
+/* ======== TABS ======== */
+function initTabs() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      const el = document.getElementById(tab + 'Tab');
+      if (el) el.classList.add('active');
+      // Lazy load late bills on first switch
+      if (tab === 'lateBills' && !lateBillsLoaded) {
+        loadLateBillsData();
       }
-    }
+    });
+  });
+}
 
-    async function triggerRecalculate(autoRefresh = false) {
-      try {
-        document.getElementById('recalculateBtn').disabled = true;
-        document.getElementById('recalculateBtn').textContent = 'Recalculating...';
-        document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Recalculating workflow data... This may take 1-2 minutes.</td></tr>';
-        showToast('Recalculation started. This may take 1-2 minutes.', 'ok');
+/* ======== TOAST ======== */
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.className = 'toast', 3000);
+}
 
-        // Record the time when we started recalculation
-        const recalcStartTime = new Date().toISOString();
-        console.log('[Recalculate] Started at:', recalcStartTime);
+/* ======== COMPLETION TRACKER ======== */
 
-        const resp = await fetch('/api/workflow/recalculate', {
-          method: 'POST',
-          credentials: 'same-origin'
-        });
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          console.error('[Recalculate] API error:', resp.status, errText);
-          throw new Error('Failed to start recalculation: ' + resp.status);
-        }
-
-        console.log('[Recalculate] Background task started successfully');
-
-        // Poll for completion by checking if computedAt is NEWER than when we started
-        if (autoRefresh) {
-          let attempts = 0;
-          const maxAttempts = 90; // 90 * 2s = 180 seconds (3 min) max timeout
-          const pollInterval = setInterval(async () => {
-            attempts++;
-            try {
-              const data = await fetchJSON('/api/workflow');
-              const cacheTime = data.computedAt ? new Date(data.computedAt).getTime() : 0;
-              const startTime = new Date(recalcStartTime).getTime();
-
-              console.log('[Recalculate] Poll #' + attempts + ': cacheTime=' + data.computedAt + ', startTime=' + recalcStartTime);
-
-              // Check if cache is NEWER than when we started (not just that it exists)
-              if (cacheTime > startTime && data.rows && data.rows.length > 0) {
-                clearInterval(pollInterval);
-                document.getElementById('recalculateBtn').disabled = false;
-                document.getElementById('recalculateBtn').textContent = 'Recalculate';
-                showToast('Recalculation complete! (' + data.rows.length + ' accounts)', 'ok');
-                console.log('[Recalculate] Complete! New cache at:', data.computedAt);
-                loadData();
-              } else if (attempts >= maxAttempts) {
-                clearInterval(pollInterval);
-                document.getElementById('recalculateBtn').disabled = false;
-                document.getElementById('recalculateBtn').textContent = 'Recalculate';
-                showToast('Recalculation timed out. Try refreshing.', 'err');
-                console.warn('[Recalculate] Timed out after', attempts, 'attempts');
-                loadData(); // Still load whatever data is available
-              }
-            } catch (e) {
-              console.warn('[Recalculate] Poll error:', e.message);
-              // Keep polling
-            }
-          }, 2000);
-        } else {
-          // Just show message, user will refresh manually
-          setTimeout(() => {
-            document.getElementById('recalculateBtn').disabled = false;
-            document.getElementById('recalculateBtn').textContent = 'Recalculate';
-          }, 2000);
-        }
-      } catch (e) {
-        console.error('[Recalculate] Error:', e);
-        document.getElementById('recalculateBtn').disabled = false;
-        document.getElementById('recalculateBtn').textContent = 'Recalculate';
-        showToast('Failed to start recalculation: ' + e.message, 'err');
-      }
-    }
-
-    function populateFilters(filters) {
-      // Status filters
-      const statusDiv = document.getElementById('statusFilters');
-      statusDiv.innerHTML = (filters.statuses || []).map(s => `
-        <label class="chip">
-          <input type="checkbox" value="${s}" ${filterState.statuses.includes(s) ? 'checked' : ''} />
-          ${s.replace('_', ' ')}
-        </label>
-      `).join('');
-
-      // AP Rep filters
-      const apDiv = document.getElementById('apFilters');
-      apDiv.innerHTML = (filters.apReps || []).map(ap => `
-        <label class="chip">
-          <input type="checkbox" value="${ap}" ${filterState.apReps.includes(ap) ? 'checked' : ''} />
-          ${ap || '(Unassigned)'}
-        </label>
-      `).join('');
-
-      // Property filters
-      const propDiv = document.getElementById('propFilters');
-      propDiv.innerHTML = (filters.properties || []).map(p => `
-        <label class="chip" data-name="${(p.name||'').toLowerCase()}">
-          <input type="checkbox" value="${p.id}" ${filterState.properties.includes(p.id) ? 'checked' : ''} />
-          ${p.name}
-        </label>
-      `).join('');
-
-      // Vendor filters
-      const vendorDiv = document.getElementById('vendorFilters');
-      vendorDiv.innerHTML = (filters.vendors || []).map(v => `
-        <label class="chip" data-name="${(v.name||'').toLowerCase()}">
-          <input type="checkbox" value="${v.id}" ${filterState.vendors.includes(v.id) ? 'checked' : ''} />
-          ${v.name}
-        </label>
-      `).join('');
-
-      // Reason codes for note modal
-      const reasonSelect = document.getElementById('noteReasonCode');
-      reasonSelect.innerHTML = '<option value="">-- Select Reason --</option>' +
-        reasonCodes.map(r => `<option value="${r.code}">${r.label}</option>`).join('');
-    }
-
-    function applyFilters() {
-      let rows = [...allData];
-
-      // Search filter
-      if (filterState.search) {
-        const q = filterState.search.toLowerCase();
-        rows = rows.filter(r =>
-          (r.propertyName || '').toLowerCase().includes(q) ||
-          (r.vendorName || '').toLowerCase().includes(q) ||
-          (r.accountNumber || '').toLowerCase().includes(q) ||
-          (r.apName || '').toLowerCase().includes(q)
-        );
-      }
-
-      // Has Note filter
-      if (filterState.hasNote) {
-        rows = rows.filter(r => r.hasNote);
-      }
-
-      // Status filter
-      if (filterState.statuses.length > 0) {
-        rows = rows.filter(r => filterState.statuses.includes(r.status));
-      }
-
-      // AP Rep filter
-      if (filterState.apReps.length > 0) {
-        rows = rows.filter(r => filterState.apReps.includes(r.apName));
-      }
-
-      // Property filter
-      if (filterState.properties.length > 0) {
-        rows = rows.filter(r => filterState.properties.includes(r.propertyId));
-      }
-
-      // Vendor filter
-      if (filterState.vendors.length > 0) {
-        rows = rows.filter(r => filterState.vendors.includes(r.vendorId));
-      }
-
-      // Sort
-      if (filterState.sortBy === 'urgency') {
-        rows.sort((a, b) => b.urgencyScore - a.urgencyScore || b.daysOverdue - a.daysOverdue);
-      } else if (filterState.sortBy === 'daysOverdue') {
-        rows.sort((a, b) => b.daysOverdue - a.daysOverdue);
-      } else if (filterState.sortBy === 'propertyName') {
-        rows.sort((a, b) => (a.propertyName || '').localeCompare(b.propertyName || ''));
-      } else if (filterState.sortBy === 'vendorName') {
-        rows.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''));
-      } else if (filterState.sortBy === 'accountNumber') {
-        rows.sort((a, b) => (a.accountNumber || '').localeCompare(b.accountNumber || ''));
-      } else if (filterState.sortBy === 'apName') {
-        rows.sort((a, b) => (a.apName || '').localeCompare(b.apName || ''));
-      } else if (filterState.sortBy === 'nextExpectedDate') {
-        rows.sort((a, b) => (a.nextExpectedDate || '').localeCompare(b.nextExpectedDate || ''));
-      }
-
-      filteredData = rows;
-      renderTable();
-      updateSummaryFromFiltered();
-      updateBulkToolbar();
-    }
-
-    function updateSummaryFromFiltered() {
-      const counts = { VERY_LATE: 0, LATE: 0, SLIGHTLY_LATE: 0, DUE_SOON: 0, ON_TRACK: 0 };
-      filteredData.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
-      document.getElementById('countVeryLate').textContent = counts.VERY_LATE;
-      document.getElementById('countLate').textContent = counts.LATE;
-      document.getElementById('countSlightlyLate').textContent = counts.SLIGHTLY_LATE;
-      document.getElementById('countDueSoon').textContent = counts.DUE_SOON;
-      document.getElementById('countOnTrack').textContent = counts.ON_TRACK;
-    }
-
-    function updateBulkToolbar() {
-      const toolbar = document.getElementById('bulkToolbar');
-      const count = selectedKeys.size;
-      document.getElementById('selCount').textContent = count + ' selected';
-      if (count > 0) {
-        toolbar.classList.add('visible');
+function initTrackerEvents() {
+  // Status cards click
+  document.querySelectorAll('#statusCards .summary-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const status = card.dataset.status;
+      if (activeStatus === status) {
+        activeStatus = null;
+        card.classList.remove('active');
       } else {
-        toolbar.classList.remove('visible');
+        document.querySelectorAll('#statusCards .summary-card').forEach(c => c.classList.remove('active'));
+        activeStatus = status;
+        card.classList.add('active');
       }
-      // Update select-all checkbox state
-      const selectAll = document.getElementById('selectAll');
-      if (filteredData.length > 0 && filteredData.every(r => selectedKeys.has(r.accountKey))) {
-        selectAll.checked = true;
-        selectAll.indeterminate = false;
-      } else if (filteredData.some(r => selectedKeys.has(r.accountKey))) {
-        selectAll.checked = false;
-        selectAll.indeterminate = true;
+      renderTracker();
+    });
+  });
+
+  // Search
+  document.getElementById('trackerSearch').addEventListener('input', e => {
+    searchText = e.target.value.toLowerCase();
+    renderTracker();
+  });
+
+  // Recalculate
+  document.getElementById('recalcBtn').addEventListener('click', () => {
+    loadTrackerData(true);
+  });
+
+  // Refresh
+  document.getElementById('refreshBtn').addEventListener('click', () => {
+    loadTrackerData();
+  });
+}
+
+async function loadTrackerData(forceRefresh) {
+  const container = document.getElementById('trackerContent');
+  container.innerHTML = '<div class="loading">Loading completion tracker...</div>';
+  try {
+    const url = '/api/workflow/completion-tracker' + (forceRefresh ? '?refresh=1' : '');
+    const resp = await fetch(url);
+    trackerData = await resp.json();
+    if (trackerData.error) {
+      container.innerHTML = '<div class="loading" style="color:#ef4444">Error: ' + trackerData.error + '</div>';
+      return;
+    }
+    updateStatusCards();
+    renderApCards();
+    renderTracker();
+    document.getElementById('trackerMeta').textContent = 'Generated: ' + (trackerData.generated_at || '');
+  } catch (e) {
+    container.innerHTML = '<div class="loading" style="color:#ef4444">Failed to load: ' + e.message + '</div>';
+  }
+}
+
+function updateStatusCards() {
+  if (!trackerData) return;
+  const s = trackerData.summary.by_status;
+  document.getElementById('ctVeryLate').textContent = s.VERY_LATE || 0;
+  document.getElementById('ctLate').textContent = s.LATE || 0;
+  document.getElementById('ctSlightlyLate').textContent = s.SLIGHTLY_LATE || 0;
+  document.getElementById('ctDueSoon').textContent = s.DUE_SOON || 0;
+  document.getElementById('ctOnTrack').textContent = s.ON_TRACK || 0;
+  document.getElementById('ctComplete').textContent = s.COMPLETE || 0;
+  document.getElementById('ctAll').textContent = trackerData.summary.total_account_months || 0;
+
+  // Overall progress bar
+  const pct = trackerData.summary.percentage || 0;
+  const bar = document.getElementById('overallBar');
+  bar.style.width = pct + '%';
+  bar.className = 'bar-fill ' + (pct >= 90 ? 'green' : pct >= 50 ? 'yellow' : 'red');
+  document.getElementById('overallPct').textContent = pct + '%';
+}
+
+function renderApCards() {
+  if (!trackerData) return;
+  const container = document.getElementById('apCards');
+  const apList = trackerData.ap_summary || [];
+  let html = '';
+  for (const ap of apList) {
+    const healthClass = ap.percentage >= 90 ? 'health-green' : ap.percentage >= 50 ? 'health-yellow' : 'health-red';
+    const isActive = activeAp === ap.ap_name;
+    html += `<div class="ap-card ${healthClass} ${isActive ? 'active' : ''}" data-ap="${ap.ap_name}" onclick="toggleApFilter('${ap.ap_name.replace(/'/g, "\\'")}')" title="${ap.complete}/${ap.total} complete (${ap.percentage}%)">
+      <div class="ap-name">${ap.ap_name}</div>
+      <div class="ap-count">${ap.total} acct-months | ${ap.percentage}%</div>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function toggleApFilter(apName) {
+  if (activeAp === apName) {
+    activeAp = null;
+  } else {
+    activeAp = apName;
+  }
+  // Update AP card active states
+  document.querySelectorAll('#apCards .ap-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.ap === activeAp);
+  });
+  renderTracker();
+}
+
+function renderTracker() {
+  if (!trackerData) return;
+  const container = document.getElementById('trackerContent');
+  const properties = trackerData.properties || [];
+
+  // Filter properties
+  let filtered = properties;
+
+  // AP filter
+  if (activeAp) {
+    filtered = filtered.filter(p => (p.ap_name || 'Unassigned') === activeAp);
+  }
+
+  // Search filter (applied to property name, vendor names, account numbers)
+  if (searchText) {
+    filtered = filtered.filter(p => {
+      const pMatch = (p.property_name || '').toLowerCase().includes(searchText);
+      const itemMatch = (p.items || []).some(it =>
+        (it.vendor_name || '').toLowerCase().includes(searchText) ||
+        (it.account_number || '').toLowerCase().includes(searchText)
+      );
+      return pMatch || itemMatch;
+    });
+  }
+
+  // For each property, filter items by status if active
+  // Also compute filtered counts
+  let filteredProps = filtered.map(p => {
+    let items = p.items || [];
+    if (activeStatus && activeStatus !== 'ALL') {
+      items = items.filter(it => it.status_label === activeStatus);
+    }
+    if (searchText) {
+      items = items.filter(it =>
+        (it.vendor_name || '').toLowerCase().includes(searchText) ||
+        (it.account_number || '').toLowerCase().includes(searchText) ||
+        (p.property_name || '').toLowerCase().includes(searchText)
+      );
+    }
+    if (items.length === 0) return null;
+    const complete = items.filter(it => it.status_label === 'COMPLETE').length;
+    const total = items.length;
+    return { ...p, items, complete_filtered: complete, total_filtered: total,
+             percentage_filtered: total ? Math.round(100 * complete / total * 10) / 10 : 0 };
+  }).filter(Boolean);
+
+  // Sort: lowest completion first
+  filteredProps.sort((a, b) => a.percentage_filtered - b.percentage_filtered || a.property_name.localeCompare(b.property_name));
+
+  if (filteredProps.length === 0) {
+    container.innerHTML = '<div class="loading">No properties match current filters.</div>';
+    return;
+  }
+
+  let html = `<div style="font-size:13px;font-weight:600;margin-bottom:12px;color:#fff">${filteredProps.length} Properties</div><div class="property-grid">`;
+
+  for (const prop of filteredProps) {
+    const pct = prop.percentage_filtered;
+    const statusClass = pct >= 100 ? 'complete' : pct > 0 ? 'partial' : 'missing';
+    const barClass = pct >= 100 ? 'progress-green' : pct > 0 ? 'progress-yellow' : 'progress-red';
+
+    html += `<div class="property-card ${statusClass}" ondblclick="toggleExpand(this)" title="Double-click to expand/collapse">
+      <div class="property-name">${prop.property_name || prop.property_id}</div>
+      ${prop.ap_name ? `<div class="property-ap">${prop.ap_name}</div>` : ''}
+      <div class="property-stats">
+        <span>${prop.complete_filtered}/${prop.total_filtered} complete</span>
+        <span style="font-weight:700;color:${pct >= 100 ? '#10b981' : pct > 0 ? '#f59e0b' : '#ef4444'}">${pct}%</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill ${barClass}" style="width:${pct}%"></div></div>
+      <div class="account-list">`;
+
+    // Sort items: missing first (most overdue first), then complete
+    const sorted = prop.items.slice().sort((a, b) => {
+      const aComplete = a.status_label === 'COMPLETE' ? 1 : 0;
+      const bComplete = b.status_label === 'COMPLETE' ? 1 : 0;
+      if (aComplete !== bComplete) return aComplete - bComplete;
+      if (!aComplete) return b.days_overdue - a.days_overdue; // most overdue first
+      return a.vendor_name.localeCompare(b.vendor_name);
+    });
+
+    for (const item of sorted) {
+      const isComplete = item.status_label === 'COMPLETE';
+      let icon, iconClass;
+      if (isComplete) {
+        icon = '&#10003;'; iconClass = 'ok';
+      } else if (item.status_label === 'DUE_SOON' || item.status_label === 'ON_TRACK') {
+        icon = '&#9711;'; iconClass = 'wait';
       } else {
-        selectAll.checked = false;
-        selectAll.indeterminate = false;
-      }
-    }
-
-    function renderTable() {
-      const tbody = document.getElementById('tableBody');
-      if (filteredData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="14" class="loading">No accounts match filters</td></tr>';
-        return;
+        icon = '&#10007;'; iconClass = 'miss';
       }
 
-      tbody.innerHTML = filteredData.map(r => {
-        const daysClass = r.daysOverdue > 0 ? 'positive' : 'negative';
-        const daysDisplay = r.daysOverdue > 0 ? `+${r.daysOverdue}` : r.daysOverdue;
-        const hasNoteClass = r.hasNote ? 'has-note' : '';
-        const noteIcon = r.hasNote ? '📝' : '➕';
-        const noteBtnClass = r.hasNote ? 'has-note' : '';
-        const noteTitle = r.note ? `${r.note.reasonCode || ''}: ${r.note.customNote || ''}` : 'Add note';
+      const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
+      const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
 
-        return `
-          <tr class="${hasNoteClass}" data-key="${r.accountKey}">
-            <td><input type="checkbox" class="row-select" data-key="${r.accountKey}" ${selectedKeys.has(r.accountKey) ? 'checked' : ''} /></td>
-            <td><button class="note-btn ${noteBtnClass}" title="${noteTitle}" onclick="openNoteModal('${escapeJs(r.accountKey)}')">${noteIcon}</button></td>
-            <td><button class="edit-btn" title="Edit property/vendor mapping" onclick="openEditModal('${escapeJs(r.accountKey)}')">✏️</button></td>
-            <td><span class="status-badge status-${r.status}">${r.status.replace('_', ' ')}</span></td>
-            <td>${r.propertyName || '-'}</td>
-            <td>${r.vendorName || '-'}</td>
-            <td>
-              <span class="acct-copy" title="Click to copy" onclick="event.stopPropagation();copyAcct(this,'${escapeJs(r.accountNumber || '')}')">${r.accountNumber || '-'}</span>${r.isDuplicate ? `<span class="dup-badge" title="POSSIBLE DUPLICATE — also on: ${(r.duplicateOf||[]).join(', ')}">D</span>` : ''}
-              <a href="/search?q=${encodeURIComponent(r.accountNumber || '')}" target="_blank" title="Search this account"
-                 class="search-link" style="margin-left:6px;color:#0284c7;font-size:11px;text-decoration:none"
-                 onclick="event.stopPropagation()">🔍</a>
-            </td>
-            <td>${r.apName || '-'}</td>
-            <td>${fmtDate(r.nextExpectedDate)}</td>
-            <td class="days-overdue ${daysClass}">${daysDisplay}</td>
-            <td>${fmtDate(r.lastBillDate)}</td>
-            <td>${r.lastBillPdfLink ? `<a href="/pdf?k=${encodeURIComponent(r.lastBillPdfLink)}" target="_blank" class="view-link" onclick="event.stopPropagation()">PDF</a>` : '-'}</td>
-            <td>${r.servicePeriodDays || '-'}</td>
-            <td>${r.hasScraper ? `<span class="scraper-badge" title="${r.scraperProvider || 'scraper'}">AUTO</span>` : ''}</td>
-          </tr>
-        `;
-      }).join('');
-    }
+      // Month display: convert "02/2026" to "FEB 2026"
+      const monthDisplay = formatMonth(item.month);
 
-    // Drawer
-    const drawer = document.getElementById('drawer');
-    const drawerMask = document.getElementById('drawerMask');
-    document.getElementById('openDrawer').addEventListener('click', () => {
-      drawer.classList.add('open');
-      drawerMask.classList.add('open');
-    });
-    document.getElementById('closeDrawer').addEventListener('click', closeDrawer);
-    drawerMask.addEventListener('click', closeDrawer);
-
-    function closeDrawer() {
-      drawer.classList.remove('open');
-      drawerMask.classList.remove('open');
-    }
-
-    document.getElementById('applyFilters').addEventListener('click', () => {
-      // Collect filter values from drawer
-      filterState.statuses = [...document.querySelectorAll('#statusFilters input:checked')].map(i => i.value);
-      filterState.apReps = [...document.querySelectorAll('#apFilters input:checked')].map(i => i.value);
-      filterState.properties = [...document.querySelectorAll('#propFilters input:checked')].map(i => i.value);
-      filterState.vendors = [...document.querySelectorAll('#vendorFilters input:checked')].map(i => i.value);
-      filterState.sortBy = document.getElementById('sortBy').value;
-      // Persist AP filter to localStorage
-      localStorage.setItem('workflow_ap_filter', JSON.stringify(filterState.apReps));
-      closeDrawer();
-      applyFilters();
-    });
-
-    document.getElementById('clearFilters').addEventListener('click', () => {
-      filterState = { search: '', hasNote: false, statuses: [], apReps: [], properties: [], vendors: [], sortBy: 'urgency' };
-      document.getElementById('searchBox').value = '';
-      document.getElementById('filterHasNote').checked = false;
-      document.getElementById('sortBy').value = 'urgency';
-      document.querySelectorAll('.drawer input[type=checkbox]').forEach(cb => cb.checked = false);
-      // Clear active summary cards
-      document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
-      localStorage.removeItem('workflow_ap_filter');
-      applyFilters();
-    });
-
-    // Search
-    let searchTimeout;
-    document.getElementById('searchBox').addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        filterState.search = e.target.value;
-        applyFilters();
-      }, 200);
-    });
-
-    // Has Note filter
-    document.getElementById('filterHasNote').addEventListener('change', (e) => {
-      filterState.hasNote = e.target.checked;
-      applyFilters();
-    });
-
-    // Summary card click to filter by status
-    document.querySelectorAll('.summary-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const status = card.dataset.status;
-        const isActive = card.classList.contains('active');
-        document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
-        if (isActive) {
-          filterState.statuses = [];
-        } else {
-          card.classList.add('active');
-          filterState.statuses = [status];
-        }
-        applyFilters();
-      });
-    });
-
-    // Refresh
-    document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
-
-    // Recalculate
-    document.getElementById('recalculateBtn').addEventListener('click', () => triggerRecalculate(true));
-
-    // Property/Vendor search in drawer
-    document.getElementById('propSearch').addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase();
-      document.querySelectorAll('#propFilters .chip').forEach(chip => {
-        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
-      });
-    });
-    document.getElementById('vendorSearch').addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase();
-      document.querySelectorAll('#vendorFilters .chip').forEach(chip => {
-        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
-      });
-    });
-
-    // Note Modal
-    const noteModal = document.getElementById('noteModal');
-
-    function openNoteModal(accountKey) {
-      currentNoteAccountKey = accountKey;
-      const row = allData.find(r => r.accountKey === accountKey);
-      if (!row) return;
-
-      document.getElementById('noteAccountInfo').textContent =
-        `${row.propertyName} | ${row.vendorName} | ${row.accountNumber}`;
-
-      const note = row.note;
-      document.getElementById('noteReasonCode').value = note?.reasonCode || '';
-      document.getElementById('noteCustomText').value = note?.customNote || '';
-
-      noteModal.classList.add('show');
-    }
-
-    document.getElementById('cancelNote').addEventListener('click', () => {
-      noteModal.classList.remove('show');
-      currentNoteAccountKey = null;
-    });
-
-    noteModal.addEventListener('click', (e) => {
-      if (e.target === noteModal) {
-        noteModal.classList.remove('show');
-        currentNoteAccountKey = null;
-      }
-    });
-
-    document.getElementById('clearNote').addEventListener('click', async () => {
-      if (!currentNoteAccountKey) return;
-      if (!confirm('Clear this note?')) return;
-
-      try {
-        const resp = await fetch('/api/workflow/notes', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            accountKey: currentNoteAccountKey,
-            reasonCode: '',
-            customNote: ''
-          })
-        });
-        if (!resp.ok) throw new Error('Failed to clear note');
-        showToast('Note cleared', 'ok');
-        // Update in-memory data
-        const clearedRow = allData.find(r => r.accountKey === currentNoteAccountKey);
-        if (clearedRow) { clearedRow.hasNote = false; clearedRow.note = null; }
-        noteModal.classList.remove('show');
-        currentNoteAccountKey = null;
-        applyFilters();
-      } catch (e) {
-        showToast('Failed to clear note', 'err');
-      }
-    });
-
-    document.getElementById('saveNote').addEventListener('click', async () => {
-      if (!currentNoteAccountKey) return;
-
-      const reasonCode = document.getElementById('noteReasonCode').value;
-      const customNote = document.getElementById('noteCustomText').value.trim();
-
-      try {
-        const resp = await fetch('/api/workflow/notes', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            accountKey: currentNoteAccountKey,
-            reasonCode: reasonCode,
-            customNote: customNote
-          })
-        });
-        if (!resp.ok) throw new Error('Failed to save note');
-        showToast('Note saved', 'ok');
-        // Update in-memory data
-        const savedRow = allData.find(r => r.accountKey === currentNoteAccountKey);
-        if (savedRow) {
-          savedRow.hasNote = !!(reasonCode || customNote);
-          savedRow.note = { reasonCode, customNote };
-        }
-        noteModal.classList.remove('show');
-        currentNoteAccountKey = null;
-        applyFilters();
-      } catch (e) {
-        showToast('Failed to save note', 'err');
-      }
-    });
-
-    // Edit Account Modal
-    const editModal = document.getElementById('editModal');
-    let currentEditAccountKey = null;
-    let allProperties = [];
-    let allVendors = [];
-
-    async function loadCatalogs() {
-      try {
-        const [propsResp, vendorsResp] = await Promise.all([
-          fetch('/api/catalog/properties', {credentials: 'same-origin'}),
-          fetch('/api/catalog/vendors', {credentials: 'same-origin'})
-        ]);
-        const propsData = await propsResp.json();
-        const vendorsData = await vendorsResp.json();
-        allProperties = propsData.items || propsData.properties || [];
-        allVendors = vendorsData.items || vendorsData.vendors || [];
-        console.log('Loaded catalogs:', allProperties.length, 'properties,', allVendors.length, 'vendors');
-      } catch (e) {
-        console.error('Failed to load catalogs:', e);
-      }
-    }
-
-    function openEditModal(accountKey) {
-      currentEditAccountKey = accountKey;
-      const row = allData.find(r => r.accountKey === accountKey);
-      if (!row) return;
-
-      document.getElementById('editAccountNumber').textContent = row.accountNumber;
-      document.getElementById('editCurrentProperty').textContent = row.propertyName || '(none)';
-      document.getElementById('editCurrentVendor').textContent = row.vendorName || '(none)';
-      document.getElementById('editPropertyId').value = row.propertyId || '';
-      document.getElementById('editVendorId').value = row.vendorId || '';
-      document.getElementById('editPropertySearch').value = '';
-      document.getElementById('editVendorSearch').value = '';
-
-      renderPropertyList('');
-      renderVendorList('');
-
-      editModal.classList.add('show');
-    }
-
-    function renderPropertyList(query) {
-      const list = document.getElementById('editPropertyList');
-      const selectedId = document.getElementById('editPropertyId').value;
-      const q = query.toLowerCase();
-      const filtered = allProperties.filter(p =>
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.id || '').toLowerCase().includes(q)
-      ).slice(0, 50);
-
-      list.innerHTML = filtered.map(p => `
-        <div class="item ${p.id == selectedId ? 'selected' : ''}" data-id="${p.id}" data-name="${escapeJs(p.name)}" onclick="selectProperty('${p.id}', '${escapeJs(p.name)}')">
-          <span style="color:#64748b;font-size:11px;margin-right:6px">${p.id}</span> ${p.name}
+      html += `<div class="account-item">
+        <div class="acct-info">
+          <div class="acct-label">${item.vendor_name || 'Unknown'} - ${item.account_number}${scraperTag}</div>
         </div>
-      `).join('') || '<div class="item" style="color:#94a3b8">No matches</div>';
+        <span class="month-badge ${item.status_label}">${monthDisplay}</span>
+        ${stageTag}
+        <span class="status-icon ${iconClass}">${icon}</span>
+      </div>`;
     }
 
-    function renderVendorList(query) {
-      const list = document.getElementById('editVendorList');
-      const selectedId = document.getElementById('editVendorId').value;
-      const q = query.toLowerCase();
-      const filtered = allVendors.filter(v =>
-        (v.name || '').toLowerCase().includes(q) ||
-        (v.id || '').toLowerCase().includes(q) ||
-        (v.code || '').toLowerCase().includes(q)
-      ).slice(0, 50);
+    html += `</div></div>`;
+  }
 
-      list.innerHTML = filtered.map(v => `
-        <div class="item ${v.id == selectedId ? 'selected' : ''}" data-id="${v.id}" data-name="${escapeJs(v.name)}" onclick="selectVendor('${v.id}', '${escapeJs(v.name)}')">
-          <span style="color:#64748b;font-size:11px;margin-right:6px">${v.id}</span>
-          <span style="color:#0284c7;font-size:11px;margin-right:6px">${v.code || ''}</span>
-          ${v.name}
-        </div>
-      `).join('') || '<div class="item" style="color:#94a3b8">No matches</div>';
-    }
+  html += '</div>';
+  container.innerHTML = html;
+}
 
-    function selectProperty(id, name) {
-      document.getElementById('editPropertyId').value = id;
-      document.getElementById('editCurrentProperty').textContent = name;
-      renderPropertyList(document.getElementById('editPropertySearch').value);
-    }
+function toggleExpand(el) {
+  el.classList.toggle('expanded');
+}
 
-    function selectVendor(id, name) {
-      document.getElementById('editVendorId').value = id;
-      document.getElementById('editCurrentVendor').textContent = name;
-      renderVendorList(document.getElementById('editVendorSearch').value);
-    }
+function formatMonth(monthStr) {
+  if (!monthStr) return '';
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  // Handle range format "MM/YYYY-MM/YYYY" for multi-month billing cycles
+  if (monthStr.includes('-')) {
+    const [start, end] = monthStr.split('-');
+    return formatMonth(start) + '-' + formatMonth(end);
+  }
+  const parts = monthStr.split('/');
+  if (parts.length !== 2) return monthStr;
+  const idx = parseInt(parts[0], 10) - 1;
+  return (months[idx] || parts[0]) + ' ' + parts[1];
+}
 
-    document.getElementById('editPropertySearch').addEventListener('input', (e) => {
-      renderPropertyList(e.target.value);
-    });
-    document.getElementById('editPropertySearch').addEventListener('focus', (e) => {
-      e.target.value = '';
-      renderPropertyList('');
-    });
 
-    document.getElementById('editVendorSearch').addEventListener('input', (e) => {
-      renderVendorList(e.target.value);
-    });
-    document.getElementById('editVendorSearch').addEventListener('focus', (e) => {
-      e.target.value = '';
-      renderVendorList('');
-    });
+/* ======== LATE BILLS TABLE TAB ======== */
 
-    document.getElementById('cancelEdit').addEventListener('click', () => {
-      editModal.classList.remove('show');
-      currentEditAccountKey = null;
-    });
+function initLateBillsEvents() {
+  // Search
+  document.getElementById('searchBox').addEventListener('input', () => { applyTableFilters(); });
+  document.getElementById('filterHasNote').addEventListener('change', () => { filterState.hasNote = document.getElementById('filterHasNote').checked; applyTableFilters(); });
 
-    editModal.addEventListener('click', (e) => {
-      if (e.target === editModal) {
-        editModal.classList.remove('show');
-        currentEditAccountKey = null;
+  // Summary card clicks (Late Bills tab)
+  document.querySelectorAll('#summaryCards .summary-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const status = card.dataset.status;
+      if (filterState.status === status) {
+        filterState.status = null;
+        card.classList.remove('active');
+      } else {
+        document.querySelectorAll('#summaryCards .summary-card').forEach(c => c.classList.remove('active'));
+        filterState.status = status;
+        card.classList.add('active');
       }
+      applyTableFilters();
     });
+  });
 
-    document.getElementById('saveEdit').addEventListener('click', async () => {
-      if (!currentEditAccountKey) {
-        console.error('No currentEditAccountKey');
-        return;
-      }
+  // Recalculate
+  document.getElementById('tableRecalcBtn').addEventListener('click', () => triggerRecalculate());
+  document.getElementById('tableRefreshBtn').addEventListener('click', () => loadLateBillsData());
 
-      const newPropertyId = document.getElementById('editPropertyId').value;
-      const newVendorId = document.getElementById('editVendorId').value;
-      const newPropertyName = document.getElementById('editCurrentProperty').textContent;
-      const newVendorName = document.getElementById('editCurrentVendor').textContent;
+  // Drawer
+  document.getElementById('openDrawer').addEventListener('click', () => {
+    document.getElementById('drawer').style.right = '0';
+    document.getElementById('drawerMask').style.opacity = '1';
+    document.getElementById('drawerMask').style.pointerEvents = 'auto';
+  });
+  document.getElementById('closeDrawer').addEventListener('click', closeDrawer);
+  document.getElementById('drawerMask').addEventListener('click', closeDrawer);
+  document.getElementById('drawerApply').addEventListener('click', () => { applyDrawerFilters(); closeDrawer(); });
+  document.getElementById('drawerClear').addEventListener('click', clearDrawerFilters);
 
-      console.log('Saving edit:', {
-        accountKey: currentEditAccountKey,
-        newPropertyId, newPropertyName,
-        newVendorId, newVendorName
-      });
+  // Select all
+  document.getElementById('selectAll').addEventListener('change', e => {
+    const checked = e.target.checked;
+    filteredData.forEach(r => checked ? selectedKeys.add(r.accountKey) : selectedKeys.delete(r.accountKey));
+    renderTable();
+    updateBulkToolbar();
+  });
 
-      if (!newPropertyId || !newVendorId) {
-        showToast('Please select both property and vendor', 'err');
-        console.error('Missing property or vendor ID:', {newPropertyId, newVendorId});
-        return;
-      }
+  // Bulk toolbar
+  document.getElementById('bulkDeselectBtn').addEventListener('click', () => {
+    selectedKeys.clear();
+    document.getElementById('selectAll').checked = false;
+    renderTable();
+    updateBulkToolbar();
+  });
 
-      try {
-        document.getElementById('saveEdit').disabled = true;
-        document.getElementById('saveEdit').textContent = 'Saving...';
+  // Note modal
+  document.getElementById('noteSave').addEventListener('click', saveNote);
+  document.getElementById('noteClear').addEventListener('click', clearNote);
+}
 
-        const payload = {
-          accountKey: currentEditAccountKey,
-          newPropertyId: newPropertyId,
-          newPropertyName: newPropertyName,
-          newVendorId: newVendorId,
-          newVendorName: newVendorName
-        };
-        console.log('POST /api/workflow/accounts/update', payload);
+function closeDrawer() {
+  document.getElementById('drawer').style.right = '-420px';
+  document.getElementById('drawerMask').style.opacity = '0';
+  document.getElementById('drawerMask').style.pointerEvents = 'none';
+}
 
-        const resp = await fetch('/api/workflow/accounts/update', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify(payload)
-        });
+async function loadLateBillsData() {
+  lateBillsLoaded = true;
+  document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Loading...</td></tr>';
+  try {
+    const resp = await fetch('/api/workflow');
+    const data = await resp.json();
+    allData = data.rows || [];
+    reasonCodes = (data.filters || {}).reasonCodes || [];
 
-        console.log('Response status:', resp.status);
-        const respData = await resp.json();
-        console.log('Response data:', respData);
+    // Populate drawer filters
+    populateDrawerFilters(data.filters || {});
+    // Populate note reason codes
+    populateReasonCodes();
 
-        if (!resp.ok) {
-          throw new Error(respData.detail || 'Failed to update');
-        }
-
-        showToast('Account mapping updated. Click Recalculate when done with all changes.', 'ok');
-        // Update in-memory data
-        const editedRow = allData.find(r => r.accountKey === currentEditAccountKey);
-        if (editedRow) {
-          editedRow.propertyId = newPropertyId;
-          editedRow.propertyName = newPropertyName;
-          editedRow.vendorId = newVendorId;
-          editedRow.vendorName = newVendorName;
-          editedRow.accountKey = newPropertyId + '|' + newVendorId + '|' + editedRow.accountNumber;
-        }
-        editModal.classList.remove('show');
-        currentEditAccountKey = null;
-        applyFilters();
-      } catch (e) {
-        showToast('Failed to update: ' + e.message, 'err');
-      } finally {
-        document.getElementById('saveEdit').disabled = false;
-        document.getElementById('saveEdit').textContent = 'Save Changes';
-      }
-    });
-
-    // Delete account (admin only)
-    const deleteBtn = document.getElementById('deleteAccountBtn');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', async () => {
-        if (!currentEditAccountKey) return;
-        const row = allData.find(r => r.accountKey === currentEditAccountKey);
-        const label = row ? `${row.accountNumber} (${row.propertyName} / ${row.vendorName})` : currentEditAccountKey;
-        if (!confirm(`Delete account from tracking?\n\n${label}\n\nThis will archive the account. It can be restored from Manage Accounts.`)) return;
-
-        try {
-          deleteBtn.disabled = true;
-          deleteBtn.textContent = 'Deleting...';
-          const resp = await fetch('/api/workflow/accounts/archive', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            credentials: 'same-origin',
-            body: JSON.stringify({ account_keys: [currentEditAccountKey], reason: 'manual_delete' })
-          });
-          if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.error || 'Failed to delete');
-          }
-          showToast('Account archived. Click Recalculate to refresh.', 'ok');
-          allData = allData.filter(r => r.accountKey !== currentEditAccountKey);
-          editModal.classList.remove('show');
-          currentEditAccountKey = null;
-          applyFilters();
-        } catch (e) {
-          showToast('Failed to delete: ' + e.message, 'err');
-        } finally {
-          deleteBtn.disabled = false;
-          deleteBtn.textContent = 'Delete Account';
-        }
-      });
+    if (data.cacheStatus === 'empty') {
+      document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Cache empty. Click Recalculate to generate data.</td></tr>';
+      return;
     }
 
-    // Load catalogs on page load
+    document.getElementById('lastUpdated').textContent = data.computedAt ? 'Updated: ' + data.computedAt : '';
+    applyTableFilters();
+
+    // Load catalogs for edit modal
     loadCatalogs();
+  } catch (e) {
+    document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading" style="color:#ef4444">Error: ' + e.message + '</td></tr>';
+  }
+}
 
-    // ========== CHECKBOX SELECTION ==========
-    document.getElementById('selectAll').addEventListener('change', (e) => {
-      if (e.target.checked) {
-        filteredData.forEach(r => selectedKeys.add(r.accountKey));
-      } else {
-        filteredData.forEach(r => selectedKeys.delete(r.accountKey));
-      }
-      document.querySelectorAll('#tableBody .row-select').forEach(cb => cb.checked = e.target.checked);
-      updateBulkToolbar();
+function populateDrawerFilters(filters) {
+  const statuses = ['VERY_LATE', 'LATE', 'SLIGHTLY_LATE', 'DUE_SOON', 'ON_TRACK'];
+  const statusContainer = document.getElementById('drawerStatusFilters');
+  statusContainer.innerHTML = statuses.map(s => `<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" value="${s}" checked /> ${s.replace(/_/g,' ')}</label>`).join('');
+
+  const apContainer = document.getElementById('drawerApFilters');
+  apContainer.innerHTML = (filters.apReps || []).map(a => `<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" value="${a}" checked /> ${a}</label>`).join('');
+
+  const propContainer = document.getElementById('drawerPropFilters');
+  propContainer.innerHTML = (filters.properties || []).map(p => `<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" value="${p.id}" checked /> ${p.name}</label>`).join('');
+
+  const vendorContainer = document.getElementById('drawerVendorFilters');
+  vendorContainer.innerHTML = (filters.vendors || []).map(v => `<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" value="${v.id}" checked /> ${v.name}</label>`).join('');
+
+  // Search within drawer
+  document.getElementById('drawerPropSearch').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    propContainer.querySelectorAll('label').forEach(l => {
+      l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
     });
-
-    document.getElementById('tableBody').addEventListener('change', (e) => {
-      if (!e.target.classList.contains('row-select')) return;
-      const key = e.target.dataset.key;
-      if (e.target.checked) { selectedKeys.add(key); } else { selectedKeys.delete(key); }
-      updateBulkToolbar();
+  });
+  document.getElementById('drawerVendorSearch').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    vendorContainer.querySelectorAll('label').forEach(l => {
+      l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
     });
+  });
+}
 
-    document.getElementById('deselectAllBtn').addEventListener('click', () => {
-      selectedKeys.clear();
-      document.querySelectorAll('#tableBody .row-select').forEach(cb => cb.checked = false);
-      updateBulkToolbar();
-    });
+function populateReasonCodes() {
+  const sel = document.getElementById('noteReasonCode');
+  sel.innerHTML = '<option value="">-- Select --</option>';
+  for (const rc of reasonCodes) {
+    sel.innerHTML += `<option value="${rc}">${rc}</option>`;
+  }
+}
 
-    // ========== BULK VENDOR ==========
-    document.getElementById('bulkVendorBtn').addEventListener('click', () => {
-      const count = selectedKeys.size;
-      if (count === 0) return;
-      document.getElementById('bulkVendorTitle').textContent = `Set Vendor (${count} account${count > 1 ? 's' : ''})`;
-      document.getElementById('bulkVendorCount').textContent = count;
-      document.getElementById('bulkVendorId').value = '';
-      document.getElementById('bulkVendorSearch').value = '';
-      document.getElementById('bulkVendorSelected').innerHTML = 'Selected: <strong>none</strong>';
-      try { renderBulkVendorList(''); } catch(e) { console.error('renderBulkVendorList error:', e); }
-      document.getElementById('bulkVendorModal').classList.add('show');
-    });
+function applyDrawerFilters() {
+  // Read checked values from drawer
+  filterState.ap = [...document.querySelectorAll('#drawerApFilters input:checked')].map(i => i.value);
+  filterState.properties = [...document.querySelectorAll('#drawerPropFilters input:checked')].map(i => i.value);
+  filterState.vendors = [...document.querySelectorAll('#drawerVendorFilters input:checked')].map(i => i.value);
+  filterState.sort = document.getElementById('sortBy').value;
+  applyTableFilters();
+}
 
-    function renderBulkVendorList(query) {
-      const list = document.getElementById('bulkVendorList');
-      const selectedId = document.getElementById('bulkVendorId').value;
-      const q = query.toLowerCase();
-      const filtered = allVendors.filter(v =>
-        (v.name || '').toLowerCase().includes(q) ||
-        (v.id || '').toLowerCase().includes(q) ||
-        (v.code || '').toLowerCase().includes(q)
-      ).slice(0, 50);
-      list.innerHTML = filtered.map(v => {
-        const div = document.createElement('div');
-        div.className = 'item' + (v.id == selectedId ? ' selected' : '');
-        div.dataset.vid = v.id;
-        div.dataset.vname = v.name || '';
-        div.innerHTML = `<span style="color:#64748b;font-size:11px;margin-right:6px">${v.id}</span><span style="color:#0284c7;font-size:11px;margin-right:6px">${v.code || ''}</span>${v.name || ''}`;
-        return div.outerHTML;
-      }).join('') || '<div class="item" style="color:#94a3b8">No matches</div>';
+function clearDrawerFilters() {
+  document.querySelectorAll('#drawer input[type=checkbox]').forEach(i => i.checked = true);
+  document.getElementById('sortBy').value = 'urgency';
+  filterState = {status: null, ap: [], properties: [], vendors: [], hasNote: false, sort: 'urgency'};
+  applyTableFilters();
+}
+
+function applyTableFilters() {
+  const search = document.getElementById('searchBox').value.toLowerCase();
+  filteredData = allData.filter(r => {
+    if (filterState.status && r.status !== filterState.status) return false;
+    if (filterState.hasNote && !r.hasNote) return false;
+    if (search) {
+      const hay = (r.propertyName + ' ' + r.vendorName + ' ' + r.accountNumber + ' ' + r.apName).toLowerCase();
+      if (!hay.includes(search)) return false;
     }
+    if (filterState.ap.length && !filterState.ap.includes(r.apName)) return false;
+    if (filterState.properties.length && !filterState.properties.includes(r.propertyId)) return false;
+    if (filterState.vendors.length && !filterState.vendors.includes(r.vendorId)) return false;
+    return true;
+  });
 
-    document.getElementById('bulkVendorList').addEventListener('click', (e) => {
-      const item = e.target.closest('.item[data-vid]');
-      if (!item) return;
-      document.getElementById('bulkVendorId').value = item.dataset.vid;
-      document.getElementById('bulkVendorSelected').innerHTML = 'Selected: <strong>' + item.dataset.vname + '</strong>';
-      renderBulkVendorList(document.getElementById('bulkVendorSearch').value);
-    });
+  // Sort
+  const sortKey = filterState.sort || 'urgency';
+  filteredData.sort((a, b) => {
+    if (sortKey === 'urgency') return (-a.urgencyScore + b.urgencyScore) || (-a.daysOverdue + b.daysOverdue);
+    if (sortKey === 'daysOverdue') return -a.daysOverdue + b.daysOverdue;
+    const av = a[sortKey] || '', bv = b[sortKey] || '';
+    return typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+  });
 
-    document.getElementById('bulkVendorSearch').addEventListener('input', (e) => {
-      renderBulkVendorList(e.target.value);
-    });
+  updateTableSummary();
+  renderTable();
+}
 
-    document.getElementById('bulkVendorModal').addEventListener('click', (e) => {
-      if (e.target.id === 'bulkVendorModal') e.target.classList.remove('show');
-    });
+function updateTableSummary() {
+  let counts = {VERY_LATE:0, LATE:0, SLIGHTLY_LATE:0, DUE_SOON:0, ON_TRACK:0};
+  filteredData.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
+  document.getElementById('countVeryLate').textContent = counts.VERY_LATE;
+  document.getElementById('countLate').textContent = counts.LATE;
+  document.getElementById('countSlightlyLate').textContent = counts.SLIGHTLY_LATE;
+  document.getElementById('countDueSoon').textContent = counts.DUE_SOON;
+  document.getElementById('countOnTrack').textContent = counts.ON_TRACK;
+}
 
-    document.getElementById('bulkVendorApply').addEventListener('click', async () => {
-      const vendorId = document.getElementById('bulkVendorId').value;
-      if (!vendorId) { showToast('Please select a vendor', 'err'); return; }
-      const vendorName = document.getElementById('bulkVendorSelected').querySelector('strong').textContent;
-      const keys = [...selectedKeys];
-      const btn = document.getElementById('bulkVendorApply');
-      btn.disabled = true; btn.textContent = 'Saving...';
+function escapeHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escapeJs(s) {
+  return String(s || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"');
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  if (!filteredData.length) {
+    tbody.innerHTML = '<tr><td colspan="14" class="loading">No matching accounts.</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const r of filteredData) {
+    const checked = selectedKeys.has(r.accountKey) ? 'checked' : '';
+    const noteIcon = r.hasNote ? '<span title="Has note" style="cursor:pointer">&#128221;</span>' : '<span style="opacity:.3;cursor:pointer">&#10133;</span>';
+    const statusBadge = `<span style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600" class="status-${r.status}">${r.status.replace(/_/g,' ')}</span>`;
+    const daysClass = r.daysOverdue > 0 ? 'positive' : 'negative';
+    const scraperBadge = r.hasScraper ? '<span style="background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700">SCR</span>' : '';
+    const viewLink = r.lastBillKeyDate ? `<a href="/invoices?date=${r.lastBillKeyDate}#${r.lastBillPdfId}" target="_blank" style="color:#0284c7;text-decoration:none;font-size:12px;font-weight:600">View</a>` : '';
+    const dupBadge = r.isDuplicate ? `<span style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:5px;cursor:help" title="${escapeHtml((r.duplicateOf||[]).join(', '))}">DUP</span>` : '';
+    const rowClass = r.hasNote ? ' style="background:rgba(251,191,36,0.1)"' : '';
+
+    html += `<tr${rowClass}>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px"><input type="checkbox" class="row-select" ${checked} onchange="toggleSelect('${escapeJs(r.accountKey)}', this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#0ea5e9" /></td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px"><span onclick="openNoteModal('${escapeJs(r.accountKey)}','${escapeJs(r.propertyName)}','${escapeJs(r.vendorName)}','${escapeJs(r.accountNumber)}')" style="cursor:pointer">${noteIcon}</span></td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px"><span onclick="openEditModal('${escapeJs(r.accountKey)}','${escapeJs(r.propertyId)}','${escapeJs(r.propertyName)}','${escapeJs(r.vendorId)}','${escapeJs(r.vendorName)}','${escapeJs(r.accountNumber)}')" style="cursor:pointer;opacity:.5" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">&#9998;</span></td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${statusBadge}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${escapeHtml(r.propertyName)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${escapeHtml(r.vendorName)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px"><span style="cursor:pointer;border-bottom:1px dashed #94a3b8" onclick="navigator.clipboard.writeText('${escapeJs(r.accountNumber)}');showToast('Copied!','ok')" title="Click to copy">${escapeHtml(r.accountNumber)}</span>${dupBadge}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${escapeHtml(r.apName)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${r.nextExpectedDate || ''}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:600;color:${r.daysOverdue > 0 ? '#b91c1c' : '#166534'}">${r.daysOverdue}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${r.lastBillDate || ''}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${viewLink}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${r.servicePeriodDays || ''}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px">${scraperBadge}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function toggleSelect(key, checked) {
+  if (checked) selectedKeys.add(key); else selectedKeys.delete(key);
+  updateBulkToolbar();
+}
+
+function updateBulkToolbar() {
+  const toolbar = document.getElementById('bulkToolbar');
+  const count = selectedKeys.size;
+  document.getElementById('selCount').textContent = count + ' selected';
+  toolbar.style.bottom = count > 0 ? '24px' : '-70px';
+}
+
+/* Note modal */
+let currentNoteKey = '';
+function openNoteModal(accountKey, propName, vendorName, acctNum) {
+  currentNoteKey = accountKey;
+  document.getElementById('noteAccountInfo').textContent = `${propName} / ${vendorName} / ${acctNum}`;
+  const existing = allData.find(r => r.accountKey === accountKey);
+  const note = existing && existing.note;
+  document.getElementById('noteReasonCode').value = (note && note.reasonCode) || '';
+  document.getElementById('noteText').value = (note && note.notes) || '';
+  document.getElementById('noteModal').style.display = 'flex';
+}
+
+async function saveNote() {
+  const fd = new FormData();
+  fd.append('accountKey', currentNoteKey);
+  fd.append('reasonCode', document.getElementById('noteReasonCode').value);
+  fd.append('notes', document.getElementById('noteText').value);
+  try {
+    const resp = await fetch('/api/workflow/notes', {method:'POST', body:fd});
+    const data = await resp.json();
+    if (data.ok) {
+      showToast('Note saved', 'ok');
+      document.getElementById('noteModal').style.display = 'none';
+      // Update in-memory
+      const row = allData.find(r => r.accountKey === currentNoteKey);
+      if (row) {
+        row.note = {reasonCode: document.getElementById('noteReasonCode').value, notes: document.getElementById('noteText').value};
+        row.hasNote = true;
+      }
+      applyTableFilters();
+    } else {
+      showToast('Error saving note', 'err');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+}
+
+async function clearNote() {
+  const fd = new FormData();
+  fd.append('accountKey', currentNoteKey);
+  fd.append('clear', '1');
+  try {
+    await fetch('/api/workflow/notes', {method:'POST', body:fd});
+    showToast('Note cleared', 'ok');
+    document.getElementById('noteModal').style.display = 'none';
+    const row = allData.find(r => r.accountKey === currentNoteKey);
+    if (row) { row.note = null; row.hasNote = false; }
+    applyTableFilters();
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+}
+
+/* Edit modal */
+let currentEditKey = '';
+let currentEditProp = '';
+let currentEditVendor = '';
+
+function openEditModal(accountKey, propId, propName, vendorId, vendorName, acctNum) {
+  currentEditKey = accountKey;
+  currentEditProp = propId;
+  currentEditVendor = vendorId;
+  document.getElementById('editAccountInfo').textContent = `${acctNum} — ${propName} / ${vendorName}`;
+  document.getElementById('editModal').style.display = 'flex';
+  renderEditPropList();
+  renderEditVendorList();
+}
+
+async function loadCatalogs() {
+  try {
+    const [propResp, vendResp] = await Promise.all([
+      fetch('/api/properties'),
+      fetch('/api/vendors')
+    ]);
+    catalogProperties = await propResp.json();
+    catalogVendors = await vendResp.json();
+  } catch (e) { /* non-fatal */ }
+}
+
+function renderEditPropList() {
+  const search = (document.getElementById('editPropSearch').value || '').toLowerCase();
+  const list = document.getElementById('editPropList');
+  const filtered = catalogProperties.filter(p => !search || (p.name || '').toLowerCase().includes(search));
+  list.innerHTML = filtered.slice(0, 50).map(p =>
+    `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px${p.id === currentEditProp ? ';background:#dbeafe;font-weight:600' : ''}" onclick="currentEditProp='${p.id}';renderEditPropList()" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='${p.id === currentEditProp ? '#dbeafe' : ''}'">${escapeHtml(p.name)}</div>`
+  ).join('');
+  document.getElementById('editPropSearch').oninput = () => renderEditPropList();
+}
+
+function renderEditVendorList() {
+  const search = (document.getElementById('editVendorSearch').value || '').toLowerCase();
+  const list = document.getElementById('editVendorList');
+  const filtered = catalogVendors.filter(v => !search || (v.name || '').toLowerCase().includes(search));
+  list.innerHTML = filtered.slice(0, 50).map(v =>
+    `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px${v.id === currentEditVendor ? ';background:#dbeafe;font-weight:600' : ''}" onclick="currentEditVendor='${v.id}';renderEditVendorList()" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='${v.id === currentEditVendor ? '#dbeafe' : ''}'">${escapeHtml(v.name)}</div>`
+  ).join('');
+  document.getElementById('editVendorSearch').oninput = () => renderEditVendorList();
+}
+
+document.getElementById('editSave')?.addEventListener('click', async () => {
+  const fd = new FormData();
+  fd.append('accountKey', currentEditKey);
+  fd.append('propertyId', currentEditProp);
+  fd.append('vendorId', currentEditVendor);
+  try {
+    const resp = await fetch('/api/workflow/accounts/update', {method:'POST', body:fd});
+    const data = await resp.json();
+    if (data.ok) {
+      showToast('Account updated', 'ok');
+      document.getElementById('editModal').style.display = 'none';
+      loadLateBillsData();
+    } else {
+      showToast(data.error || 'Error', 'err');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+});
+
+document.getElementById('editDelete')?.addEventListener('click', async () => {
+  if (!confirm('Delete this account from tracking?')) return;
+  const fd = new FormData();
+  fd.append('accountKey', currentEditKey);
+  fd.append('action', 'archive');
+  try {
+    const resp = await fetch('/api/workflow/accounts/archive', {method:'POST', body:fd});
+    const data = await resp.json();
+    if (data.ok) {
+      showToast('Account archived', 'ok');
+      document.getElementById('editModal').style.display = 'none';
+      loadLateBillsData();
+    } else {
+      showToast(data.error || 'Error', 'err');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+});
+
+/* Recalculate */
+async function triggerRecalculate() {
+  document.getElementById('tableRecalcBtn').disabled = true;
+  document.getElementById('tableRecalcBtn').textContent = 'Recalculating...';
+  showToast('Recalculation started...', 'ok');
+  try {
+    await fetch('/api/workflow/recalculate', {method:'POST'});
+    // Poll for completion
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
       try {
-        const resp = await fetch('/api/workflow/accounts/bulk-update', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({ accountKeys: keys, newVendorId: vendorId, newVendorName: vendorName })
-        });
-        if (!resp.ok) throw new Error('Failed to bulk update');
-        const result = await resp.json();
-        // Update in-memory and recompute accountKeys
-        const keySet = new Set(keys);
-        allData.forEach(r => {
-          if (keySet.has(r.accountKey)) {
-            r.vendorId = vendorId;
-            r.vendorName = vendorName;
-            r.accountKey = r.propertyId + '|' + vendorId + '|' + r.accountNumber;
+        const resp = await fetch('/api/workflow');
+        const data = await resp.json();
+        if (data.computedAt || attempts > 30) {
+          clearInterval(poll);
+          document.getElementById('tableRecalcBtn').disabled = false;
+          document.getElementById('tableRecalcBtn').textContent = 'Recalculate';
+          if (data.computedAt) {
+            showToast('Recalculation complete!', 'ok');
+            allData = data.rows || [];
+            applyTableFilters();
+            document.getElementById('lastUpdated').textContent = 'Updated: ' + data.computedAt;
           }
-        });
-        selectedKeys.clear();
-        document.getElementById('bulkVendorModal').classList.remove('show');
-        applyFilters();
-        showToast(`Vendor updated for ${result.updatedCount} accounts. Click Recalculate when done.`, 'ok');
-      } catch (e) {
-        showToast('Bulk vendor update failed: ' + e.message, 'err');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = `Apply to ${keys.length} accounts`;
-      }
-    });
-
-    // ========== BULK REASON CODE ==========
-    document.getElementById('bulkNoteBtn').addEventListener('click', () => {
-      const count = selectedKeys.size;
-      if (count === 0) return;
-      document.getElementById('bulkNoteTitle').textContent = `Set Reason Code (${count} account${count > 1 ? 's' : ''})`;
-      document.getElementById('bulkNoteCount').textContent = count;
-      document.getElementById('bulkNoteReasonCode').value = '';
-      document.getElementById('bulkNoteCustomText').value = '';
-      // Populate reason codes dropdown
-      const sel = document.getElementById('bulkNoteReasonCode');
-      sel.innerHTML = '<option value="">-- Select Reason --</option>' +
-        reasonCodes.map(r => `<option value="${r.code}">${r.label}</option>`).join('');
-      document.getElementById('bulkNoteModal').classList.add('show');
-    });
-
-    document.getElementById('bulkNoteModal').addEventListener('click', (e) => {
-      if (e.target.id === 'bulkNoteModal') e.target.classList.remove('show');
-    });
-
-    document.getElementById('bulkNoteApply').addEventListener('click', async () => {
-      const reasonCode = document.getElementById('bulkNoteReasonCode').value;
-      const customNote = document.getElementById('bulkNoteCustomText').value.trim();
-      if (!reasonCode && !customNote) { showToast('Please select a reason code or enter a note', 'err'); return; }
-      const keys = [...selectedKeys];
-      const btn = document.getElementById('bulkNoteApply');
-      btn.disabled = true; btn.textContent = 'Saving...';
-      try {
-        const resp = await fetch('/api/workflow/notes/bulk', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({ accountKeys: keys, reasonCode, customNote })
-        });
-        if (!resp.ok) throw new Error('Failed to bulk save notes');
-        const result = await resp.json();
-        // Update in-memory
-        const keySet = new Set(keys);
-        allData.forEach(r => {
-          if (keySet.has(r.accountKey)) {
-            r.hasNote = true;
-            r.note = { reasonCode, customNote };
-          }
-        });
-        selectedKeys.clear();
-        document.getElementById('bulkNoteModal').classList.remove('show');
-        applyFilters();
-        showToast(`Reason code set for ${result.updatedCount} accounts`, 'ok');
-      } catch (e) {
-        showToast('Bulk note update failed: ' + e.message, 'err');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = `Apply to ${keys.length} accounts`;
-      }
-    });
-
-    // Column sorting
-    document.querySelectorAll('#workflowTable th[data-col]').forEach(th => {
-      th.addEventListener('click', () => {
-        const col = th.dataset.col;
-        if (col === 'note') return; // Don't sort by note column
-        filterState.sortBy = col;
-        document.getElementById('sortBy').value = col;
-        applyFilters();
-      });
-    });
-
-    // ========== AP PRIORITY TAB ==========
-    let priorityData = [];
-    let filteredPriorityData = [];
-    let prioritySearch = '';
-    let prioritySortBy = 'avgAmount';
-    let prioritySortDir = 'desc';
-    let priorityLoaded = false;
-
-    async function loadPriorityData() {
-      try {
-        document.getElementById('priorityTableBody').innerHTML = '<tr><td colspan="8" class="loading">Loading AP Priority data...</td></tr>';
-        const data = await fetchJSON('/api/workflow/ap-priority');
-
-        priorityData = data.rows || [];
-        priorityLoaded = true;
-
-        // Update summary
-        document.getElementById('priorityCount').textContent = data.totalCount || 0;
-        document.getElementById('priorityMagnitude').textContent = '$' + (data.totalMagnitude || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        document.getElementById('priorityPeriod').textContent = data.upcomingUbiPeriod || '-';
-
-        if (data.computedAt) {
-          const d = new Date(data.computedAt);
-          document.getElementById('priorityLastUpdated').textContent = `Computed: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
         }
-
-        // Populate filter options
-        if (data.filters) {
-          populatePriorityFilters(data.filters);
-        }
-
-        applyPriorityFilters();
-      } catch (e) {
-        document.getElementById('priorityTableBody').innerHTML = '<tr><td colspan="8" class="loading">Error loading data</td></tr>';
-        showToast('Failed to load AP Priority data', 'err');
-      }
-    }
-
-    function applyPriorityFilters() {
-      let rows = [...priorityData];
-
-      // Search filter
-      if (prioritySearch) {
-        const q = prioritySearch.toLowerCase();
-        rows = rows.filter(r =>
-          (r.propertyName || '').toLowerCase().includes(q) ||
-          (r.vendorName || '').toLowerCase().includes(q) ||
-          (r.accountNumber || '').toLowerCase().includes(q) ||
-          (r.apName || '').toLowerCase().includes(q)
-        );
-      }
-
-      // Sort
-      rows.sort((a, b) => {
-        let aVal = a[prioritySortBy];
-        let bVal = b[prioritySortBy];
-        if (typeof aVal === 'string') {
-          return prioritySortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-        }
-        return prioritySortDir === 'asc' ? aVal - bVal : bVal - aVal;
-      });
-
-      filteredPriorityData = rows;
-      renderPriorityTable();
-    }
-
-    function renderPriorityTable() {
-      const tbody = document.getElementById('priorityTableBody');
-      if (filteredPriorityData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No accounts match filters</td></tr>';
-        return;
-      }
-
-      tbody.innerHTML = filteredPriorityData.map(r => {
-        const monthsClass = r.monthsBehind >= 3 ? 'months-3' : (r.monthsBehind >= 2 ? 'months-2' : 'months-1');
-        const avgAmtFmt = '$' + (r.avgAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-
-        return `
-          <tr>
-            <td class="amount-col">${avgAmtFmt}</td>
-            <td>${r.propertyName || '-'}</td>
-            <td>${r.vendorName || '-'}</td>
-            <td>
-              <span class="acct-copy" title="Click to copy" onclick="event.stopPropagation();copyAcct(this,'${escapeJs(r.accountNumber || '')}')">${r.accountNumber || '-'}</span>
-              <a href="/search?q=${encodeURIComponent(r.accountNumber || '')}" target="_blank" title="Search this account"
-                 class="search-link" style="margin-left:6px;color:#0284c7;font-size:11px;text-decoration:none">🔍</a>
-            </td>
-            <td>${r.apName || '-'}</td>
-            <td><span class="months-badge ${monthsClass}">${r.monthsBehind} month${r.monthsBehind > 1 ? 's' : ''}</span></td>
-            <td>${r.lastUbiPeriod || '-'}</td>
-            <td>${r.historicalBillCount || '-'}</td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    // Priority search
-    let prioritySearchTimeout;
-    document.getElementById('prioritySearchBox').addEventListener('input', (e) => {
-      clearTimeout(prioritySearchTimeout);
-      prioritySearchTimeout = setTimeout(() => {
-        prioritySearch = e.target.value;
-        applyPriorityFilters();
-      }, 200);
-    });
-
-    // Priority refresh
-    document.getElementById('priorityRefreshBtn').addEventListener('click', () => loadPriorityData());
-
-    // Priority column sorting
-    document.querySelectorAll('#priorityTable th[data-col]').forEach(th => {
-      th.addEventListener('click', () => {
-        const col = th.dataset.col;
-        if (prioritySortBy === col) {
-          prioritySortDir = prioritySortDir === 'asc' ? 'desc' : 'asc';
-        } else {
-          prioritySortBy = col;
-          prioritySortDir = col === 'avgAmount' || col === 'monthsBehind' ? 'desc' : 'asc';
-        }
-        applyPriorityFilters();
-      });
-    });
-
-    // Priority filter state
-    let priorityFilterState = {
-      apReps: [],
-      properties: [],
-      vendors: [],
-      monthsBehind: []
-    };
-
-    // Priority Filter Drawer
-    const priorityDrawer = document.getElementById('priorityDrawer');
-    const priorityDrawerMask = document.getElementById('priorityDrawerMask');
-
-    document.getElementById('priorityFilterBtn').addEventListener('click', () => {
-      priorityDrawer.classList.add('open');
-      priorityDrawerMask.classList.add('open');
-    });
-
-    document.getElementById('closePriorityDrawer').addEventListener('click', closePriorityDrawer);
-    priorityDrawerMask.addEventListener('click', closePriorityDrawer);
-
-    function closePriorityDrawer() {
-      priorityDrawer.classList.remove('open');
-      priorityDrawerMask.classList.remove('open');
-    }
-
-    function populatePriorityFilters(filters) {
-      // AP Rep filters
-      const apDiv = document.getElementById('priorityApFilters');
-      apDiv.innerHTML = (filters.apReps || []).map(ap => `
-        <label class="chip">
-          <input type="checkbox" value="${ap}" ${priorityFilterState.apReps.includes(ap) ? 'checked' : ''} />
-          ${ap || '(Unassigned)'}
-        </label>
-      `).join('');
-
-      // Property filters
-      const propDiv = document.getElementById('priorityPropFilters');
-      propDiv.innerHTML = (filters.properties || []).map(p => `
-        <label class="chip" data-name="${(p.name||'').toLowerCase()}">
-          <input type="checkbox" value="${p.id}" ${priorityFilterState.properties.includes(p.id) ? 'checked' : ''} />
-          ${p.name}
-        </label>
-      `).join('');
-
-      // Vendor filters
-      const vendorDiv = document.getElementById('priorityVendorFilters');
-      vendorDiv.innerHTML = (filters.vendors || []).map(v => `
-        <label class="chip" data-name="${(v.name||'').toLowerCase()}">
-          <input type="checkbox" value="${v.id}" ${priorityFilterState.vendors.includes(v.id) ? 'checked' : ''} />
-          ${v.name}
-        </label>
-      `).join('');
-    }
-
-    document.getElementById('applyPriorityFilters').addEventListener('click', () => {
-      priorityFilterState.apReps = [...document.querySelectorAll('#priorityApFilters input:checked')].map(i => i.value);
-      priorityFilterState.properties = [...document.querySelectorAll('#priorityPropFilters input:checked')].map(i => i.value);
-      priorityFilterState.vendors = [...document.querySelectorAll('#priorityVendorFilters input:checked')].map(i => i.value);
-      priorityFilterState.monthsBehind = [...document.querySelectorAll('#priorityMonthsFilters input:checked')].map(i => i.value);
-      prioritySortBy = document.getElementById('prioritySortBy').value;
-      prioritySortDir = (prioritySortBy === 'avgAmount' || prioritySortBy === 'monthsBehind') ? 'desc' : 'asc';
-      closePriorityDrawer();
-      applyPriorityFilters();
-    });
-
-    document.getElementById('clearPriorityFilters').addEventListener('click', () => {
-      priorityFilterState = { apReps: [], properties: [], vendors: [], monthsBehind: [] };
-      document.getElementById('prioritySearchBox').value = '';
-      document.getElementById('prioritySortBy').value = 'avgAmount';
-      document.querySelectorAll('#priorityDrawer input[type=checkbox]').forEach(cb => cb.checked = false);
-      prioritySearch = '';
-      prioritySortBy = 'avgAmount';
-      prioritySortDir = 'desc';
-      applyPriorityFilters();
-    });
-
-    // Property/Vendor search in priority drawer
-    document.getElementById('priorityPropSearch').addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase();
-      document.querySelectorAll('#priorityPropFilters .chip').forEach(chip => {
-        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
-      });
-    });
-    document.getElementById('priorityVendorSearch').addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase();
-      document.querySelectorAll('#priorityVendorFilters .chip').forEach(chip => {
-        chip.style.display = chip.dataset.name.includes(q) ? '' : 'none';
-      });
-    });
-
-    // Update applyPriorityFilters to use filter state
-    const originalApplyPriorityFilters = applyPriorityFilters;
-    applyPriorityFilters = function() {
-      let rows = [...priorityData];
-
-      // Search filter
-      if (prioritySearch) {
-        const q = prioritySearch.toLowerCase();
-        rows = rows.filter(r =>
-          (r.propertyName || '').toLowerCase().includes(q) ||
-          (r.vendorName || '').toLowerCase().includes(q) ||
-          (r.accountNumber || '').toLowerCase().includes(q) ||
-          (r.apName || '').toLowerCase().includes(q)
-        );
-      }
-
-      // AP Rep filter
-      if (priorityFilterState.apReps.length > 0) {
-        rows = rows.filter(r => priorityFilterState.apReps.includes(r.apName));
-      }
-
-      // Property filter
-      if (priorityFilterState.properties.length > 0) {
-        rows = rows.filter(r => priorityFilterState.properties.includes(r.propertyId));
-      }
-
-      // Vendor filter
-      if (priorityFilterState.vendors.length > 0) {
-        rows = rows.filter(r => priorityFilterState.vendors.includes(r.vendorId));
-      }
-
-      // Months behind filter
-      if (priorityFilterState.monthsBehind.length > 0) {
-        rows = rows.filter(r => {
-          if (priorityFilterState.monthsBehind.includes('3') && r.monthsBehind >= 3) return true;
-          if (priorityFilterState.monthsBehind.includes('2') && r.monthsBehind === 2) return true;
-          if (priorityFilterState.monthsBehind.includes('1') && r.monthsBehind === 1) return true;
-          return false;
-        });
-      }
-
-      // Sort
-      rows.sort((a, b) => {
-        let aVal = a[prioritySortBy];
-        let bVal = b[prioritySortBy];
-        if (typeof aVal === 'string') {
-          return prioritySortDir === 'asc' ? (aVal||'').localeCompare(bVal||'') : (bVal||'').localeCompare(aVal||'');
-        }
-        return prioritySortDir === 'asc' ? (aVal||0) - (bVal||0) : (bVal||0) - (aVal||0);
-      });
-
-      filteredPriorityData = rows;
-      renderPriorityTable();
-    };
-
-    // ========== TAB SWITCHING ==========
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
-
-        // Update button states
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        // Update content visibility
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(tab + 'Tab').classList.add('active');
-
-        // Load AP Priority data on first view
-        if (tab === 'apPriority' && !priorityLoaded) {
-          loadPriorityData();
-        }
-      });
-    });
-
-    // Restore persisted AP filter from localStorage
-    try {
-      const savedAp = localStorage.getItem('workflow_ap_filter');
-      if (savedAp) { filterState.apReps = JSON.parse(savedAp); }
-    } catch(e) {}
-
-    // Initial load
-    loadData();
-  </script>
+      } catch (e) { /* keep polling */ }
+    }, 3000);
+  } catch (e) {
+    showToast('Recalculation error: ' + e.message, 'err');
+    document.getElementById('tableRecalcBtn').disabled = false;
+    document.getElementById('tableRecalcBtn').textContent = 'Recalculate';
+  }
+}
+</script>
 </body>
 </html>
