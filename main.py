@@ -24329,19 +24329,32 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                     except Exception as e:
                         print(f"[SUBMIT] Warning: Failed to append extra lines to Stage 4: {e}")
 
-                # Update Stage 4 with header values
-                if first.get("__s3_key__") and header_fields:
+                # Update Stage 4 with header AND line-level values
+                # Previously only header_edit_fields were applied here, so
+                # line-level GL edits (e.g. 5706→6322 for late fees) were lost
+                # on page reload because Stage 4 still had the original GL.
+                if first.get("__s3_key__") and (header_fields or True):
                     try:
                         s3_key = first["__s3_key__"]
+                        _s4_pid = pdf_id_from_key(s3_key)
                         txt = _read_s3_text(BUCKET, s3_key)
                         lines_raw = [l for l in txt.strip().split('\n') if l.strip()]
                         updated_lines = []
-                        for line in lines_raw:
+                        for row_idx, line in enumerate(lines_raw):
                             try:
                                 rec = json.loads(line)
+                                # Apply header edits (same for all lines)
                                 for k in header_edit_fields:
                                     if k in header_fields and header_fields[k] != "":
                                         rec[k] = header_fields[k]
+                                # Apply line-level edits from draft (per-line)
+                                _lid = f"{_s4_pid}#{row_idx}"
+                                _line_draft = get_draft(_s4_pid, _lid, user)
+                                if _line_draft:
+                                    _lf = _line_draft.get("fields", {})
+                                    for k in line_edit_fields:
+                                        if k in _lf and _lf[k] != "":
+                                            rec[k] = _lf[k]
                                 updated_lines.append(json.dumps(rec, ensure_ascii=False))
                             except Exception:
                                 updated_lines.append(line)
@@ -24352,9 +24365,9 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                         else:
                             s3.put_object(Bucket=BUCKET, Key=s3_key, Body=new_content.encode('utf-8'), ContentType='application/json')
                         invalidate_day_cache(y, m, d)
-                        print(f"[SUBMIT] Updated Stage 4 with header values: {s3_key}")
+                        print(f"[SUBMIT] Updated Stage 4 with header + line-level values: {s3_key}")
                     except Exception as e:
-                        print(f"[SUBMIT] Warning: Failed to update Stage 4 with header values: {e}")
+                        print(f"[SUBMIT] Warning: Failed to update Stage 4: {e}")
 
                 # Persist final snapshots
                 try:
