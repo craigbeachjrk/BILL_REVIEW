@@ -6,15 +6,18 @@
   <title>WORKFLOW</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
     body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
     header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100}
-    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-size:13px;font-family:inherit}
     .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.success{background:#059669}
     .btn.small{padding:4px 8px;font-size:11px}
-    .wrap{max-width:1800px;margin:40px auto;padding:0 20px}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .wrap{max-width:1800px;margin:0 auto;padding:0 20px 40px}
     h1{margin:0 0 16px 0;color:#fff}
 
     /* Summary Cards */
@@ -114,15 +117,124 @@
 
     /* Generated timestamp */
     .meta-info{color:rgba(255,255,255,.6);font-size:11px}
+
+    /* ===== Weekly Targets Row ===== */
+    .weekly-targets{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+    .weekly-target-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:10px 16px;min-width:160px;text-align:center}
+    .weekly-target-card .wt-name{font-size:13px;font-weight:700;margin-bottom:4px}
+    .weekly-target-card .wt-nums{font-size:20px;font-weight:700}
+    .weekly-target-card .wt-pct{font-size:11px;opacity:.8;margin-top:2px}
+    .weekly-target-card .wt-bar{height:5px;background:rgba(0,0,0,.1);border-radius:3px;overflow:hidden;margin-top:4px}
+    .weekly-target-card .wt-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+    .weekly-target-card.wt-green .wt-bar-fill{background:#10b981}
+    .weekly-target-card.wt-yellow .wt-bar-fill{background:#f59e0b}
+    .weekly-target-card.wt-red .wt-bar-fill{background:#ef4444}
+
+    /* ===== Directed Tab Styles ===== */
+    .dir-stats-ribbon{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+    .dir-stat-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:12px 20px;min-width:130px;text-align:center}
+    .dir-stat-card .value{font-size:28px;font-weight:700;display:block}
+    .dir-stat-card .label{font-size:12px;opacity:.8}
+    .dir-stat-card.completed .value{color:#166534}
+    .dir-stat-card.remaining .value{color:#c2410c}
+
+    .dir-progress-wrap{margin-bottom:24px}
+    .dir-progress-bar{height:8px;background:rgba(255,255,255,.3);border-radius:4px;overflow:hidden}
+    .dir-progress-bar .fill{height:100%;background:#fff;border-radius:4px;transition:width .3s}
+    .dir-progress-label{font-size:11px;color:#fff;opacity:.8;margin-top:4px;text-align:right}
+
+    .dir-section-header{display:flex;align-items:center;gap:12px;padding:16px 20px;background:rgba(255,255,255,.15);border-radius:12px 12px 0 0;color:#fff;font-weight:700;font-size:15px;margin-top:20px;cursor:pointer;user-select:none}
+    .dir-section-header .count{font-weight:400;font-size:12px;opacity:.7}
+    .dir-section-header .arrow{transition:transform .2s}
+    .dir-section-header.collapsed .arrow{transform:rotate(-90deg)}
+
+    .dir-group-header{display:flex;align-items:center;gap:10px;padding:10px 20px;background:#f1f5f9;border-bottom:1px solid #e5e7eb;font-weight:600;font-size:13px;cursor:pointer;user-select:none}
+    .dir-group-header .arrow{font-size:10px;transition:transform .2s}
+    .dir-group-header.collapsed .arrow{transform:rotate(-90deg)}
+    .dir-group-header .group-stats{margin-left:auto;font-weight:400;font-size:11px;color:#64748b}
+
+    .dir-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:0 0 16px 16px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden;margin-bottom:0}
+    .dir-task-list{background:#fff}
+    .dir-task-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #f1f5f9;font-size:12px;transition:background .1s}
+    .dir-task-row:hover{background:#f0f9ff}
+    .dir-task-row.active{background:#dbeafe;border-left:3px solid #2563eb}
+    .dir-task-row.completed{background:#f0fdf4;opacity:.6}
+    .dir-task-row.incomplete{background:#fef2f2;opacity:.6}
+    .dir-task-row.vacant{color:#64748b}
+    .dir-task-row.blocked{opacity:.5;border-left:3px solid #f59e0b}
+
+    .dir-status-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
+    .dir-status-badge.status-VERY_LATE{background:#fecaca;color:#b91c1c}
+    .dir-status-badge.status-LATE{background:#fed7aa;color:#c2410c}
+    .dir-status-badge.status-SLIGHTLY_LATE{background:#fef08a;color:#a16207}
+    .dir-status-badge.status-DUE_SOON{background:#bfdbfe;color:#1d4ed8}
+    .dir-status-badge.status-ON_TRACK{background:#bbf7d0;color:#166534}
+
+    .dir-type-badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600}
+    .dir-type-badge.collection{background:#dbeafe;color:#1d4ed8}
+    .dir-type-badge.processing{background:#d1fae5;color:#059669}
+
+    .dir-house-label{font-weight:700;color:#0f172a}
+    .dir-vacant-label{font-weight:400;color:#94a3b8;font-size:10px}
+
+    .dir-source-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:8px;font-size:10px;background:#f1f5f9;color:#475569}
+    .dir-source-tag.scraper{background:#d1fae5;color:#059669}
+    .dir-source-tag.portal{background:#dbeafe;color:#1d4ed8}
+    .dir-source-tag.mail{background:#fef3c7;color:#92400e}
+
+    .dir-amount{font-family:monospace;font-size:11px;color:#64748b}
+    .dir-task-actions{margin-left:auto;display:flex;gap:4px;flex-shrink:0}
+    .dir-timer{font-family:monospace;font-size:11px;color:#64748b;min-width:50px}
+
+    .dir-col-property{min-width:140px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .dir-col-account{min-width:90px;font-family:monospace;font-size:11px}
+    .dir-col-vendor{min-width:100px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+    .dir-eod-section{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;padding:24px;margin-top:24px}
+    .dir-eod-section h2{margin:0 0 16px 0;font-size:16px}
+    .dir-eod-task{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #e5e7eb}
+    .dir-eod-task:last-child{border:none}
+    .dir-eod-task .info{flex:1;font-size:12px}
+    .dir-eod-task select{padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;min-width:180px}
+    .dir-eod-task textarea{width:100%;padding:6px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;min-height:40px;resize:vertical;margin-top:4px}
+
+    .dir-loading-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center}
+    .dir-loading-overlay.show{display:flex}
+    .dir-loading-box{background:#fff;border-radius:16px;padding:32px 48px;text-align:center;font-weight:600}
+    .dir-spinner{display:inline-block;width:32px;height:32px;border:3px solid #e5e7eb;border-top-color:#0ea5e9;border-radius:50%;animation:spin .6s linear infinite;margin-bottom:12px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .dir-drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+    .dir-drawer-mask.open{opacity:1;pointer-events:auto}
+    .dir-drawer{position:fixed;top:0;right:-480px;width:480px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:41;display:flex;flex-direction:column}
+    .dir-drawer.open{right:0}
+    .dir-drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
+    .dir-drawer .body{flex:1;overflow:auto;padding:16px 18px}
+    .dir-history-day{margin-bottom:20px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+    .dir-history-day .day-header{padding:10px 14px;background:#f8fafc;font-weight:600;font-size:13px;display:flex;justify-content:space-between}
+    .dir-history-day .day-body{padding:10px 14px;font-size:12px}
+    .dir-history-day .incomplete-item{padding:4px 0;color:#b91c1c}
+
+    .dir-empty-state{text-align:center;padding:60px 20px;color:#64748b}
+    .dir-empty-state .icon{font-size:48px;margin-bottom:12px}
+    .dir-empty-state h3{margin:0 0 8px 0;color:#334155}
+
+    .dir-blocked-tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:9px;font-weight:600;background:#fef3c7;color:#92400e;margin-left:4px}
+
+    /* ===== Set Targets Modal ===== */
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px}
   </style>
 </head>
 <body>
   <header class="top">
     <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
-    <div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="globalApFilter" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:120px">
+        <option value="">All AP Reps</option>
+      </select>
       {% if is_admin %}<a class="btn" href="/workflow/manage" style="background:#dc2626">Manage Accounts</a>{% endif %}
       <a class="btn" href="/workflow/manager">Manager View</a>
-      <a class="btn" href="/directed">Directed</a>
       <a class="btn secondary" href="/">Back</a>
     </div>
   </header>
@@ -132,14 +244,62 @@
   <div class="wrap">
     <h1>WORKFLOW</h1>
 
+    <!-- Weekly Targets Row -->
+    <div class="weekly-targets" id="weeklyTargetsRow" style="display:none"></div>
+
     <!-- Tab Bar -->
     <div class="tab-bar">
-      <button class="tab-btn active" data-tab="tracker">Completion Tracker</button>
+      <button class="tab-btn active" data-tab="directed">Daily Work Plan</button>
+      <button class="tab-btn" data-tab="tracker">Completion Tracker</button>
       <button class="tab-btn" data-tab="lateBills">Late Bills (Table)</button>
     </div>
 
+    <!-- DAILY WORK PLAN TAB (Directed) -->
+    <div class="tab-content active" id="directedTab">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <span id="dir_planDate" style="font-size:16px;font-weight:400;color:rgba(255,255,255,.7)"></span>
+        <div style="display:flex;gap:8px">
+          <button class="btn success" onclick="dir_generatePlan()">Generate Plan</button>
+          <button class="btn" onclick="dir_openHistory()">History</button>
+        </div>
+      </div>
+
+      <!-- Stats Ribbon -->
+      <div class="dir-stats-ribbon" id="dir_statsRibbon">
+        <div class="dir-stat-card"><span class="value" id="dir_statPlanned">-</span><span class="label">Planned</span></div>
+        <div class="dir-stat-card completed"><span class="value" id="dir_statCompleted">-</span><span class="label">Completed</span></div>
+        <div class="dir-stat-card remaining"><span class="value" id="dir_statRemaining">-</span><span class="label">Remaining</span></div>
+        <div class="dir-stat-card"><span class="value" id="dir_statTime">-</span><span class="label">Est. Time Left</span></div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="dir-progress-wrap">
+        <div class="dir-progress-bar"><div class="fill" id="dir_progressFill" style="width:0%"></div></div>
+        <div class="dir-progress-label" id="dir_progressLabel">0% complete</div>
+      </div>
+
+      <!-- Plan Content -->
+      <div id="dir_planContent"></div>
+
+      <!-- End of Day Section -->
+      <div class="dir-eod-section" id="dir_eodSection" style="display:none">
+        <h2>End of Day - Incomplete Tasks</h2>
+        <p style="font-size:12px;color:#64748b;margin-bottom:16px">Please select a reason for each task you weren't able to complete today.</p>
+        <div id="dir_eodTasks"></div>
+        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn secondary" onclick="dir_cancelEod()">Cancel</button>
+          <button class="btn danger" onclick="dir_submitEndOfDay()">Submit Day Summary</button>
+        </div>
+      </div>
+
+      <!-- End My Day button -->
+      <div style="margin-top:24px;text-align:center" id="dir_eodButtonWrap">
+        <button class="btn danger" onclick="dir_showEodSection()" id="dir_eodButton" style="display:none;padding:12px 32px;font-size:14px">End My Day</button>
+      </div>
+    </div><!-- End Directed Tab -->
+
     <!-- COMPLETION TRACKER TAB -->
-    <div class="tab-content active" id="trackerTab">
+    <div class="tab-content" id="trackerTab">
 
       <!-- Row 1: Status Summary Cards + Progress -->
       <div class="summary-cards" id="statusCards">
@@ -198,7 +358,7 @@
       </div>
     </div><!-- End Tracker Tab -->
 
-    <!-- LATE BILLS TABLE TAB (preserved from original) -->
+    <!-- LATE BILLS TABLE TAB -->
     <div class="tab-content" id="lateBillsTab">
       <div class="summary-cards" id="summaryCards">
         <div class="summary-card very-late" data-status="VERY_LATE">
@@ -238,7 +398,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" style="background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden">
         <div class="tableWrap" style="overflow:auto;max-height:calc(100vh - 340px)">
           <table id="workflowTable" style="width:100%;border-collapse:collapse;background:#fff">
             <thead>
@@ -358,6 +518,18 @@
     </div>
   </div>
 
+  <!-- Set Targets Modal -->
+  <div class="modal-overlay" id="targetsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center">
+    <div class="modal-box" style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px">
+      <h2 style="margin:0 0 16px 0;font-size:18px">Set Weekly Targets</h2>
+      <div id="targetsModalBody"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+        <button class="btn secondary" onclick="document.getElementById('targetsModal').style.display='none'">Cancel</button>
+        <button class="btn" id="targetsSave" onclick="saveWeeklyTargets()">Save Targets</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Bulk Toolbar (for Late Bills tab) -->
   <div class="bulk-toolbar" id="bulkToolbar" style="position:fixed;bottom:-70px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.92);backdrop-filter:blur(12px);color:#fff;padding:12px 24px;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.35);display:flex;align-items:center;gap:16px;z-index:45;transition:bottom .25s ease;font-size:13px">
     <span class="sel-count" style="font-weight:700;min-width:90px" id="selCount">0 selected</span>
@@ -366,32 +538,81 @@
     <button class="btn small" id="bulkDeselectBtn" style="background:transparent;border:1px solid rgba(255,255,255,.4)">Deselect All</button>
   </div>
 
-<script>
-/* ======== STATE ======== */
-let trackerData = null;       // Full completion tracker response
-let activeStatus = null;      // Selected status filter (null = all)
-let activeAp = null;          // Selected AP filter (null = all)
-let searchText = '';          // Search filter text
+  <!-- Directed History Drawer -->
+  <div class="dir-drawer-mask" id="dir_drawerMask" onclick="dir_closeHistory()"></div>
+  <div class="dir-drawer" id="dir_historyDrawer">
+    <header><h3 style="margin:0">Plan History (7 days)</h3><button class="btn small secondary" onclick="dir_closeHistory()">Close</button></header>
+    <div class="body" id="dir_historyBody"><div class="loading">Loading...</div></div>
+  </div>
 
-/* Late Bills tab state (lazy loaded) */
+  <!-- Directed Loading Overlay -->
+  <div class="dir-loading-overlay" id="dir_loadingOverlay">
+    <div class="dir-loading-box"><div class="dir-spinner"></div><div id="dir_loadingText">Loading...</div></div>
+  </div>
+
+<script>
+/* ============================================================
+   SHARED STATE
+   ============================================================ */
+let trackerData = null;
+let activeStatus = null;
+let activeAp = null;
+let searchText = '';
+
+/* Late Bills tab state */
 let allData = [];
 let filteredData = [];
 let selectedKeys = new Set();
 let filterState = {status: null, ap: [], properties: [], vendors: [], hasNote: false, sort: 'urgency'};
 let reasonCodes = [];
 let lateBillsLoaded = false;
+let trackerLoaded = false;
 let catalogProperties = [];
 let catalogVendors = [];
 
-/* ======== INIT ======== */
-document.addEventListener('DOMContentLoaded', () => {
-  loadTrackerData();
+/* Global AP mapping: propertyId → apName */
+window.apMapping = {};
+window.currentApFilter = '';
+
+/* Directed tab state */
+let dir_plan = null;
+let dir_taskTimers = {};
+let dir_activeTaskId = null;
+let dir_reasonCodes = [];
+
+/* Weekly objectives */
+let weeklyObjectives = null;
+
+/* ============================================================
+   INIT
+   ============================================================ */
+document.addEventListener('DOMContentLoaded', async () => {
   initTabs();
   initTrackerEvents();
   initLateBillsEvents();
+  initGlobalApFilter();
+
+  // Load directed plan + reason codes + weekly objectives in parallel
+  const [planResp, codesResp] = await Promise.all([
+    fetch('/api/directed/plan'),
+    fetch('/api/directed/reason-codes'),
+  ]);
+  const planData = await planResp.json();
+  const codesData = await codesResp.json();
+  dir_reasonCodes = codesData.codes || [];
+  if (planData.plan) {
+    dir_plan = planData.plan;
+    dir_render();
+  } else {
+    dir_showEmpty();
+  }
+
+  loadWeeklyObjectives();
 });
 
-/* ======== TABS ======== */
+/* ============================================================
+   TABS
+   ============================================================ */
 function initTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -401,15 +622,16 @@ function initTabs() {
       const tab = btn.dataset.tab;
       const el = document.getElementById(tab + 'Tab');
       if (el) el.classList.add('active');
-      // Lazy load late bills on first switch
-      if (tab === 'lateBills' && !lateBillsLoaded) {
-        loadLateBillsData();
-      }
+      // Lazy load
+      if (tab === 'lateBills' && !lateBillsLoaded) loadLateBillsData();
+      if (tab === 'tracker' && !trackerLoaded) { trackerLoaded = true; loadTrackerData(); }
     });
   });
 }
 
-/* ======== TOAST ======== */
+/* ============================================================
+   TOAST
+   ============================================================ */
 function showToast(msg, type) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -418,17 +640,552 @@ function showToast(msg, type) {
   t._tid = setTimeout(() => t.className = 'toast', 3000);
 }
 
-/* ======== COMPLETION TRACKER ======== */
+/* ============================================================
+   GLOBAL AP FILTER
+   ============================================================ */
+async function initGlobalApFilter() {
+  try {
+    const resp = await fetch('/api/config/ap-mapping');
+    const data = await resp.json();
+    const items = data.items || [];
+
+    // Build mapping: propertyId → apName
+    const apSet = new Set();
+    for (const r of items) {
+      const pid = (r.propertyId || '').trim();
+      const name = (r.name || '').trim();
+      if (pid && name) {
+        window.apMapping[pid] = name;
+        apSet.add(name);
+      }
+    }
+
+    // Populate dropdown
+    const sel = document.getElementById('globalApFilter');
+    for (const name of [...apSet].sort()) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    }
+
+    sel.addEventListener('change', () => {
+      window.currentApFilter = sel.value;
+      onGlobalApFilterChange();
+    });
+  } catch (e) {
+    console.error('Failed to load AP mapping:', e);
+  }
+}
+
+function onGlobalApFilterChange() {
+  // Re-render whichever tab is active
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+  if (activeTab === 'directed') dir_render();
+  if (activeTab === 'tracker') renderTracker();
+  if (activeTab === 'lateBills') applyTableFilters();
+}
+
+function getApForProperty(propertyId) {
+  return window.apMapping[(propertyId || '').trim()] || '';
+}
+
+/* ============================================================
+   WEEKLY OBJECTIVES
+   ============================================================ */
+async function loadWeeklyObjectives() {
+  try {
+    const resp = await fetch('/api/workflow/weekly-objectives');
+    weeklyObjectives = await resp.json();
+    renderWeeklyTargets();
+  } catch (e) {
+    console.error('Failed to load weekly objectives:', e);
+  }
+}
+
+function renderWeeklyTargets() {
+  const container = document.getElementById('weeklyTargetsRow');
+  if (!weeklyObjectives || !weeklyObjectives.hasTargets || !weeklyObjectives.targets.length) {
+    // Show Set Targets button even if no targets
+    container.style.display = 'flex';
+    container.innerHTML = '<button class="btn small" onclick="openTargetsModal()" style="padding:8px 16px">Set Weekly Targets</button>';
+    return;
+  }
+
+  container.style.display = 'flex';
+  let html = '';
+  for (const t of weeklyObjectives.targets) {
+    const pct = t.pctComplete || 0;
+    const colorClass = pct >= 80 ? 'wt-green' : pct >= 50 ? 'wt-yellow' : 'wt-red';
+    html += `<div class="weekly-target-card ${colorClass}">
+      <div class="wt-name">${escapeHtml(t.apName)}</div>
+      <div class="wt-nums">${t.actualBills}/${t.targetBills}</div>
+      <div class="wt-pct">${pct}% | ${t.daysRemaining}d left | avg ${t.dailyAvg}/d</div>
+      <div class="wt-bar"><div class="wt-bar-fill" style="width:${Math.min(pct,100)}%"></div></div>
+      ${t.roadblocks && t.roadblocks.length ? `<div style="font-size:9px;color:#64748b;margin-top:4px">${escapeHtml(t.roadblocks.slice(0,2).join(', '))}</div>` : ''}
+    </div>`;
+  }
+  html += `<button class="btn small secondary" onclick="openTargetsModal()" style="align-self:center;padding:8px 12px" title="Edit targets">Set Targets</button>`;
+  container.innerHTML = html;
+}
+
+function openTargetsModal() {
+  const apNames = [...new Set(Object.values(window.apMapping))].sort();
+  const existing = {};
+  if (weeklyObjectives && weeklyObjectives.targets) {
+    for (const t of weeklyObjectives.targets) existing[t.apName] = t;
+  }
+  let html = '';
+  for (const name of apNames) {
+    const cur = existing[name];
+    html += `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f1f5f9">
+      <span style="font-weight:600;min-width:100px;font-size:13px">${escapeHtml(name)}</span>
+      <label style="font-size:12px;color:#64748b">Bills:</label>
+      <input type="number" class="target-bills-input" data-ap="${escapeHtml(name)}" value="${cur ? cur.targetBills : 100}" style="width:70px;padding:6px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" min="0" />
+      <label style="font-size:12px;color:#64748b">Hours:</label>
+      <input type="number" class="target-hours-input" data-ap="${escapeHtml(name)}" value="${cur ? cur.targetHours : 40}" style="width:60px;padding:6px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px" min="0" />
+    </div>`;
+  }
+  document.getElementById('targetsModalBody').innerHTML = html || '<p style="color:#64748b">No AP reps found. Configure AP mapping first.</p>';
+  document.getElementById('targetsModal').style.display = 'flex';
+}
+
+async function saveWeeklyTargets() {
+  const targets = [];
+  document.querySelectorAll('.target-bills-input').forEach(inp => {
+    const name = inp.dataset.ap;
+    const bills = parseInt(inp.value) || 0;
+    const hoursInp = document.querySelector(`.target-hours-input[data-ap="${name}"]`);
+    const hours = parseInt(hoursInp?.value) || 40;
+    if (name && bills > 0) {
+      targets.push({ apName: name, targetBills: bills, targetHours: hours });
+    }
+  });
+  try {
+    const resp = await fetch('/api/workflow/weekly-objectives', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ targets })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      showToast('Targets saved!', 'ok');
+      document.getElementById('targetsModal').style.display = 'none';
+      loadWeeklyObjectives();
+    } else {
+      showToast('Error: ' + (data.error || 'Unknown'), 'err');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+}
+
+/* ============================================================
+   DIRECTED TAB (Daily Work Plan)
+   ============================================================ */
+
+function dir_showEmpty() {
+  document.getElementById('dir_planContent').innerHTML = `
+    <div class="dir-empty-state">
+      <div class="icon">&#128203;</div>
+      <h3>No plan for today</h3>
+      <p>Click <strong>Generate Plan</strong> to build today's work plan based on your processing rate and current priorities.</p>
+    </div>`;
+  document.getElementById('dir_eodButton').style.display = 'none';
+}
+
+async function dir_generatePlan() {
+  dir_showLoading('Generating your daily plan...');
+  try {
+    const genResp = await fetch('/api/directed/generate', { method: 'POST' });
+    const genData = await genResp.json();
+    if (!genResp.ok || genData.error) {
+      showToast('Error generating plan: ' + (genData.error || 'unknown error'), 'err');
+      dir_hideLoading();
+      return;
+    }
+    const resp = await fetch('/api/directed/plan');
+    const data = await resp.json();
+    dir_plan = data.plan;
+    dir_render();
+    showToast('Plan generated!', 'ok');
+  } catch (e) {
+    showToast('Error generating plan: ' + e.message, 'err');
+  }
+  dir_hideLoading();
+}
+
+function dir_render() {
+  if (!dir_plan || !dir_plan.tasks || !dir_plan.tasks.length) { dir_showEmpty(); return; }
+  document.getElementById('dir_planDate').textContent = dir_plan.planDate || '';
+  dir_renderStats();
+  dir_renderTasks();
+  const pending = dir_plan.tasks.filter(t => t.status === 'pending');
+  document.getElementById('dir_eodButton').style.display = pending.length > 0 ? 'inline-block' : 'none';
+}
+
+function dir_renderStats() {
+  if (!dir_plan) return;
+  let tasks = dir_plan.tasks || [];
+  // Apply global AP filter
+  if (window.currentApFilter) {
+    tasks = tasks.filter(t => getApForProperty(t.propertyId) === window.currentApFilter);
+  }
+  const completed = tasks.filter(t => t.status === 'completed').length;
+  const incomplete = tasks.filter(t => t.status === 'incomplete').length;
+  const total = tasks.length;
+  const remaining = total - completed - incomplete;
+  const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+
+  document.getElementById('dir_statPlanned').textContent = total;
+  document.getElementById('dir_statCompleted').textContent = completed;
+  document.getElementById('dir_statRemaining').textContent = remaining;
+
+  const rate = dir_plan.userRate || {};
+  const avgColl = (rate.avgCollectionSec || 180) / 60;
+  const avgProc = (rate.avgProcessingSec || 60) / 60;
+  let estMin = 0;
+  for (const t of tasks) {
+    if (t.status !== 'pending') continue;
+    estMin += t.taskType === 'collection' ? avgColl : avgProc;
+  }
+  const hrs = Math.floor(estMin / 60);
+  const mins = Math.round(estMin % 60);
+  document.getElementById('dir_statTime').textContent = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+  document.getElementById('dir_progressFill').style.width = pct + '%';
+  document.getElementById('dir_progressLabel').textContent = `${pct}% complete (${completed}/${total})`;
+}
+
+function dir_renderTasks() {
+  const container = document.getElementById('dir_planContent');
+  let tasks = dir_plan.tasks || [];
+
+  // Apply global AP filter
+  if (window.currentApFilter) {
+    tasks = tasks.filter(t => getApForProperty(t.propertyId) === window.currentApFilter);
+  }
+
+  const houseTasks = tasks.filter(t => t.isHouse);
+  const vacantTasks = tasks.filter(t => !t.isHouse);
+
+  let html = '';
+  if (houseTasks.length) {
+    const houseEst = houseTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
+    html += `<div class="dir-section-header" onclick="dir_toggleSection('house')">
+      <span class="arrow" id="dir_arrow_house">&#9660;</span>
+      HOUSE ACCOUNTS
+      <span class="count">${houseTasks.length} tasks, ~${Math.round(houseEst)} min</span>
+    </div>`;
+    html += `<div class="dir-card" id="dir_section_house">` + dir_renderGroupedTasks(houseTasks, 'provider') + `</div>`;
+  }
+  if (vacantTasks.length) {
+    const vacantEst = vacantTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
+    html += `<div class="dir-section-header" onclick="dir_toggleSection('vacant')">
+      <span class="arrow" id="dir_arrow_vacant">&#9660;</span>
+      VACANT ACCOUNTS
+      <span class="count">${vacantTasks.length} tasks, ~${Math.round(vacantEst)} min</span>
+    </div>`;
+    html += `<div class="dir-card" id="dir_section_vacant">` + dir_renderGroupedTasks(vacantTasks, 'property') + `</div>`;
+  }
+  if (!html) {
+    html = '<div class="dir-empty-state"><p>No tasks match the current filter.</p></div>';
+  }
+  container.innerHTML = html;
+}
+
+function dir_renderGroupedTasks(tasks, groupBy) {
+  const groups = {};
+  for (const t of tasks) {
+    const key = groupBy === 'provider'
+      ? (t.providerGroup || t.vendorName || 'Unknown')
+      : (t.propertyName || 'Unknown');
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  }
+  let html = '<div class="dir-task-list">';
+  for (const [groupName, groupTasks] of Object.entries(groups)) {
+    const groupEst = groupTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
+    const gid = 'g_' + groupName.replace(/\W/g, '_');
+    html += `<div class="dir-group-header" onclick="dir_toggleGroup('${gid}')">
+      <span class="arrow" id="dir_arrow_${gid}">&#9660;</span>
+      <strong>${escapeHtml(groupName.toUpperCase())}</strong>
+      <span class="group-stats">${groupTasks.length} tasks, ~${Math.round(groupEst)} min</span>
+    </div>`;
+    html += `<div id="dir_group_${gid}">`;
+    for (const t of groupTasks) html += dir_renderTaskRow(t);
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function dir_renderTaskRow(t) {
+  const isActive = dir_activeTaskId === t.taskId;
+  const cls = ['dir-task-row'];
+  if (isActive) cls.push('active');
+  if (t.status === 'completed') cls.push('completed');
+  if (t.status === 'incomplete') cls.push('incomplete');
+  if (!t.isHouse) cls.push('vacant');
+  if (t.blockedByNote) cls.push('blocked');
+
+  let sourceHtml = '';
+  const src = t.source || {};
+  if (src.resolution === 'scraper') {
+    sourceHtml = `<span class="dir-source-tag scraper">Scraper PDF (${src.scraperPdfCount || '?'})</span>`;
+  } else if (src.resolution === 'portal') {
+    const url = src.portalUrl || '';
+    const user = src.portalUsername || '';
+    sourceHtml = `<span class="dir-source-tag portal">Portal${url ? ': ' + escapeHtml(url) : ''}${user ? ' | ' + escapeHtml(user) : ''}</span>`;
+  } else if (src.resolution === 'mail') {
+    sourceHtml = `<span class="dir-source-tag mail">Check mail</span>`;
+  } else if (src.resolution === 'pipeline') {
+    sourceHtml = `<span class="dir-source-tag">${t.subType || 'pipeline'}</span>`;
+  }
+
+  let blockedHtml = t.blockedByNote ? '<span class="dir-blocked-tag">BLOCKED</span>' : '';
+
+  let timerHtml = '';
+  if (isActive && dir_taskTimers[t.taskId]) {
+    timerHtml = `<span class="dir-timer" id="dir_timer_${t.taskId}">0:00</span>`;
+  }
+
+  let actionsHtml = '';
+  if (t.status === 'pending') {
+    if (!isActive) {
+      actionsHtml = `<button class="btn small" onclick="dir_startTask('${t.taskId}')">Start</button>`;
+    } else {
+      if (t.taskType === 'collection') {
+        actionsHtml = `
+          <button class="btn small success" onclick="dir_completeTask('${t.taskId}','imported')">Imported</button>
+          <button class="btn small" onclick="dir_completeTask('${t.taskId}','logged_portal')">Portal</button>
+          <button class="btn small secondary" onclick="dir_completeTask('${t.taskId}','checked_mail')">Mail</button>
+          <button class="btn small" style="background:#94a3b8" onclick="dir_markIncomplete('${t.taskId}')">Skip</button>`;
+      } else {
+        const link = t.subType === 'review' ? `/invoices?pdf_id=${t.pdfId || ''}` :
+                     t.subType === 'post' ? `/post` : `/billback`;
+        actionsHtml = `
+          <a class="btn small" href="${link}" target="_blank">Open</a>
+          <button class="btn small success" onclick="dir_completeTask('${t.taskId}','processed')">Done</button>
+          <button class="btn small" style="background:#94a3b8" onclick="dir_markIncomplete('${t.taskId}')">Skip</button>`;
+      }
+    }
+  } else if (t.status === 'completed') {
+    actionsHtml = `<span style="color:#059669;font-size:11px">&#10003; ${t.completedAction || 'done'}</span>`;
+  } else if (t.status === 'incomplete') {
+    actionsHtml = `<span style="color:#b91c1c;font-size:11px">${t.incompleteReason || 'skipped'}</span>`;
+  }
+
+  const houseLabel = t.isHouse
+    ? `<span class="dir-house-label">HOUSE</span>`
+    : `<span class="dir-vacant-label">VACANT</span>`;
+
+  return `<div class="${cls.join(' ')}" data-task-id="${t.taskId}">
+    <span class="dir-status-badge status-${t.urgencyStatus || 'ON_TRACK'}">${(t.urgencyStatus || '').replace(/_/g,' ')}</span>
+    <span class="dir-type-badge ${t.taskType}">${t.taskType}</span>
+    ${houseLabel}
+    <span class="dir-col-property" title="${escapeHtml(t.propertyName)}">${escapeHtml(t.propertyName)}</span>
+    <span class="dir-col-vendor" title="${escapeHtml(t.vendorName)}">${escapeHtml(t.vendorName)}</span>
+    <span class="dir-col-account">${escapeHtml(t.accountNumber)}</span>
+    <span class="dir-amount">${t.avgAmount ? '$' + t.avgAmount.toLocaleString() : ''}</span>
+    ${sourceHtml}
+    ${blockedHtml}
+    ${timerHtml}
+    <div class="dir-task-actions">${actionsHtml}</div>
+  </div>`;
+}
+
+/* --- Directed Task Actions --- */
+function dir_startTask(taskId) {
+  dir_activeTaskId = taskId;
+  dir_taskTimers[taskId] = Date.now();
+  dir_renderTasks();
+  const interval = setInterval(() => {
+    if (dir_activeTaskId !== taskId) { clearInterval(interval); return; }
+    const el = document.getElementById('dir_timer_' + taskId);
+    if (!el) { clearInterval(interval); return; }
+    const sec = Math.round((Date.now() - dir_taskTimers[taskId]) / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    el.textContent = m + ':' + String(s).padStart(2, '0');
+  }, 1000);
+}
+
+async function dir_completeTask(taskId, action) {
+  const duration = dir_taskTimers[taskId] ? Math.round((Date.now() - dir_taskTimers[taskId]) / 1000) : 0;
+  try {
+    const resp = await fetch('/api/directed/complete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ taskId, action, durationSec: duration })
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
+    const task = dir_plan.tasks.find(t => t.taskId === taskId);
+    if (task) { task.status = 'completed'; task.completedAction = action; task.completedAt = new Date().toISOString(); }
+    dir_plan.stats.completedCount = dir_plan.tasks.filter(t => t.status === 'completed').length;
+    if (dir_activeTaskId === taskId) dir_activeTaskId = null;
+    dir_render();
+    showToast('Task completed', 'ok');
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
+}
+
+async function dir_markIncomplete(taskId) {
+  try {
+    const resp = await fetch('/api/directed/incomplete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ taskId, reasonCode: 'ran_out_of_time', notes: '' })
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
+    const task = dir_plan.tasks.find(t => t.taskId === taskId);
+    if (task) { task.status = 'incomplete'; task.incompleteReason = 'ran_out_of_time'; }
+    dir_plan.stats.incompleteCount = dir_plan.tasks.filter(t => t.status === 'incomplete').length;
+    if (dir_activeTaskId === taskId) dir_activeTaskId = null;
+    dir_render();
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
+}
+
+/* --- Directed End of Day --- */
+function dir_showEodSection() {
+  const pending = dir_plan.tasks.filter(t => t.status === 'pending');
+  if (!pending.length) { showToast('All tasks completed!', 'ok'); return; }
+  let html = '';
+  for (const t of pending) {
+    html += `<div class="dir-eod-task">
+      <div class="info">
+        <strong>${escapeHtml(t.propertyName)}</strong> - ${escapeHtml(t.vendorName)} - ${escapeHtml(t.accountNumber)}
+        <br><span class="dir-status-badge status-${t.urgencyStatus}">${(t.urgencyStatus || '').replace(/_/g,' ')}</span>
+        <span class="dir-type-badge ${t.taskType}">${t.taskType}</span>
+      </div>
+      <div>
+        <select id="dir_reason_${t.taskId}">
+          <option value="">Select reason...</option>
+          ${dir_reasonCodes.map(c => `<option value="${c.code}">${escapeHtml(c.label)}</option>`).join('')}
+        </select>
+        <textarea id="dir_notes_${t.taskId}" placeholder="Optional notes..."></textarea>
+      </div>
+    </div>`;
+  }
+  document.getElementById('dir_eodTasks').innerHTML = html;
+  document.getElementById('dir_eodSection').style.display = 'block';
+  document.getElementById('dir_eodButtonWrap').style.display = 'none';
+  document.getElementById('dir_eodSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function dir_cancelEod() {
+  document.getElementById('dir_eodSection').style.display = 'none';
+  document.getElementById('dir_eodButtonWrap').style.display = 'block';
+}
+
+async function dir_submitEndOfDay() {
+  const pending = dir_plan.tasks.filter(t => t.status === 'pending');
+  const incompletes = [];
+  for (const t of pending) {
+    const reason = document.getElementById('dir_reason_' + t.taskId)?.value;
+    const notes = document.getElementById('dir_notes_' + t.taskId)?.value || '';
+    if (!reason) { showToast('Please select a reason for all tasks', 'err'); return; }
+    incompletes.push({ taskId: t.taskId, reasonCode: reason, notes });
+  }
+  dir_showLoading('Submitting day summary...');
+  try {
+    const resp = await fetch('/api/directed/end-of-day', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ incompletes })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      for (const item of incompletes) {
+        const task = dir_plan.tasks.find(t => t.taskId === item.taskId);
+        if (task) { task.status = 'incomplete'; task.incompleteReason = item.reasonCode; task.incompleteNotes = item.notes; }
+      }
+      dir_plan.stats.incompleteCount = dir_plan.tasks.filter(t => t.status === 'incomplete').length;
+      document.getElementById('dir_eodSection').style.display = 'none';
+      dir_render();
+      showToast(`Day complete! ${data.completed} done, ${data.incomplete} incomplete`, 'ok');
+    } else { showToast('Error: ' + (data.error || 'Unknown'), 'err'); }
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
+  dir_hideLoading();
+}
+
+/* --- Directed History Drawer --- */
+async function dir_openHistory() {
+  document.getElementById('dir_drawerMask').classList.add('open');
+  document.getElementById('dir_historyDrawer').classList.add('open');
+  document.getElementById('dir_historyBody').innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const resp = await fetch('/api/directed/history?days=7');
+    const data = await resp.json();
+    const history = data.history || [];
+    if (!history.length) {
+      document.getElementById('dir_historyBody').innerHTML = '<p style="color:#64748b">No history yet.</p>';
+      return;
+    }
+    let html = '';
+    for (const day of history) {
+      const completed = day.totalCompleted || 0;
+      const total = day.totalPlanned || 0;
+      const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+      html += `<div class="dir-history-day">
+        <div class="day-header"><span>${day.planDate}</span><span>${completed}/${total} (${pct}%)</span></div>
+        <div class="day-body">`;
+      if (day.incompletes && day.incompletes.length) {
+        html += '<div style="margin-top:4px"><strong style="font-size:11px;color:#b91c1c">Incomplete:</strong>';
+        for (const inc of day.incompletes) {
+          const label = dir_reasonCodes.find(c => c.code === inc.reasonCode)?.label || inc.reasonCode;
+          html += `<div class="incomplete-item">${escapeHtml(inc.accountKey || '')} - ${escapeHtml(label)}${inc.notes ? ': ' + escapeHtml(inc.notes) : ''}</div>`;
+        }
+        html += '</div>';
+      }
+      html += '</div></div>';
+    }
+    document.getElementById('dir_historyBody').innerHTML = html;
+  } catch (e) {
+    document.getElementById('dir_historyBody').innerHTML = '<p style="color:#b91c1c">Error loading history</p>';
+  }
+}
+
+function dir_closeHistory() {
+  document.getElementById('dir_drawerMask').classList.remove('open');
+  document.getElementById('dir_historyDrawer').classList.remove('open');
+}
+
+/* --- Directed Toggle sections --- */
+function dir_toggleSection(id) {
+  const el = document.getElementById('dir_section_' + id);
+  const arrow = document.getElementById('dir_arrow_' + id);
+  if (!el) return;
+  if (el.style.display === 'none') { el.style.display = ''; if (arrow) arrow.innerHTML = '&#9660;'; }
+  else { el.style.display = 'none'; if (arrow) arrow.innerHTML = '&#9654;'; }
+}
+
+function dir_toggleGroup(gid) {
+  const el = document.getElementById('dir_group_' + gid);
+  const arrow = document.getElementById('dir_arrow_' + gid);
+  if (!el) return;
+  if (el.style.display === 'none') { el.style.display = ''; if (arrow) arrow.innerHTML = '&#9660;'; }
+  else { el.style.display = 'none'; if (arrow) arrow.innerHTML = '&#9654;'; }
+}
+
+/* --- Directed Loading --- */
+function dir_showLoading(text) {
+  document.getElementById('dir_loadingText').textContent = text || 'Loading...';
+  document.getElementById('dir_loadingOverlay').classList.add('show');
+}
+function dir_hideLoading() { document.getElementById('dir_loadingOverlay').classList.remove('show'); }
+
+
+/* ============================================================
+   COMPLETION TRACKER
+   ============================================================ */
 
 function initTrackerEvents() {
-  // Status cards click
   document.querySelectorAll('#statusCards .summary-card').forEach(card => {
     card.addEventListener('click', () => {
       const status = card.dataset.status;
-      if (activeStatus === status) {
-        activeStatus = null;
-        card.classList.remove('active');
-      } else {
+      if (activeStatus === status) { activeStatus = null; card.classList.remove('active'); }
+      else {
         document.querySelectorAll('#statusCards .summary-card').forEach(c => c.classList.remove('active'));
         activeStatus = status;
         card.classList.add('active');
@@ -436,22 +1193,9 @@ function initTrackerEvents() {
       renderTracker();
     });
   });
-
-  // Search
-  document.getElementById('trackerSearch').addEventListener('input', e => {
-    searchText = e.target.value.toLowerCase();
-    renderTracker();
-  });
-
-  // Recalculate
-  document.getElementById('recalcBtn').addEventListener('click', () => {
-    loadTrackerData(true);
-  });
-
-  // Refresh
-  document.getElementById('refreshBtn').addEventListener('click', () => {
-    loadTrackerData();
-  });
+  document.getElementById('trackerSearch').addEventListener('input', e => { searchText = e.target.value.toLowerCase(); renderTracker(); });
+  document.getElementById('recalcBtn').addEventListener('click', () => { loadTrackerData(true); });
+  document.getElementById('refreshBtn').addEventListener('click', () => { loadTrackerData(); });
 }
 
 async function loadTrackerData(forceRefresh) {
@@ -484,8 +1228,6 @@ function updateStatusCards() {
   document.getElementById('ctOnTrack').textContent = s.ON_TRACK || 0;
   document.getElementById('ctComplete').textContent = s.COMPLETE || 0;
   document.getElementById('ctAll').textContent = trackerData.summary.total_account_months || 0;
-
-  // Overall progress bar
   const pct = trackerData.summary.percentage || 0;
   const bar = document.getElementById('overallBar');
   bar.style.width = pct + '%';
@@ -510,12 +1252,7 @@ function renderApCards() {
 }
 
 function toggleApFilter(apName) {
-  if (activeAp === apName) {
-    activeAp = null;
-  } else {
-    activeAp = apName;
-  }
-  // Update AP card active states
+  if (activeAp === apName) activeAp = null; else activeAp = apName;
   document.querySelectorAll('#apCards .ap-card').forEach(c => {
     c.classList.toggle('active', c.dataset.ap === activeAp);
   });
@@ -525,19 +1262,20 @@ function toggleApFilter(apName) {
 function renderTracker() {
   if (!trackerData) return;
   const container = document.getElementById('trackerContent');
-  const properties = trackerData.properties || [];
+  let properties = trackerData.properties || [];
 
-  // Filter properties
-  let filtered = properties;
-
-  // AP filter
-  if (activeAp) {
-    filtered = filtered.filter(p => (p.ap_name || 'Unassigned') === activeAp);
+  // Global AP filter
+  if (window.currentApFilter) {
+    properties = properties.filter(p => (p.ap_name || 'Unassigned') === window.currentApFilter);
   }
 
-  // Search filter (applied to property name, vendor names, account numbers)
+  // Tracker AP filter (within-tab)
+  if (activeAp) {
+    properties = properties.filter(p => (p.ap_name || 'Unassigned') === activeAp);
+  }
+
   if (searchText) {
-    filtered = filtered.filter(p => {
+    properties = properties.filter(p => {
       const pMatch = (p.property_name || '').toLowerCase().includes(searchText);
       const itemMatch = (p.items || []).some(it =>
         (it.vendor_name || '').toLowerCase().includes(searchText) ||
@@ -547,13 +1285,9 @@ function renderTracker() {
     });
   }
 
-  // For each property, filter items by status if active
-  // Also compute filtered counts
-  let filteredProps = filtered.map(p => {
+  let filteredProps = properties.map(p => {
     let items = p.items || [];
-    if (activeStatus && activeStatus !== 'ALL') {
-      items = items.filter(it => it.status_label === activeStatus);
-    }
+    if (activeStatus && activeStatus !== 'ALL') items = items.filter(it => it.status_label === activeStatus);
     if (searchText) {
       items = items.filter(it =>
         (it.vendor_name || '').toLowerCase().includes(searchText) ||
@@ -568,7 +1302,6 @@ function renderTracker() {
              percentage_filtered: total ? Math.round(100 * complete / total * 10) / 10 : 0 };
   }).filter(Boolean);
 
-  // Sort: lowest completion first
   filteredProps.sort((a, b) => a.percentage_filtered - b.percentage_filtered || a.property_name.localeCompare(b.property_name));
 
   if (filteredProps.length === 0) {
@@ -593,57 +1326,42 @@ function renderTracker() {
       <div class="progress-bar"><div class="progress-fill ${barClass}" style="width:${pct}%"></div></div>
       <div class="account-list">`;
 
-    // Sort items: missing first (most overdue first), then complete
     const sorted = prop.items.slice().sort((a, b) => {
       const aComplete = a.status_label === 'COMPLETE' ? 1 : 0;
       const bComplete = b.status_label === 'COMPLETE' ? 1 : 0;
       if (aComplete !== bComplete) return aComplete - bComplete;
-      if (!aComplete) return b.days_overdue - a.days_overdue; // most overdue first
+      if (!aComplete) return b.days_overdue - a.days_overdue;
       return a.vendor_name.localeCompare(b.vendor_name);
     });
 
     for (const item of sorted) {
       const isComplete = item.status_label === 'COMPLETE';
       let icon, iconClass;
-      if (isComplete) {
-        icon = '&#10003;'; iconClass = 'ok';
-      } else if (item.status_label === 'DUE_SOON' || item.status_label === 'ON_TRACK') {
-        icon = '&#9711;'; iconClass = 'wait';
-      } else {
-        icon = '&#10007;'; iconClass = 'miss';
-      }
-
+      if (isComplete) { icon = '&#10003;'; iconClass = 'ok'; }
+      else if (item.status_label === 'DUE_SOON' || item.status_label === 'ON_TRACK') { icon = '&#9711;'; iconClass = 'wait'; }
+      else { icon = '&#10007;'; iconClass = 'miss'; }
       const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
-
-      // Month display: convert "02/2026" to "FEB 2026"
       const monthDisplay = formatMonth(item.month);
 
       html += `<div class="account-item">
-        <div class="acct-info">
-          <div class="acct-label">${item.vendor_name || 'Unknown'} - ${item.account_number}${scraperTag}</div>
-        </div>
+        <div class="acct-info"><div class="acct-label">${item.vendor_name || 'Unknown'} - ${item.account_number}${scraperTag}</div></div>
         <span class="month-badge ${item.status_label}">${monthDisplay}</span>
         ${stageTag}
         <span class="status-icon ${iconClass}">${icon}</span>
       </div>`;
     }
-
     html += `</div></div>`;
   }
-
   html += '</div>';
   container.innerHTML = html;
 }
 
-function toggleExpand(el) {
-  el.classList.toggle('expanded');
-}
+function toggleExpand(el) { el.classList.toggle('expanded'); }
 
 function formatMonth(monthStr) {
   if (!monthStr) return '';
   const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-  // Handle range format "MM/YYYY-MM/YYYY" for multi-month billing cycles
   if (monthStr.includes('-')) {
     const [start, end] = monthStr.split('-');
     return formatMonth(start) + '-' + formatMonth(end);
@@ -655,21 +1373,19 @@ function formatMonth(monthStr) {
 }
 
 
-/* ======== LATE BILLS TABLE TAB ======== */
+/* ============================================================
+   LATE BILLS TABLE TAB
+   ============================================================ */
 
 function initLateBillsEvents() {
-  // Search
   document.getElementById('searchBox').addEventListener('input', () => { applyTableFilters(); });
   document.getElementById('filterHasNote').addEventListener('change', () => { filterState.hasNote = document.getElementById('filterHasNote').checked; applyTableFilters(); });
 
-  // Summary card clicks (Late Bills tab)
   document.querySelectorAll('#summaryCards .summary-card').forEach(card => {
     card.addEventListener('click', () => {
       const status = card.dataset.status;
-      if (filterState.status === status) {
-        filterState.status = null;
-        card.classList.remove('active');
-      } else {
+      if (filterState.status === status) { filterState.status = null; card.classList.remove('active'); }
+      else {
         document.querySelectorAll('#summaryCards .summary-card').forEach(c => c.classList.remove('active'));
         filterState.status = status;
         card.classList.add('active');
@@ -678,11 +1394,9 @@ function initLateBillsEvents() {
     });
   });
 
-  // Recalculate
   document.getElementById('tableRecalcBtn').addEventListener('click', () => triggerRecalculate());
   document.getElementById('tableRefreshBtn').addEventListener('click', () => loadLateBillsData());
 
-  // Drawer
   document.getElementById('openDrawer').addEventListener('click', () => {
     document.getElementById('drawer').style.right = '0';
     document.getElementById('drawerMask').style.opacity = '1';
@@ -693,7 +1407,6 @@ function initLateBillsEvents() {
   document.getElementById('drawerApply').addEventListener('click', () => { applyDrawerFilters(); closeDrawer(); });
   document.getElementById('drawerClear').addEventListener('click', clearDrawerFilters);
 
-  // Select all
   document.getElementById('selectAll').addEventListener('change', e => {
     const checked = e.target.checked;
     filteredData.forEach(r => checked ? selectedKeys.add(r.accountKey) : selectedKeys.delete(r.accountKey));
@@ -701,7 +1414,6 @@ function initLateBillsEvents() {
     updateBulkToolbar();
   });
 
-  // Bulk toolbar
   document.getElementById('bulkDeselectBtn').addEventListener('click', () => {
     selectedKeys.clear();
     document.getElementById('selectAll').checked = false;
@@ -709,7 +1421,6 @@ function initLateBillsEvents() {
     updateBulkToolbar();
   });
 
-  // Note modal
   document.getElementById('noteSave').addEventListener('click', saveNote);
   document.getElementById('noteClear').addEventListener('click', clearNote);
 }
@@ -728,21 +1439,14 @@ async function loadLateBillsData() {
     const data = await resp.json();
     allData = data.rows || [];
     reasonCodes = (data.filters || {}).reasonCodes || [];
-
-    // Populate drawer filters
     populateDrawerFilters(data.filters || {});
-    // Populate note reason codes
     populateReasonCodes();
-
     if (data.cacheStatus === 'empty') {
       document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading">Cache empty. Click Recalculate to generate data.</td></tr>';
       return;
     }
-
     document.getElementById('lastUpdated').textContent = data.computedAt ? 'Updated: ' + data.computedAt : '';
     applyTableFilters();
-
-    // Load catalogs for edit modal
     loadCatalogs();
   } catch (e) {
     document.getElementById('tableBody').innerHTML = '<tr><td colspan="14" class="loading" style="color:#ef4444">Error: ' + e.message + '</td></tr>';
@@ -763,18 +1467,13 @@ function populateDrawerFilters(filters) {
   const vendorContainer = document.getElementById('drawerVendorFilters');
   vendorContainer.innerHTML = (filters.vendors || []).map(v => `<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" value="${v.id}" checked /> ${v.name}</label>`).join('');
 
-  // Search within drawer
   document.getElementById('drawerPropSearch').addEventListener('input', e => {
     const q = e.target.value.toLowerCase();
-    propContainer.querySelectorAll('label').forEach(l => {
-      l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
-    });
+    propContainer.querySelectorAll('label').forEach(l => { l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none'; });
   });
   document.getElementById('drawerVendorSearch').addEventListener('input', e => {
     const q = e.target.value.toLowerCase();
-    vendorContainer.querySelectorAll('label').forEach(l => {
-      l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
-    });
+    vendorContainer.querySelectorAll('label').forEach(l => { l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none'; });
   });
 }
 
@@ -782,12 +1481,13 @@ function populateReasonCodes() {
   const sel = document.getElementById('noteReasonCode');
   sel.innerHTML = '<option value="">-- Select --</option>';
   for (const rc of reasonCodes) {
-    sel.innerHTML += `<option value="${rc}">${rc}</option>`;
+    const code = typeof rc === 'object' ? rc.code : rc;
+    const label = typeof rc === 'object' ? rc.label : rc;
+    sel.innerHTML += `<option value="${escapeHtml(code)}">${escapeHtml(label)}</option>`;
   }
 }
 
 function applyDrawerFilters() {
-  // Read checked values from drawer
   filterState.ap = [...document.querySelectorAll('#drawerApFilters input:checked')].map(i => i.value);
   filterState.properties = [...document.querySelectorAll('#drawerPropFilters input:checked')].map(i => i.value);
   filterState.vendors = [...document.querySelectorAll('#drawerVendorFilters input:checked')].map(i => i.value);
@@ -814,10 +1514,11 @@ function applyTableFilters() {
     if (filterState.ap.length && !filterState.ap.includes(r.apName)) return false;
     if (filterState.properties.length && !filterState.properties.includes(r.propertyId)) return false;
     if (filterState.vendors.length && !filterState.vendors.includes(r.vendorId)) return false;
+    // Global AP filter
+    if (window.currentApFilter && r.apName !== window.currentApFilter) return false;
     return true;
   });
 
-  // Sort
   const sortKey = filterState.sort || 'urgency';
   filteredData.sort((a, b) => {
     if (sortKey === 'urgency') return (-a.urgencyScore + b.urgencyScore) || (-a.daysOverdue + b.daysOverdue);
@@ -859,7 +1560,6 @@ function renderTable() {
     const checked = selectedKeys.has(r.accountKey) ? 'checked' : '';
     const noteIcon = r.hasNote ? '<span title="Has note" style="cursor:pointer">&#128221;</span>' : '<span style="opacity:.3;cursor:pointer">&#10133;</span>';
     const statusBadge = `<span style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600" class="status-${r.status}">${r.status.replace(/_/g,' ')}</span>`;
-    const daysClass = r.daysOverdue > 0 ? 'positive' : 'negative';
     const scraperBadge = r.hasScraper ? '<span style="background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700">SCR</span>' : '';
     const viewLink = r.lastBillKeyDate ? `<a href="/invoices?date=${r.lastBillKeyDate}#${r.lastBillPdfId}" target="_blank" style="color:#0284c7;text-decoration:none;font-size:12px;font-weight:600">View</a>` : '';
     const dupBadge = r.isDuplicate ? `<span style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:5px;cursor:help" title="${escapeHtml((r.duplicateOf||[]).join(', '))}">DUP</span>` : '';
@@ -920,19 +1620,14 @@ async function saveNote() {
     if (data.ok) {
       showToast('Note saved', 'ok');
       document.getElementById('noteModal').style.display = 'none';
-      // Update in-memory
       const row = allData.find(r => r.accountKey === currentNoteKey);
       if (row) {
         row.note = {reasonCode: document.getElementById('noteReasonCode').value, notes: document.getElementById('noteText').value};
         row.hasNote = true;
       }
       applyTableFilters();
-    } else {
-      showToast('Error saving note', 'err');
-    }
-  } catch (e) {
-    showToast('Error: ' + e.message, 'err');
-  }
+    } else { showToast('Error saving note', 'err'); }
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
 }
 
 async function clearNote() {
@@ -946,9 +1641,7 @@ async function clearNote() {
     const row = allData.find(r => r.accountKey === currentNoteKey);
     if (row) { row.note = null; row.hasNote = false; }
     applyTableFilters();
-  } catch (e) {
-    showToast('Error: ' + e.message, 'err');
-  }
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
 }
 
 /* Edit modal */
@@ -1009,12 +1702,8 @@ document.getElementById('editSave')?.addEventListener('click', async () => {
       showToast('Account updated', 'ok');
       document.getElementById('editModal').style.display = 'none';
       loadLateBillsData();
-    } else {
-      showToast(data.error || 'Error', 'err');
-    }
-  } catch (e) {
-    showToast('Error: ' + e.message, 'err');
-  }
+    } else { showToast(data.error || 'Error', 'err'); }
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
 });
 
 document.getElementById('editDelete')?.addEventListener('click', async () => {
@@ -1029,12 +1718,8 @@ document.getElementById('editDelete')?.addEventListener('click', async () => {
       showToast('Account archived', 'ok');
       document.getElementById('editModal').style.display = 'none';
       loadLateBillsData();
-    } else {
-      showToast(data.error || 'Error', 'err');
-    }
-  } catch (e) {
-    showToast('Error: ' + e.message, 'err');
-  }
+    } else { showToast(data.error || 'Error', 'err'); }
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
 });
 
 /* Recalculate */
@@ -1044,7 +1729,6 @@ async function triggerRecalculate() {
   showToast('Recalculation started...', 'ok');
   try {
     await fetch('/api/workflow/recalculate', {method:'POST'});
-    // Poll for completion
     let attempts = 0;
     const poll = setInterval(async () => {
       attempts++;

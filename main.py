@@ -8103,14 +8103,13 @@ def config_workflow_reasons_view(request: Request, user: str = Depends(require_u
 
 @app.get("/api/config/workflow-reasons")
 def api_get_workflow_reasons(user: str = Depends(require_user)):
-    """Get workflow reason codes."""
-    reasons = _s3_get_workflow_reasons()
-    return {"items": reasons}
+    """Get unified workflow reason codes (shared with directed)."""
+    return {"items": _get_unified_reason_codes()}
 
 
 @app.post("/api/config/workflow-reasons")
 async def api_save_workflow_reasons(request: Request, user: str = Depends(require_user)):
-    """Save workflow reason codes."""
+    """Save unified workflow reason codes (shared with directed)."""
     try:
         payload = await request.json()
     except Exception:
@@ -8118,17 +8117,17 @@ async def api_save_workflow_reasons(request: Request, user: str = Depends(requir
     items = payload.get("items") if isinstance(payload, dict) else None
     if not isinstance(items, list):
         return JSONResponse({"error": "items must be a list"}, status_code=400)
-    # Normalize reason codes
     norm = []
     for r in items:
         if isinstance(r, dict):
             code = str(r.get("code") or "").strip()
             label = str(r.get("label") or "").strip()
+            blocks = bool(r.get("blocks_plan", False))
             if code:
-                norm.append({"code": code, "label": label or code})
+                norm.append({"code": code, "label": label or code, "blocks_plan": blocks})
         elif isinstance(r, str) and r.strip():
-            norm.append({"code": r.strip(), "label": r.strip()})
-    ok = _s3_put_workflow_reasons(norm)
+            norm.append({"code": r.strip(), "label": r.strip(), "blocks_plan": False})
+    ok = _ddb_put_config("unified-reason-codes", norm)
     if not ok:
         return JSONResponse({"error": "save_failed"}, status_code=500)
     return {"ok": True, "saved": len(norm)}
@@ -9763,10 +9762,10 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
     """Return WORKFLOW data from S3 cache (fast).
     Use /api/workflow/recalculate to refresh the cache.
     """
-    # Load notes and reason codes (these are small and change frequently)
+    # Load notes and unified reason codes
     notes = _s3_get_workflow_notes()
     notes_by_key = {n.get("accountKey"): n for n in notes}
-    reason_codes = _s3_get_workflow_reasons()
+    reason_codes = _get_unified_reason_codes()
 
     # Try to load from S3 cache first (fast path)
     cached = _s3_get_workflow_cache()
@@ -10435,6 +10434,237 @@ def api_workflow_ap_priority(user: str = Depends(require_user)):
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
+# ========== WEEKLY OBJECTIVES ==========
+
+
+def _get_iso_week(d: dt.date = None) -> tuple[str, str, str]:
+    """Return (week_key, weekStart, weekEnd) for a given date's ISO week."""
+    if d is None:
+        d = dt.date.today()
+    iso_year, iso_week, _ = d.isocalendar()
+    week_key = f"{iso_year}-W{iso_week:02d}"
+    # Monday of the week
+    week_start = d - dt.timedelta(days=d.weekday())
+    week_end = week_start + dt.timedelta(days=6)
+    return week_key, week_start.isoformat(), week_end.isoformat()
+
+
+def _get_weekly_objectives(week_key: str) -> dict | None:
+    """Load weekly objectives from DynamoDB."""
+    try:
+        resp = ddb.get_item(
+            TableName=CONFIG_TABLE,
+            Key={"PK": {"S": "CONFIG#weekly-objectives"}, "SK": {"S": week_key}}
+        )
+        item = resp.get("Item")
+        if item and item.get("Data"):
+            return json.loads(item["Data"]["S"])
+    except Exception as e:
+        print(f"[WEEKLY OBJ] Error loading {week_key}: {e}")
+    return None
+
+
+def _put_weekly_objectives(week_key: str, data: dict) -> bool:
+    """Save weekly objectives to DynamoDB."""
+    try:
+        ddb.put_item(
+            TableName=CONFIG_TABLE,
+            Item={
+                "PK": {"S": "CONFIG#weekly-objectives"},
+                "SK": {"S": week_key},
+                "UpdatedAt": {"S": dt.datetime.utcnow().isoformat() + "Z"},
+                "Data": {"S": json.dumps(data, ensure_ascii=False)},
+            }
+        )
+        return True
+    except Exception as e:
+        print(f"[WEEKLY OBJ] Error saving {week_key}: {e}")
+        return False
+
+
+def _compute_weekly_actuals(week_key: str, week_start: str, targets: list[dict]) -> list[dict]:
+    """Compute actual bill counts per AP person for the week from directed logs."""
+    start_date = dt.date.fromisoformat(week_start)
+    today = dt.date.today()
+    # Load AP mapping to know which properties belong to which AP
+    mapping = _ddb_get_config("ap-mapping") or []
+    map_by_pid: dict[str, str] = {}
+    for r in mapping:
+        if isinstance(r, dict):
+            pid = str(r.get("propertyId") or "").strip()
+            name = str(r.get("name") or "").strip()
+            if pid and name:
+                map_by_pid[pid] = name
+
+    ap_names = {t["apName"] for t in targets}
+    actuals: dict[str, int] = {name: 0 for name in ap_names}
+    roadblocks: dict[str, dict[str, int]] = {name: {} for name in ap_names}
+
+    # Scan directed logs for each day of the week (up to today)
+    for day_offset in range(7):
+        d = start_date + dt.timedelta(days=day_offset)
+        if d > today:
+            break
+        # Scan all users' logs for this date
+        try:
+            resp = ddb.query(
+                TableName=CONFIG_TABLE,
+                KeyConditionExpression="PK = :pk AND begins_with(SK, :skp)",
+                ExpressionAttributeValues={
+                    ":pk": {"S": "DIRECTED_LOG"},
+                    ":skp": {"S": d.isoformat() + "#"},
+                }
+            )
+            for item in resp.get("Items", []):
+                data_str = item.get("data", {}).get("S", "{}")
+                log = json.loads(data_str)
+                for comp in log.get("completions", []):
+                    ak = comp.get("accountKey", "")
+                    pid = ak.split("|")[0] if "|" in ak else ""
+                    ap = map_by_pid.get(pid, "")
+                    if ap in actuals:
+                        actuals[ap] += 1
+                for inc in log.get("incompletes", []):
+                    ak = inc.get("accountKey", "")
+                    pid = ak.split("|")[0] if "|" in ak else ""
+                    ap = map_by_pid.get(pid, "")
+                    reason = inc.get("reasonCode", "unknown")
+                    if ap in roadblocks:
+                        roadblocks[ap][reason] = roadblocks[ap].get(reason, 0) + 1
+        except Exception as e:
+            print(f"[WEEKLY OBJ] Error scanning logs for {d}: {e}")
+
+    # Calculate days remaining (weekdays only)
+    days_remaining = 0
+    for day_offset in range(7):
+        d = start_date + dt.timedelta(days=day_offset)
+        if d > today and d.weekday() < 5:
+            days_remaining += 1
+
+    results = []
+    for t in targets:
+        name = t["apName"]
+        target = t.get("targetBills", 0)
+        actual = actuals.get(name, 0)
+        pct = round(actual / target * 100) if target > 0 else 0
+        daily_avg = round(actual / max(1, min(5, (today - start_date).days + 1)))
+        needed_per_day = round((target - actual) / max(1, days_remaining)) if days_remaining > 0 else 0
+        on_track = daily_avg >= needed_per_day if days_remaining > 0 else pct >= 100
+
+        rb_list = []
+        for reason, count in sorted(roadblocks.get(name, {}).items(), key=lambda x: -x[1]):
+            rb_list.append(f"{reason}: {count}")
+
+        results.append({
+            "apName": name,
+            "targetBills": target,
+            "targetHours": t.get("targetHours", 40),
+            "actualBills": actual,
+            "pctComplete": pct,
+            "daysRemaining": days_remaining,
+            "dailyAvg": daily_avg,
+            "neededPerDay": needed_per_day,
+            "onTrack": on_track,
+            "roadblocks": rb_list,
+        })
+    return results
+
+
+@app.get("/api/workflow/weekly-objectives")
+def api_get_weekly_objectives(
+    week: str = None,
+    user: str = Depends(require_user),
+):
+    """Get weekly objectives with actuals for the given week (defaults to current)."""
+    try:
+        if week:
+            week_key = week
+            # Parse week_start from key
+            parts = week_key.split("-W")
+            yr = int(parts[0])
+            wk = int(parts[1])
+            d = dt.date.fromisocalendar(yr, wk, 1)
+            week_start = d.isoformat()
+            week_end = (d + dt.timedelta(days=6)).isoformat()
+        else:
+            week_key, week_start, week_end = _get_iso_week()
+
+        obj = _get_weekly_objectives(week_key)
+        if not obj or not obj.get("targets"):
+            return {
+                "ok": True,
+                "week": week_key,
+                "weekStart": week_start,
+                "weekEnd": week_end,
+                "targets": [],
+                "hasTargets": False,
+            }
+
+        targets_with_actuals = _compute_weekly_actuals(week_key, week_start, obj["targets"])
+        return {
+            "ok": True,
+            "week": week_key,
+            "weekStart": week_start,
+            "weekEnd": week_end,
+            "targets": targets_with_actuals,
+            "hasTargets": True,
+            "setBy": obj.get("setBy", ""),
+            "setAt": obj.get("setAt", ""),
+        }
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "loading objectives")}, status_code=500)
+
+
+@app.post("/api/workflow/weekly-objectives")
+async def api_set_weekly_objectives(request: Request, user: str = Depends(require_user)):
+    """Set weekly bill count targets per AP person."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    week = payload.get("week")
+    targets = payload.get("targets")
+    if not isinstance(targets, list):
+        return JSONResponse({"error": "targets must be a list"}, status_code=400)
+
+    if not week:
+        week, week_start, week_end = _get_iso_week()
+    else:
+        parts = week.split("-W")
+        yr = int(parts[0])
+        wk = int(parts[1])
+        d = dt.date.fromisocalendar(yr, wk, 1)
+        week_start = d.isoformat()
+        week_end = (d + dt.timedelta(days=6)).isoformat()
+
+    norm_targets = []
+    for t in targets:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get("apName") or "").strip()
+        if not name:
+            continue
+        norm_targets.append({
+            "apName": name,
+            "targetBills": int(t.get("targetBills", 0)),
+            "targetHours": int(t.get("targetHours", 40)),
+        })
+
+    data = {
+        "week": week,
+        "weekStart": week_start,
+        "weekEnd": week_end,
+        "targets": norm_targets,
+        "setBy": user,
+        "setAt": dt.datetime.utcnow().isoformat() + "Z",
+    }
+    ok = _put_weekly_objectives(week, data)
+    if not ok:
+        return JSONResponse({"error": "save_failed"}, status_code=500)
+    return {"ok": True, "week": week, "saved": len(norm_targets)}
+
+
 # ========== DIRECTED WORKFLOW API ENDPOINTS ==========
 
 
@@ -10657,8 +10887,8 @@ def api_directed_history(days: int = 7, user: str = Depends(require_user)):
 
 @app.get("/api/directed/reason-codes")
 def api_directed_reason_codes(user: str = Depends(require_user)):
-    """Get list of incomplete reason codes."""
-    return {"ok": True, "codes": _DIRECTED_REASON_CODES}
+    """Get list of incomplete reason codes (unified)."""
+    return {"ok": True, "codes": _get_unified_reason_codes()}
 
 
 @app.post("/api/directed/relink-scraper")
@@ -12677,15 +12907,24 @@ def _put_directed_log(user: str, date: dt.date, log: dict):
 
 # -------- Directed Workflow: Queue Generation --------
 
-_DIRECTED_REASON_CODES = [
-    {"code": "portal_down", "label": "Portal/website was down"},
-    {"code": "bill_not_available", "label": "Bill not yet available from provider"},
-    {"code": "vendor_issue", "label": "Vendor issue (wrong account, closed, etc.)"},
-    {"code": "ran_out_of_time", "label": "Ran out of time"},
-    {"code": "system_error", "label": "System/app error prevented completion"},
-    {"code": "reassigned", "label": "Task reassigned to someone else"},
-    {"code": "other", "label": "Other (see notes)"},
+_DEFAULT_UNIFIED_REASON_CODES = [
+    {"code": "portal_down", "label": "Portal/website was down", "blocks_plan": True},
+    {"code": "bill_not_available", "label": "Bill not yet available from provider", "blocks_plan": True},
+    {"code": "vendor_issue", "label": "Vendor issue (wrong account, closed, etc.)", "blocks_plan": True},
+    {"code": "ran_out_of_time", "label": "Ran out of time", "blocks_plan": False},
+    {"code": "system_error", "label": "System/app error prevented completion", "blocks_plan": True},
+    {"code": "reassigned", "label": "Task reassigned to someone else", "blocks_plan": False},
+    {"code": "waiting_on_info", "label": "Waiting on information", "blocks_plan": True},
+    {"code": "other", "label": "Other (see notes)", "blocks_plan": False},
 ]
+
+
+def _get_unified_reason_codes() -> list[dict]:
+    """Get unified reason codes from DynamoDB config, or return defaults."""
+    cfg = _ddb_get_config("unified-reason-codes")
+    if cfg and isinstance(cfg, list) and len(cfg) > 0:
+        return cfg
+    return _DEFAULT_UNIFIED_REASON_CODES
 
 
 def _compute_task_priority(urgency_score: int, is_house: bool, avg_amount: float, scraper_available: bool) -> int:
@@ -12730,6 +12969,18 @@ def _generate_directed_plan(user: str) -> dict:
     scraper_links = _s3_get_scraper_links()
     accounts = _get_accounts_to_track()
     user_rate = _compute_user_rate(user)
+
+    # Load workflow notes + unified reason codes for plan-blocking integration
+    workflow_notes = _s3_get_workflow_notes()
+    unified_codes = _get_unified_reason_codes()
+    blocking_codes = {c["code"] for c in unified_codes if c.get("blocks_plan")}
+    blocking_account_keys: set[str] = set()
+    for note in workflow_notes:
+        if isinstance(note, dict):
+            rc = note.get("reasonCode", "")
+            ak = note.get("accountKey", "")
+            if rc in blocking_codes and ak:
+                blocking_account_keys.add(ak)
 
     # Build account lookup
     acct_by_key: dict[str, dict] = {}
@@ -12816,6 +13067,9 @@ def _generate_directed_plan(user: str) -> dict:
         if ak in pipeline_account_keys:
             continue  # bill already in pipeline, skip collection
 
+        # Skip accounts blocked by workflow notes with blocking reason codes
+        blocked_by_note = ak in blocking_account_keys
+
         acc = acct_by_key.get(ak, {})
         is_house = bool(acc.get("is_house", True))
         avg_amount = 0.0
@@ -12829,6 +13083,8 @@ def _generate_directed_plan(user: str) -> dict:
         scraper_available = bool(scraper_link)
 
         priority = _compute_task_priority(urgency_score, is_house, avg_amount, scraper_available)
+        if blocked_by_note:
+            priority = max(priority - 500, 0)  # deprioritize blocked accounts
 
         task = {
             "taskId": f"t_{_uuid.uuid4().hex[:8]}",
@@ -12854,6 +13110,7 @@ def _generate_directed_plan(user: str) -> dict:
                 "bitwardenAvailable": None,
                 "resolution": "scraper" if scraper_available else "unknown",
             },
+            "blockedByNote": blocked_by_note,
             "status": "pending",
             "completedAt": None,
             "completedAction": None,
