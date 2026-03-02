@@ -300,13 +300,13 @@
             <option value="my_bills">My Bills (by priority)</option>
             <option value="team_member">Team Member's Bills</option>
           </select>
-          <select id="dir_targetAp" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:140px">
+          <select id="dir_targetAp" style="display:none;padding:6px 10px;border-radius:8px;border:2px solid #f59e0b;background:rgba(255,255,255,.92);color:#0f172a;font-size:13px;font-family:inherit;cursor:pointer;min-width:160px;font-weight:600">
             <option value="">Select AP...</option>
           </select>
-          <select id="dir_filterProperty" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:140px">
+          <select id="dir_filterProperty" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.85);color:#0f172a;font-size:13px;font-family:inherit;cursor:pointer;min-width:140px">
             <option value="">All Properties</option>
           </select>
-          <select id="dir_filterVendor" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:120px">
+          <select id="dir_filterVendor" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.85);color:#0f172a;font-size:13px;font-family:inherit;cursor:pointer;min-width:120px">
             <option value="">All Vendors</option>
           </select>
           <button class="btn success" onclick="dir_generatePlan()">Generate Plan</button>
@@ -881,7 +881,16 @@ async function dir_generatePlan() {
       payload.targetAp = document.getElementById('dir_targetAp').value || '';
       payload.filterProperty = document.getElementById('dir_filterProperty').value || '';
       payload.filterVendor = document.getElementById('dir_filterVendor').value || '';
-      if (!payload.targetAp) { showToast('Please select an AP team member', 'err'); dir_hideLoading(); return; }
+      if (!payload.targetAp) {
+        showToast('Please select an AP team member from the dropdown', 'err');
+        const apSel = document.getElementById('dir_targetAp');
+        apSel.style.border = '2px solid #ef4444';
+        apSel.style.boxShadow = '0 0 0 3px rgba(239,68,68,.4)';
+        apSel.focus();
+        setTimeout(() => { apSel.style.border = '2px solid #f59e0b'; apSel.style.boxShadow = ''; }, 2000);
+        dir_hideLoading();
+        return;
+      }
     }
     const genResp = await fetch('/api/directed/generate', {
       method: 'POST',
