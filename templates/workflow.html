@@ -1319,7 +1319,7 @@ async function dir_toggleDetail(taskId) {
     try {
       const resp = await fetch('/api/directed/batch-history', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({accounts: [{accountKey: ak, vendorName: task.vendorName || ''}]})
+        body: JSON.stringify({accounts: [{accountKey: ak, vendorName: task.vendorName || '', propertyName: task.propertyName || ''}]})
       });
       const data = await resp.json();
       dir_historyCache[ak] = (data.histories || {})[ak] || {};
@@ -1336,37 +1336,48 @@ async function dir_toggleDetail(taskId) {
   if (task.servicePeriodDays) html += `<div class="detail-item"><span class="lbl">Service Period:</span> ${task.servicePeriodDays} days</div>`;
   if (task.hasScraper) html += `<div class="detail-item"><span class="lbl">Scraper:</span> ${escapeHtml(task.scraperProvider || 'Yes')}</div>`;
   if (task.isDuplicate) html += `<div class="detail-item" style="color:#92400e"><span class="lbl">Duplicate of:</span> ${escapeHtml((task.duplicateOf||[]).join(', '))}</div>`;
-  if (task.lastBillPdfId) html += `<div class="detail-item"><a href="/invoices?pdf_id=${encodeURIComponent(task.lastBillPdfId)}" target="_blank">View Last Invoice</a></div>`;
-  // Show vendor match info from Snowflake
-  const mi = hist.matchInfo;
-  if (mi) {
-    html += `<div class="detail-item"><span class="lbl">Matched Vendor:</span> ${escapeHtml(mi.matched_vendor || '')} <span style="color:#64748b;font-size:10px">(${escapeHtml(mi.match_type || '')} match, ${Math.round((mi.confidence || 0) * 100)}%)</span></div>`;
-    if (mi.gl_account) html += `<div class="detail-item"><span class="lbl">Primary GL:</span> ${escapeHtml(mi.gl_account)} — ${escapeHtml(mi.gl_name || '')}</div>`;
-  }
+  if (task.lastBillPdfId && task.lastBillKeyDate) html += `<div class="detail-item"><a href="/invoices?date=${encodeURIComponent(task.lastBillKeyDate)}#pdf_${task.lastBillPdfId}" target="_blank" style="color:#0ea5e9;font-weight:600">View Last Invoice</a></div>`;
   html += '</div>';
 
-  // Invoice history table (from Snowflake INVOICES_MAT — full 12+ months)
-  const invoices = hist.invoiceHistory || [];
-  if (invoices.length) {
-    html += '<div style="font-weight:600;font-size:11px;margin:8px 0 4px;color:#334155">Invoice History (past 12+ months)</div>';
-    html += '<table><tr><th>Period</th><th style="text-align:right">Amount</th></tr>';
-    // Show most recent first
-    for (const inv of [...invoices].reverse()) {
+  // Invoice history from search index (all pipeline invoices)
+  const pipelineInvoices = hist.invoices || [];
+  // Snowflake monthly totals (Entrata-wide, only available for ~32 properties)
+  const snowflakeHistory = hist.invoiceHistory || [];
+
+  if (pipelineInvoices.length) {
+    html += `<div style="font-weight:600;font-size:11px;margin:8px 0 4px;color:#334155">Invoice History (${pipelineInvoices.length} invoices from Bill Review)</div>`;
+    html += '<table><tr><th>Date</th><th>Vendor</th><th style="text-align:right">Amount</th><th>View</th></tr>';
+    for (const inv of pipelineInvoices) {
       const amt = inv.amount != null ? '$' + Number(inv.amount).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+      const viewLink = inv.pdfId && inv.date ? `<a href="/invoices?date=${encodeURIComponent(inv.date)}#pdf_${inv.pdfId}" target="_blank" style="color:#0ea5e9">View</a>` : '';
       html += `<tr>
-        <td>${escapeHtml(inv.period || '')}</td>
+        <td>${escapeHtml(inv.date || '')}</td>
+        <td>${escapeHtml(inv.vendor || '')}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums">${amt}</td>
+        <td>${viewLink}</td>
       </tr>`;
     }
     html += '</table>';
-    // Show average monthly amount
-    if (invoices.length > 1) {
-      const total = invoices.reduce((s, i) => s + (i.amount || 0), 0);
-      const avg = total / invoices.length;
-      html += `<div style="font-size:10px;color:#64748b;margin-top:4px">Avg monthly: $${avg.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})} &middot; ${invoices.length} months of data</div>`;
+    if (pipelineInvoices.length > 1) {
+      const total = pipelineInvoices.reduce((s, i) => s + (i.amount || 0), 0);
+      const avg = total / pipelineInvoices.length;
+      html += `<div style="font-size:10px;color:#64748b;margin-top:4px">Avg per invoice: $${avg.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})} &middot; Total: $${total.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</div>`;
     }
+  } else if (snowflakeHistory.length) {
+    // Fallback: show Snowflake monthly totals if pipeline data not available
+    const mi = hist.matchInfo;
+    html += '<div style="font-weight:600;font-size:11px;margin:8px 0 4px;color:#334155">Invoice History (Entrata monthly totals)</div>';
+    if (mi) {
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:4px">Vendor: ${escapeHtml(mi.matched_vendor || '')} (${escapeHtml(mi.match_type || '')} match)${mi.gl_account ? ' · GL: ' + escapeHtml(mi.gl_account) : ''}</div>`;
+    }
+    html += '<table><tr><th>Period</th><th style="text-align:right">Amount</th></tr>';
+    for (const inv of [...snowflakeHistory].reverse()) {
+      const amt = inv.amount != null ? '$' + Number(inv.amount).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+      html += `<tr><td>${escapeHtml(inv.period || '')}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${amt}</td></tr>`;
+    }
+    html += '</table>';
   } else {
-    html += '<div style="color:#94a3b8;font-size:11px;padding:4px 0">No invoice history found for this account in Snowflake INVOICES_MAT.</div>';
+    html += '<div style="color:#94a3b8;font-size:11px;padding:4px 0">No invoice history found. This account may not have any invoices processed through Bill Review yet.</div>';
   }
 
   panel.innerHTML = html;

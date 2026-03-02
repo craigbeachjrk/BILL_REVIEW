@@ -10850,30 +10850,80 @@ def api_directed_end_of_day(request: Request, user: str = Depends(require_user))
 
 @app.post("/api/directed/batch-history")
 def api_directed_batch_history(request: Request, user: str = Depends(require_user)):
-    """Return invoice history from Snowflake INVOICES_MAT for a batch of accounts."""
+    """Return invoice history from search index (all pipeline invoices) + Snowflake INVOICES_MAT."""
     try:
         import asyncio
         body = asyncio.get_event_loop().run_until_complete(request.json())
-        # Accept list of {accountKey, vendorName} objects
         accounts_list = body.get("accounts", [])
         if not isinstance(accounts_list, list):
             return JSONResponse({"error": "accounts must be a list"}, status_code=400)
+
+        # Primary source: search index (covers ALL properties in the pipeline)
+        search_entries = _SEARCH_INDEX.get("entries", []) if _SEARCH_INDEX.get("ready") else []
+
         result = {}
-        for item in accounts_list[:50]:  # limit to 50 per request
+        for item in accounts_list[:50]:
             ak = item.get("accountKey", "")
             vendor_name = item.get("vendorName", "")
+            property_name = item.get("propertyName", "")
             if not ak:
                 continue
             parts = ak.split("|")
             property_id = parts[0] if len(parts) > 0 else ""
             account_number = parts[2] if len(parts) > 2 else ""
-            # Use Snowflake INVOICES_MAT cache for full invoice history
-            history, match_info = _read_historical_from_invoices_mat(
+
+            # Search the in-memory search index for matching invoices
+            acct_lower = account_number.lower().strip()
+            vendor_lower = vendor_name.lower().strip()
+            prop_lower = property_name.lower().strip()
+
+            matched_invoices = []
+            source = "none"
+
+            if acct_lower and search_entries:
+                # Match by account number (most precise)
+                for e in search_entries:
+                    if e.get("account_l", "") == acct_lower:
+                        matched_invoices.append(e)
+                source = "search_index_acct"
+
+            if not matched_invoices and vendor_lower and prop_lower and search_entries:
+                # Fallback: match by vendor + property name combo
+                for e in search_entries:
+                    ev = e.get("vendor_l", "")
+                    ep = e.get("property_l", "")
+                    if not ev or not ep:
+                        continue  # skip entries with empty vendor/property
+                    if (vendor_lower in ev or ev in vendor_lower) \
+                       and (prop_lower in ep or ep in prop_lower):
+                        matched_invoices.append(e)
+                source = "search_index_vendor_prop"
+
+            # Build invoice history from search index matches
+            invoices = []
+            for inv in matched_invoices:
+                invoices.append({
+                    "date": inv.get("date", ""),
+                    "amount": inv.get("amount", 0),
+                    "vendor": inv.get("vendor", ""),
+                    "property": inv.get("property", ""),
+                    "pdfId": inv.get("pdf_id", ""),
+                })
+            # Sort newest first
+            invoices.sort(key=lambda x: x["date"], reverse=True)
+            invoices = invoices[:24]  # last 24 invoices max
+
+            # Secondary source: Snowflake INVOICES_MAT (for Entrata-wide data)
+            snowflake_history, snowflake_match = _read_historical_from_invoices_mat(
                 property_id, account_number, vendor_name
             )
+
             result[ak] = {
-                "invoiceHistory": history,  # [{period: "MM/YYYY", amount: float}, ...]
-                "matchInfo": match_info,    # {matched_vendor, match_type, confidence, gl_account, gl_name}
+                "invoices": invoices,               # from search index (pipeline data)
+                "invoiceHistory": snowflake_history, # from Snowflake MAT (monthly totals)
+                "matchInfo": snowflake_match,
+                "source": source,
+                "matchCount": len(matched_invoices),
             }
         return {"ok": True, "histories": result}
     except Exception as e:
