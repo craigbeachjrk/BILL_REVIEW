@@ -221,6 +221,43 @@
 
     .dir-blocked-tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:9px;font-weight:600;background:#fef3c7;color:#92400e;margin-left:4px}
 
+    /* Fix dropdown option readability (white-on-white) */
+    #globalApFilter option,
+    #dir_planMode option,
+    #dir_targetAp option,
+    #dir_filterProperty option,
+    #dir_filterVendor option { color: #0f172a; background: #fff; }
+
+    /* Enriched task row badges */
+    .dir-badge{display:inline-block;padding:1px 5px;border-radius:4px;font-size:9px;font-weight:700;margin-left:4px;vertical-align:middle}
+    .dir-badge.dup{background:#fef3c7;color:#92400e}
+    .dir-badge.scraper{background:#dbeafe;color:#1e40af}
+    .dir-date-info{font-size:10px;color:#64748b;margin-left:6px}
+    .dir-overdue{font-size:11px;font-weight:700;color:#dc2626;margin-left:6px}
+
+    /* Inline detail panel */
+    .dir-detail-panel{background:rgba(255,255,255,.95);border-radius:0 0 10px 10px;padding:12px 16px;margin:-1px 0 4px 0;font-size:12px;color:#0f172a;border-bottom:2px solid #e2e8f0}
+    .dir-detail-panel table{width:100%;border-collapse:collapse;font-size:11px}
+    .dir-detail-panel th{text-align:left;padding:4px 8px;border-bottom:1px solid #e2e8f0;color:#64748b;font-weight:600}
+    .dir-detail-panel td{padding:4px 8px;border-bottom:1px solid #f1f5f9}
+    .dir-detail-panel .detail-summary{display:flex;gap:16px;margin-bottom:8px;flex-wrap:wrap}
+    .dir-detail-panel .detail-item{font-size:11px}
+    .dir-detail-panel .detail-item .lbl{color:#64748b;font-weight:600}
+    .dir-detail-panel a{color:#2563eb;text-decoration:none}
+    .dir-detail-panel a:hover{text-decoration:underline}
+
+    /* Group-level actions */
+    .dir-group-actions{display:inline-flex;gap:4px;margin-left:8px}
+
+    /* Task row clickable body */
+    .dir-task-body{flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0}
+    .dir-task-body:hover{opacity:.85}
+
+    /* Skip reason modal */
+    .dir-skip-modal .modal-box{max-width:420px}
+    .dir-skip-modal .modal-box h3{margin:0 0 8px 0;font-size:16px;color:#0f172a}
+    .dir-skip-modal .modal-box p{font-size:12px;color:#64748b;margin:0 0 12px 0}
+
     /* ===== Set Targets Modal ===== */
     .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center}
     .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:90%;max-height:90vh;overflow-y:auto;padding:24px}
@@ -256,9 +293,22 @@
 
     <!-- DAILY WORK PLAN TAB (Directed) -->
     <div class="tab-content active" id="directedTab">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
         <span id="dir_planDate" style="font-size:16px;font-weight:400;color:rgba(255,255,255,.7)"></span>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="dir_planMode" onchange="dir_onModeChange()" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer">
+            <option value="my_bills">My Bills (by priority)</option>
+            <option value="team_member">Team Member's Bills</option>
+          </select>
+          <select id="dir_targetAp" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:140px">
+            <option value="">Select AP...</option>
+          </select>
+          <select id="dir_filterProperty" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:140px">
+            <option value="">All Properties</option>
+          </select>
+          <select id="dir_filterVendor" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-family:inherit;cursor:pointer;min-width:120px">
+            <option value="">All Vendors</option>
+          </select>
           <button class="btn success" onclick="dir_generatePlan()">Generate Plan</button>
           <button class="btn" onclick="dir_openHistory()">History</button>
         </div>
@@ -295,6 +345,22 @@
       <!-- End My Day button -->
       <div style="margin-top:24px;text-align:center" id="dir_eodButtonWrap">
         <button class="btn danger" onclick="dir_showEodSection()" id="dir_eodButton" style="display:none;padding:12px 32px;font-size:14px">End My Day</button>
+      </div>
+
+      <!-- Skip Reason Modal -->
+      <div id="dir_skipModal" class="modal-overlay dir-skip-modal" style="display:none">
+        <div class="modal-box">
+          <h3>Skip Task</h3>
+          <p id="dir_skipTaskInfo"></p>
+          <select id="dir_skipReason" style="width:100%;padding:8px;margin:8px 0;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit">
+            <option value="">Select reason...</option>
+          </select>
+          <textarea id="dir_skipNotes" placeholder="Optional notes..." style="width:100%;padding:8px;margin:8px 0;min-height:60px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+            <button class="btn secondary" onclick="dir_closeSkipModal()">Cancel</button>
+            <button class="btn danger" onclick="dir_confirmSkip()">Skip</button>
+          </div>
+        </div>
       </div>
     </div><!-- End Directed Tab -->
 
@@ -579,6 +645,8 @@ let dir_plan = null;
 let dir_taskTimers = {};
 let dir_activeTaskId = null;
 let dir_reasonCodes = [];
+let dir_historyCache = {};
+let dir_skipTaskId = null;
 
 /* Weekly objectives */
 let weeklyObjectives = null;
@@ -648,6 +716,7 @@ async function initGlobalApFilter() {
     const resp = await fetch('/api/config/ap-mapping');
     const data = await resp.json();
     const items = data.items || [];
+    window._apMappingItems = items;  // store for mode selector
 
     // Build mapping: propertyId → apName
     const apSet = new Set();
@@ -797,7 +866,19 @@ function dir_showEmpty() {
 async function dir_generatePlan() {
   dir_showLoading('Generating your daily plan...');
   try {
-    const genResp = await fetch('/api/directed/generate', { method: 'POST' });
+    const mode = document.getElementById('dir_planMode').value || 'my_bills';
+    const payload = { mode };
+    if (mode === 'team_member') {
+      payload.targetAp = document.getElementById('dir_targetAp').value || '';
+      payload.filterProperty = document.getElementById('dir_filterProperty').value || '';
+      payload.filterVendor = document.getElementById('dir_filterVendor').value || '';
+      if (!payload.targetAp) { showToast('Please select an AP team member', 'err'); dir_hideLoading(); return; }
+    }
+    const genResp = await fetch('/api/directed/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
     const genData = await genResp.json();
     if (!genResp.ok || genData.error) {
       showToast('Error generating plan: ' + (genData.error || 'unknown error'), 'err');
@@ -807,6 +888,7 @@ async function dir_generatePlan() {
     const resp = await fetch('/api/directed/plan');
     const data = await resp.json();
     dir_plan = data.plan;
+    dir_historyCache = {};  // clear stale cache
     dir_render();
     showToast('Plan generated!', 'ok');
   } catch (e) {
@@ -815,8 +897,75 @@ async function dir_generatePlan() {
   dir_hideLoading();
 }
 
+/* --- Mode selector logic --- */
+function dir_onModeChange() {
+  const mode = document.getElementById('dir_planMode').value;
+  const show = mode === 'team_member';
+  document.getElementById('dir_targetAp').style.display = show ? '' : 'none';
+  document.getElementById('dir_filterProperty').style.display = show ? '' : 'none';
+  document.getElementById('dir_filterVendor').style.display = show ? '' : 'none';
+  if (show) dir_populateModeSelectors();
+}
+
+function dir_populateModeSelectors() {
+  const apSel = document.getElementById('dir_targetAp');
+  const propSel = document.getElementById('dir_filterProperty');
+  const vendorSel = document.getElementById('dir_filterVendor');
+  // AP names from global mapping
+  if (apSel.options.length <= 1) {
+    const apSet = new Set();
+    for (const name of Object.values(window.apMapping || {})) apSet.add(name);
+    for (const name of [...apSet].sort()) {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      apSel.appendChild(opt);
+    }
+  }
+  // Property names from AP mapping data
+  if (propSel.options.length <= 1 && window._apMappingItems) {
+    const propSet = new Set();
+    for (const r of window._apMappingItems) {
+      const pn = (r.propertyName || '').trim();
+      const pid = (r.propertyId || '').trim();
+      if (pn && pid) propSet.add(JSON.stringify({id: pid, name: pn}));
+    }
+    for (const item of [...propSet].sort()) {
+      const p = JSON.parse(item);
+      const opt = document.createElement('option');
+      opt.value = p.id; opt.textContent = p.name;
+      propSel.appendChild(opt);
+    }
+  }
+  // Vendor names from workflow cache (populated from plan tasks if available)
+  if (vendorSel.options.length <= 1 && dir_plan && dir_plan.tasks) {
+    const vendorSet = new Set();
+    for (const t of dir_plan.tasks) {
+      if (t.vendorName) vendorSet.add(t.vendorName);
+    }
+    for (const name of [...vendorSet].sort()) {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      vendorSel.appendChild(opt);
+    }
+  }
+}
+
 function dir_render() {
-  if (!dir_plan || !dir_plan.tasks || !dir_plan.tasks.length) { dir_showEmpty(); return; }
+  if (!dir_plan) { dir_showEmpty(); return; }
+  // Show message if user has no email configured in AP Team
+  if (dir_plan.noEmailMatch) {
+    document.getElementById('dir_planContent').innerHTML = `
+      <div class="dir-empty-state">
+        <div class="icon">&#9888;</div>
+        <h3>Your email isn't linked to any properties</h3>
+        <p>Go to <a href="/config/ap-team" style="color:#2563eb;font-weight:600">Config &gt; AP Team Members</a> and add your login email next to your name.<br>
+        Then come back and hit <strong>Generate Plan</strong>.</p>
+        <p style="margin-top:12px">Or switch to <strong>Team Member's Bills</strong> mode to generate a plan for someone else.</p>
+      </div>`;
+    document.getElementById('dir_eodButton').style.display = 'none';
+    return;
+  }
+  if (!dir_plan.tasks || !dir_plan.tasks.length) { dir_showEmpty(); return; }
   document.getElementById('dir_planDate').textContent = dir_plan.planDate || '';
   dir_renderStats();
   dir_renderTasks();
@@ -896,20 +1045,55 @@ function dir_renderTasks() {
 function dir_renderGroupedTasks(tasks, groupBy) {
   const groups = {};
   for (const t of tasks) {
+    // Group by vendor NAME (not code) or property name
     const key = groupBy === 'provider'
-      ? (t.providerGroup || t.vendorName || 'Unknown')
+      ? (t.vendorName || 'Unknown')
       : (t.propertyName || 'Unknown');
     if (!groups[key]) groups[key] = [];
     groups[key].push(t);
   }
+  // Sort groups: most overdue group first (by max daysOverdue in group)
+  const sortedGroups = Object.entries(groups).sort((a, b) => {
+    const maxA = Math.max(...a[1].map(t => t.daysOverdue || 0));
+    const maxB = Math.max(...b[1].map(t => t.daysOverdue || 0));
+    return maxB - maxA;
+  });
   let html = '<div class="dir-task-list">';
-  for (const [groupName, groupTasks] of Object.entries(groups)) {
+  for (const [groupName, groupTasks] of sortedGroups) {
+    // Sort tasks within group: most overdue first
+    groupTasks.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
     const groupEst = groupTasks.reduce((s, t) => s + (t.estimatedMinutes || 0), 0);
     const gid = 'g_' + groupName.replace(/\W/g, '_');
+    const pendingInGroup = groupTasks.filter(t => t.status === 'pending').length;
+    const completedInGroup = groupTasks.filter(t => t.status === 'completed').length;
+    const hasCollection = groupTasks.some(t => t.taskType === 'collection' && t.status === 'pending');
+    const hasProcessing = groupTasks.some(t => t.taskType === 'processing' && t.status === 'pending');
+    // Collect unique properties in this vendor group
+    const propsInGroup = [...new Set(groupTasks.map(t => t.propertyName).filter(Boolean))];
+    let groupActions = '';
+    if (pendingInGroup > 0) {
+      groupActions = '<div class="dir-group-actions" onclick="event.stopPropagation()">';
+      if (hasCollection) {
+        groupActions += `<button class="btn small success" onclick="dir_bulkComplete('${gid}','imported')">All Scraper</button>`;
+        groupActions += `<button class="btn small" onclick="dir_bulkComplete('${gid}','logged_portal')">All Utility Website</button>`;
+        groupActions += `<button class="btn small secondary" onclick="dir_bulkComplete('${gid}','checked_mail')">All Mail</button>`;
+      }
+      if (hasProcessing) {
+        groupActions += `<button class="btn small success" onclick="dir_bulkComplete('${gid}','processed')">All Done</button>`;
+      }
+      groupActions += '</div>';
+    }
+    const statusText = completedInGroup > 0
+      ? `${pendingInGroup} pending, ${completedInGroup} done`
+      : `${groupTasks.length} bills`;
+    const propsSummary = groupBy === 'provider' && propsInGroup.length > 1
+      ? ` across ${propsInGroup.length} properties`
+      : '';
     html += `<div class="dir-group-header" onclick="dir_toggleGroup('${gid}')">
       <span class="arrow" id="dir_arrow_${gid}">&#9660;</span>
-      <strong>${escapeHtml(groupName.toUpperCase())}</strong>
-      <span class="group-stats">${groupTasks.length} tasks, ~${Math.round(groupEst)} min</span>
+      <strong>${escapeHtml(groupName)}</strong>
+      <span class="group-stats">${statusText}${propsSummary}</span>
+      ${groupActions}
     </div>`;
     html += `<div id="dir_group_${gid}">`;
     for (const t of groupTasks) html += dir_renderTaskRow(t);
@@ -920,9 +1104,7 @@ function dir_renderGroupedTasks(tasks, groupBy) {
 }
 
 function dir_renderTaskRow(t) {
-  const isActive = dir_activeTaskId === t.taskId;
   const cls = ['dir-task-row'];
-  if (isActive) cls.push('active');
   if (t.status === 'completed') cls.push('completed');
   if (t.status === 'incomplete') cls.push('incomplete');
   if (!t.isHouse) cls.push('vacant');
@@ -931,48 +1113,62 @@ function dir_renderTaskRow(t) {
   let sourceHtml = '';
   const src = t.source || {};
   if (src.resolution === 'scraper') {
-    sourceHtml = `<span class="dir-source-tag scraper">Scraper PDF (${src.scraperPdfCount || '?'})</span>`;
+    sourceHtml = `<span class="dir-source-tag scraper">Auto-download (${src.scraperPdfCount || '?'} PDFs)</span>`;
   } else if (src.resolution === 'portal') {
     const url = src.portalUrl || '';
     const user = src.portalUsername || '';
-    sourceHtml = `<span class="dir-source-tag portal">Portal${url ? ': ' + escapeHtml(url) : ''}${user ? ' | ' + escapeHtml(user) : ''}</span>`;
+    sourceHtml = `<span class="dir-source-tag portal">Website login${url ? ': ' + escapeHtml(url) : ''}${user ? ' (' + escapeHtml(user) + ')' : ''}</span>`;
   } else if (src.resolution === 'mail') {
-    sourceHtml = `<span class="dir-source-tag mail">Check mail</span>`;
+    sourceHtml = `<span class="dir-source-tag mail">Physical mail</span>`;
   } else if (src.resolution === 'pipeline') {
-    sourceHtml = `<span class="dir-source-tag">${t.subType || 'pipeline'}</span>`;
+    sourceHtml = `<span class="dir-source-tag">${t.subType === 'review' ? 'Needs review' : t.subType === 'post' ? 'Ready to post' : t.subType || 'In pipeline'}</span>`;
   }
 
   let blockedHtml = t.blockedByNote ? '<span class="dir-blocked-tag">BLOCKED</span>' : '';
 
-  let timerHtml = '';
-  if (isActive && dir_taskTimers[t.taskId]) {
-    timerHtml = `<span class="dir-timer" id="dir_timer_${t.taskId}">0:00</span>`;
-  }
+  // Enriched badges
+  let dupBadge = t.isDuplicate
+    ? `<span class="dir-badge dup" title="Possible duplicate: ${escapeHtml((t.duplicateOf||[]).join(', '))}">DUP</span>`
+    : '';
+  let scraperBadge = t.hasScraper
+    ? `<span class="dir-badge scraper" title="${escapeHtml(t.scraperProvider || '')}">SCRAPER</span>`
+    : '';
 
+  // Dates
+  let lastRecv = t.lastBillDate
+    ? `<span class="dir-date-info">Last: ${escapeHtml(t.lastBillDate)}</span>`
+    : '';
+  let nextExp = t.nextExpectedDate
+    ? `<span class="dir-date-info">Next: ${escapeHtml(t.nextExpectedDate)}</span>`
+    : '';
+
+  // Days overdue (prominent)
+  let overdueHtml = (t.daysOverdue > 0)
+    ? `<span class="dir-overdue">${t.daysOverdue}d overdue</span>`
+    : '';
+
+  // Action buttons — always visible (no Start button required)
   let actionsHtml = '';
   if (t.status === 'pending') {
-    if (!isActive) {
-      actionsHtml = `<button class="btn small" onclick="dir_startTask('${t.taskId}')">Start</button>`;
+    if (t.taskType === 'collection') {
+      actionsHtml = `
+        <button class="btn small success" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','imported')">Scraper</button>
+        <button class="btn small" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','logged_portal')">Utility Website</button>
+        <button class="btn small secondary" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','checked_mail')">Mail</button>
+        <button class="btn small" style="background:#94a3b8" onclick="event.stopPropagation();dir_openSkipModal('${t.taskId}')">Skip</button>`;
     } else {
-      if (t.taskType === 'collection') {
-        actionsHtml = `
-          <button class="btn small success" onclick="dir_completeTask('${t.taskId}','imported')">Imported</button>
-          <button class="btn small" onclick="dir_completeTask('${t.taskId}','logged_portal')">Portal</button>
-          <button class="btn small secondary" onclick="dir_completeTask('${t.taskId}','checked_mail')">Mail</button>
-          <button class="btn small" style="background:#94a3b8" onclick="dir_markIncomplete('${t.taskId}')">Skip</button>`;
-      } else {
-        const link = t.subType === 'review' ? `/invoices?pdf_id=${t.pdfId || ''}` :
-                     t.subType === 'post' ? `/post` : `/billback`;
-        actionsHtml = `
-          <a class="btn small" href="${link}" target="_blank">Open</a>
-          <button class="btn small success" onclick="dir_completeTask('${t.taskId}','processed')">Done</button>
-          <button class="btn small" style="background:#94a3b8" onclick="dir_markIncomplete('${t.taskId}')">Skip</button>`;
-      }
+      const link = t.subType === 'review' ? `/invoices?pdf_id=${t.pdfId || ''}` :
+                   t.subType === 'post' ? `/post` : `/billback`;
+      actionsHtml = `
+        <a class="btn small" href="${link}" target="_blank" onclick="event.stopPropagation()">Open</a>
+        <button class="btn small success" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','processed')">Done</button>
+        <button class="btn small" style="background:#94a3b8" onclick="event.stopPropagation();dir_openSkipModal('${t.taskId}')">Skip</button>`;
     }
   } else if (t.status === 'completed') {
     actionsHtml = `<span style="color:#059669;font-size:11px">&#10003; ${t.completedAction || 'done'}</span>`;
   } else if (t.status === 'incomplete') {
-    actionsHtml = `<span style="color:#b91c1c;font-size:11px">${t.incompleteReason || 'skipped'}</span>`;
+    const label = dir_reasonCodes.find(c => c.code === t.incompleteReason)?.label || t.incompleteReason || 'skipped';
+    actionsHtml = `<span style="color:#b91c1c;font-size:11px">${escapeHtml(label)}</span>`;
   }
 
   const houseLabel = t.isHouse
@@ -980,70 +1176,197 @@ function dir_renderTaskRow(t) {
     : `<span class="dir-vacant-label">VACANT</span>`;
 
   return `<div class="${cls.join(' ')}" data-task-id="${t.taskId}">
-    <span class="dir-status-badge status-${t.urgencyStatus || 'ON_TRACK'}">${(t.urgencyStatus || '').replace(/_/g,' ')}</span>
-    <span class="dir-type-badge ${t.taskType}">${t.taskType}</span>
-    ${houseLabel}
-    <span class="dir-col-property" title="${escapeHtml(t.propertyName)}">${escapeHtml(t.propertyName)}</span>
-    <span class="dir-col-vendor" title="${escapeHtml(t.vendorName)}">${escapeHtml(t.vendorName)}</span>
-    <span class="dir-col-account">${escapeHtml(t.accountNumber)}</span>
-    <span class="dir-amount">${t.avgAmount ? '$' + t.avgAmount.toLocaleString() : ''}</span>
-    ${sourceHtml}
-    ${blockedHtml}
-    ${timerHtml}
+    <div class="dir-task-body" onclick="dir_toggleDetail('${t.taskId}')">
+      <span class="dir-status-badge status-${t.urgencyStatus || 'ON_TRACK'}">${(t.urgencyStatus || '').replace(/_/g,' ')}</span>
+      <span class="dir-type-badge ${t.taskType}">${t.taskType === 'collection' ? 'Missing Bill' : 'In Review'}</span>
+      ${houseLabel}
+      <span class="dir-col-property" title="${escapeHtml(t.propertyName)}">${escapeHtml(t.propertyName)}</span>
+      <span class="dir-col-vendor" title="${escapeHtml(t.vendorName)}">${escapeHtml(t.vendorName)}${dupBadge}${scraperBadge}</span>
+      <span class="dir-col-account">${escapeHtml(t.accountNumber)}</span>
+      <span class="dir-amount">${t.avgAmount ? '$' + t.avgAmount.toLocaleString() : ''}</span>
+      ${overdueHtml}
+      ${sourceHtml}
+      ${blockedHtml}
+      ${lastRecv}${nextExp}
+    </div>
     <div class="dir-task-actions">${actionsHtml}</div>
   </div>`;
 }
 
 /* --- Directed Task Actions --- */
-function dir_startTask(taskId) {
-  dir_activeTaskId = taskId;
-  dir_taskTimers[taskId] = Date.now();
-  dir_renderTasks();
-  const interval = setInterval(() => {
-    if (dir_activeTaskId !== taskId) { clearInterval(interval); return; }
-    const el = document.getElementById('dir_timer_' + taskId);
-    if (!el) { clearInterval(interval); return; }
-    const sec = Math.round((Date.now() - dir_taskTimers[taskId]) / 1000);
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    el.textContent = m + ':' + String(s).padStart(2, '0');
-  }, 1000);
-}
-
 async function dir_completeTask(taskId, action) {
-  const duration = dir_taskTimers[taskId] ? Math.round((Date.now() - dir_taskTimers[taskId]) / 1000) : 0;
   try {
     const resp = await fetch('/api/directed/complete', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ taskId, action, durationSec: duration })
+      body: JSON.stringify({ taskId, action, durationSec: 0 })
     });
     const data = await resp.json();
     if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
     const task = dir_plan.tasks.find(t => t.taskId === taskId);
     if (task) { task.status = 'completed'; task.completedAction = action; task.completedAt = new Date().toISOString(); }
     dir_plan.stats.completedCount = dir_plan.tasks.filter(t => t.status === 'completed').length;
-    if (dir_activeTaskId === taskId) dir_activeTaskId = null;
     dir_render();
     showToast('Task completed', 'ok');
   } catch (e) { showToast('Error: ' + e.message, 'err'); }
 }
 
-async function dir_markIncomplete(taskId) {
+/* --- Skip modal --- */
+function dir_openSkipModal(taskId) {
+  dir_skipTaskId = taskId;
+  const task = dir_plan.tasks.find(t => t.taskId === taskId);
+  if (task) {
+    document.getElementById('dir_skipTaskInfo').textContent =
+      `${task.propertyName} - ${task.vendorName} - ${task.accountNumber}`;
+  }
+  // Populate reason codes
+  const sel = document.getElementById('dir_skipReason');
+  sel.innerHTML = '<option value="">Select reason...</option>';
+  for (const c of dir_reasonCodes) {
+    sel.innerHTML += `<option value="${c.code}">${escapeHtml(c.label)}</option>`;
+  }
+  document.getElementById('dir_skipNotes').value = '';
+  document.getElementById('dir_skipModal').style.display = 'flex';
+}
+
+function dir_closeSkipModal() {
+  document.getElementById('dir_skipModal').style.display = 'none';
+  dir_skipTaskId = null;
+}
+
+async function dir_confirmSkip() {
+  const reason = document.getElementById('dir_skipReason').value;
+  const notes = document.getElementById('dir_skipNotes').value || '';
+  if (!reason) { showToast('Please select a reason', 'err'); return; }
+  const taskId = dir_skipTaskId;
+  dir_closeSkipModal();
   try {
     const resp = await fetch('/api/directed/incomplete', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ taskId, reasonCode: 'ran_out_of_time', notes: '' })
+      body: JSON.stringify({ taskId, reasonCode: reason, notes })
     });
     const data = await resp.json();
     if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
     const task = dir_plan.tasks.find(t => t.taskId === taskId);
-    if (task) { task.status = 'incomplete'; task.incompleteReason = 'ran_out_of_time'; }
+    if (task) { task.status = 'incomplete'; task.incompleteReason = reason; task.incompleteNotes = notes; }
     dir_plan.stats.incompleteCount = dir_plan.tasks.filter(t => t.status === 'incomplete').length;
-    if (dir_activeTaskId === taskId) dir_activeTaskId = null;
     dir_render();
+    showToast('Task skipped', 'ok');
   } catch (e) { showToast('Error: ' + e.message, 'err'); }
+}
+
+/* --- Bulk complete --- */
+async function dir_bulkComplete(gid, action) {
+  if (!dir_plan || !dir_plan.tasks) return;
+  // Find all pending tasks in this group
+  const groupEl = document.getElementById('dir_group_' + gid);
+  if (!groupEl) return;
+  const taskIds = [];
+  groupEl.querySelectorAll('.dir-task-row[data-task-id]').forEach(row => {
+    const tid = row.getAttribute('data-task-id');
+    const task = dir_plan.tasks.find(t => t.taskId === tid);
+    if (task && task.status === 'pending') {
+      // For collection actions, only include collection tasks; for processing, only processing
+      if ((action === 'processed' && task.taskType === 'processing') ||
+          (action !== 'processed' && task.taskType === 'collection')) {
+        taskIds.push(tid);
+      }
+    }
+  });
+  if (!taskIds.length) { showToast('No pending tasks in this group', 'err'); return; }
+  try {
+    const resp = await fetch('/api/directed/bulk-complete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ taskIds, action })
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
+    // Update local state
+    for (const tid of taskIds) {
+      const task = dir_plan.tasks.find(t => t.taskId === tid);
+      if (task) { task.status = 'completed'; task.completedAction = action; task.completedAt = new Date().toISOString(); }
+    }
+    dir_plan.stats.completedCount = dir_plan.tasks.filter(t => t.status === 'completed').length;
+    dir_render();
+    showToast(`${data.completedCount} tasks completed`, 'ok');
+  } catch (e) { showToast('Error: ' + e.message, 'err'); }
+}
+
+/* --- Inline detail panel (invoice history) --- */
+async function dir_toggleDetail(taskId) {
+  const existing = document.getElementById('dir_detail_' + taskId);
+  if (existing) { existing.remove(); return; }
+
+  const task = dir_plan.tasks.find(t => t.taskId === taskId);
+  if (!task) return;
+
+  const row = document.querySelector(`[data-task-id="${taskId}"]`);
+  if (!row) return;
+  const panel = document.createElement('div');
+  panel.id = 'dir_detail_' + taskId;
+  panel.className = 'dir-detail-panel';
+  panel.innerHTML = '<div style="color:#64748b;padding:8px 0">Loading invoice history...</div>';
+  row.after(panel);
+
+  // Fetch history from Snowflake INVOICES_MAT cache
+  const ak = task.accountKey;
+  if (!dir_historyCache[ak]) {
+    try {
+      const resp = await fetch('/api/directed/batch-history', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({accounts: [{accountKey: ak, vendorName: task.vendorName || ''}]})
+      });
+      const data = await resp.json();
+      dir_historyCache[ak] = (data.histories || {})[ak] || {};
+    } catch (e) {
+      dir_historyCache[ak] = {};
+    }
+  }
+  const hist = dir_historyCache[ak];
+
+  // Build detail HTML
+  let html = '<div class="detail-summary">';
+  if (task.lastBillDate) html += `<div class="detail-item"><span class="lbl">Last Bill:</span> ${escapeHtml(task.lastBillDate)}</div>`;
+  if (task.nextExpectedDate) html += `<div class="detail-item"><span class="lbl">Next Expected:</span> ${escapeHtml(task.nextExpectedDate)}</div>`;
+  if (task.servicePeriodDays) html += `<div class="detail-item"><span class="lbl">Service Period:</span> ${task.servicePeriodDays} days</div>`;
+  if (task.hasScraper) html += `<div class="detail-item"><span class="lbl">Scraper:</span> ${escapeHtml(task.scraperProvider || 'Yes')}</div>`;
+  if (task.isDuplicate) html += `<div class="detail-item" style="color:#92400e"><span class="lbl">Duplicate of:</span> ${escapeHtml((task.duplicateOf||[]).join(', '))}</div>`;
+  if (task.lastBillPdfId) html += `<div class="detail-item"><a href="/invoices?pdf_id=${encodeURIComponent(task.lastBillPdfId)}" target="_blank">View Last Invoice</a></div>`;
+  // Show vendor match info from Snowflake
+  const mi = hist.matchInfo;
+  if (mi) {
+    html += `<div class="detail-item"><span class="lbl">Matched Vendor:</span> ${escapeHtml(mi.matched_vendor || '')} <span style="color:#64748b;font-size:10px">(${escapeHtml(mi.match_type || '')} match, ${Math.round((mi.confidence || 0) * 100)}%)</span></div>`;
+    if (mi.gl_account) html += `<div class="detail-item"><span class="lbl">Primary GL:</span> ${escapeHtml(mi.gl_account)} — ${escapeHtml(mi.gl_name || '')}</div>`;
+  }
+  html += '</div>';
+
+  // Invoice history table (from Snowflake INVOICES_MAT — full 12+ months)
+  const invoices = hist.invoiceHistory || [];
+  if (invoices.length) {
+    html += '<div style="font-weight:600;font-size:11px;margin:8px 0 4px;color:#334155">Invoice History (past 12+ months)</div>';
+    html += '<table><tr><th>Period</th><th style="text-align:right">Amount</th></tr>';
+    // Show most recent first
+    for (const inv of [...invoices].reverse()) {
+      const amt = inv.amount != null ? '$' + Number(inv.amount).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+      html += `<tr>
+        <td>${escapeHtml(inv.period || '')}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">${amt}</td>
+      </tr>`;
+    }
+    html += '</table>';
+    // Show average monthly amount
+    if (invoices.length > 1) {
+      const total = invoices.reduce((s, i) => s + (i.amount || 0), 0);
+      const avg = total / invoices.length;
+      html += `<div style="font-size:10px;color:#64748b;margin-top:4px">Avg monthly: $${avg.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})} &middot; ${invoices.length} months of data</div>`;
+    }
+  } else {
+    html += '<div style="color:#94a3b8;font-size:11px;padding:4px 0">No invoice history found for this account in Snowflake INVOICES_MAT.</div>';
+  }
+
+  panel.innerHTML = html;
 }
 
 /* --- Directed End of Day --- */
@@ -1056,7 +1379,7 @@ function dir_showEodSection() {
       <div class="info">
         <strong>${escapeHtml(t.propertyName)}</strong> - ${escapeHtml(t.vendorName)} - ${escapeHtml(t.accountNumber)}
         <br><span class="dir-status-badge status-${t.urgencyStatus}">${(t.urgencyStatus || '').replace(/_/g,' ')}</span>
-        <span class="dir-type-badge ${t.taskType}">${t.taskType}</span>
+        <span class="dir-type-badge ${t.taskType}">${t.taskType === 'collection' ? 'Missing Bill' : 'In Review'}</span>
       </div>
       <div>
         <select id="dir_reason_${t.taskId}">

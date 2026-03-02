@@ -10676,10 +10676,22 @@ def _get_directed_plan_lock(user: str) -> threading.Lock:
         return _DIRECTED_PLAN_LOCKS[user]
 
 @app.post("/api/directed/generate")
-def api_directed_generate(user: str = Depends(require_user)):
+def api_directed_generate(request: Request, user: str = Depends(require_user)):
     """Generate today's directed work plan for the current user."""
     try:
-        plan = _generate_directed_plan(user)
+        import asyncio
+        try:
+            body = asyncio.get_event_loop().run_until_complete(request.json())
+        except Exception:
+            body = {}
+        mode = body.get("mode", "my_bills")
+        target_ap = body.get("targetAp", "")
+        filter_property = body.get("filterProperty", "")
+        filter_vendor = body.get("filterVendor", "")
+        plan = _generate_directed_plan(
+            user, mode=mode, target_ap=target_ap,
+            filter_property=filter_property, filter_vendor=filter_vendor,
+        )
         return {"ok": True, "stats": plan.get("stats", {})}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "generating plan")}, status_code=500)
@@ -10834,6 +10846,88 @@ def api_directed_end_of_day(request: Request, user: str = Depends(require_user))
         return {"ok": True, "completed": completed, "incomplete": incomplete}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "end of day")}, status_code=500)
+
+
+@app.post("/api/directed/batch-history")
+def api_directed_batch_history(request: Request, user: str = Depends(require_user)):
+    """Return invoice history from Snowflake INVOICES_MAT for a batch of accounts."""
+    try:
+        import asyncio
+        body = asyncio.get_event_loop().run_until_complete(request.json())
+        # Accept list of {accountKey, vendorName} objects
+        accounts_list = body.get("accounts", [])
+        if not isinstance(accounts_list, list):
+            return JSONResponse({"error": "accounts must be a list"}, status_code=400)
+        result = {}
+        for item in accounts_list[:50]:  # limit to 50 per request
+            ak = item.get("accountKey", "")
+            vendor_name = item.get("vendorName", "")
+            if not ak:
+                continue
+            parts = ak.split("|")
+            property_id = parts[0] if len(parts) > 0 else ""
+            account_number = parts[2] if len(parts) > 2 else ""
+            # Use Snowflake INVOICES_MAT cache for full invoice history
+            history, match_info = _read_historical_from_invoices_mat(
+                property_id, account_number, vendor_name
+            )
+            result[ak] = {
+                "invoiceHistory": history,  # [{period: "MM/YYYY", amount: float}, ...]
+                "matchInfo": match_info,    # {matched_vendor, match_type, confidence, gl_account, gl_name}
+            }
+        return {"ok": True, "histories": result}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "batch history")}, status_code=500)
+
+
+@app.post("/api/directed/bulk-complete")
+def api_directed_bulk_complete(request: Request, user: str = Depends(require_user)):
+    """Bulk-complete multiple tasks at once."""
+    try:
+        import asyncio
+        body = asyncio.get_event_loop().run_until_complete(request.json())
+        task_ids = body.get("taskIds", [])
+        action = body.get("action", "completed")
+        if not isinstance(task_ids, list) or not task_ids:
+            return JSONResponse({"error": "taskIds must be a non-empty list"}, status_code=400)
+
+        with _get_directed_plan_lock(user):
+            plan = _s3_get_directed_plan(user)
+            if not plan:
+                return JSONResponse({"error": "No plan found"}, status_code=404)
+
+            task_id_set = set(task_ids)
+            completed_count = 0
+            now_iso = dt.datetime.utcnow().isoformat() + "Z"
+            for task in plan.get("tasks", []):
+                if task["taskId"] in task_id_set and task["status"] == "pending":
+                    task["status"] = "completed"
+                    task["completedAt"] = now_iso
+                    task["completedAction"] = action
+                    completed_count += 1
+
+            plan["stats"]["completedCount"] = sum(1 for t in plan["tasks"] if t["status"] == "completed")
+            _s3_put_directed_plan(user, plan)
+
+            # Log completions
+            today = dt.date.today()
+            log = _get_directed_log(user, today)
+            for task in plan.get("tasks", []):
+                if task["taskId"] in task_id_set and task["status"] == "completed":
+                    log["completions"].append({
+                        "taskId": task["taskId"],
+                        "action": action,
+                        "taskType": task.get("taskType", ""),
+                        "durationSec": 0,
+                        "ts": now_iso,
+                    })
+            log["totalCompleted"] = len(log["completions"])
+            log["totalPlanned"] = plan["stats"]["totalTasks"]
+            _put_directed_log(user, today, log)
+
+        return {"ok": True, "completedCount": completed_count}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "bulk complete")}, status_code=500)
 
 
 @app.get("/api/directed/rate")
@@ -12955,9 +13049,12 @@ def _bw_lookup(provider: str, account: str = "") -> dict:
         return {"exists": False, "portal_url": "", "username": ""}
 
 
-def _generate_directed_plan(user: str) -> dict:
+def _generate_directed_plan(user: str, *, mode: str = "my_bills",
+                             target_ap: str = "", filter_property: str = "",
+                             filter_vendor: str = "") -> dict:
     """Generate a daily work plan for the given user.
     Combines collection tasks (missing bills) and processing tasks (bills in pipeline).
+    mode: "my_bills" (user's own AP assignments) or "team_member" (another AP rep's bills).
     Returns plan dict saved to S3.
     """
     import uuid as _uuid
@@ -12969,6 +13066,58 @@ def _generate_directed_plan(user: str) -> dict:
     scraper_links = _s3_get_scraper_links()
     accounts = _get_accounts_to_track()
     user_rate = _compute_user_rate(user)
+
+    # Load AP mapping for mode filtering
+    ap_mapping_list = _ddb_get_config("ap-mapping") or []
+    ap_property_map: dict[str, set[str]] = {}  # apName -> set of propertyIds
+    for r in (ap_mapping_list if isinstance(ap_mapping_list, list) else []):
+        if isinstance(r, dict):
+            name = str(r.get("name") or "").strip()
+            pid = str(r.get("propertyId") or "").strip()
+            if name and pid:
+                ap_property_map.setdefault(name, set()).add(pid)
+
+    # Load AP team for email→name lookup
+    ap_team_list = _ddb_get_config("ap-team") or []
+    ap_email_map: dict[str, str] = {}  # email (lowercase) -> apName
+    for r in (ap_team_list if isinstance(ap_team_list, list) else []):
+        if isinstance(r, dict):
+            name = str(r.get("name") or "").strip()
+            email = str(r.get("email") or "").strip().lower()
+            if email and name:
+                ap_email_map[email] = name
+
+    # Determine allowed property IDs based on mode
+    allowed_property_ids: set[str] | None = None  # None = all
+    if mode == "team_member" and target_ap:
+        allowed_property_ids = ap_property_map.get(target_ap, set())
+        if filter_property:
+            allowed_property_ids = allowed_property_ids & {filter_property}
+    elif mode == "my_bills":
+        # Match logged-in user's email to an AP name via the email field in ap-team config
+        user_lower = user.lower().strip()
+        matched_name = ap_email_map.get(user_lower, "")
+        if matched_name:
+            allowed_property_ids = ap_property_map.get(matched_name, set())
+        else:
+            # No email match — don't dump all bills, return empty plan with a message
+            plan = {
+                "user": user,
+                "planDate": today.isoformat(),
+                "generatedAt": now_iso,
+                "userRate": user_rate,
+                "mode": mode,
+                "targetAp": "",
+                "noEmailMatch": True,
+                "tasks": [],
+                "stats": {
+                    "totalTasks": 0, "collectionTasks": 0, "processingTasks": 0,
+                    "estimatedMinutes": 0, "completedCount": 0, "incompleteCount": 0,
+                }
+            }
+            _s3_put_directed_plan(user, plan)
+            print(f"[DIRECTED] No AP email match for {user} — returning empty plan")
+            return plan
 
     # Load workflow notes + unified reason codes for plan-blocking integration
     workflow_notes = _s3_get_workflow_notes()
@@ -12993,13 +13142,24 @@ def _generate_directed_plan(user: str) -> dict:
         key = f"{pid}|{vid}|{acct}"
         acct_by_key[key] = acc
 
-    # Get workflow rows (urgency data)
+    # Get workflow rows (urgency data), filtered by allowed properties
     wf_rows = (workflow_cache or {}).get("rows", []) if workflow_cache else []
     wf_by_key: dict[str, dict] = {}
     for row in wf_rows:
         ak = row.get("accountKey", "")
-        if ak:
-            wf_by_key[ak] = row
+        if not ak:
+            continue
+        # Filter by allowed property IDs (mode-based)
+        if allowed_property_ids is not None:
+            row_pid = str(row.get("propertyId") or "").strip()
+            if row_pid not in allowed_property_ids:
+                continue
+        # Filter by vendor name if specified
+        if filter_vendor:
+            row_vendor = str(row.get("vendorName") or "").strip()
+            if row_vendor != filter_vendor:
+                continue
+        wf_by_key[ak] = row
 
     # Determine which accounts already have bills in the pipeline using workflow cache
     # (avoids scanning 30 days × 2 stages × 2 prefixes = 120+ S3 list calls)
@@ -13116,6 +13276,16 @@ def _generate_directed_plan(user: str) -> dict:
             "completedAction": None,
             "incompleteReason": None,
             "incompleteNotes": None,
+            # Enriched workflow cache data
+            "lastBillDate": wf_row.get("lastBillDate", ""),
+            "nextExpectedDate": wf_row.get("nextExpectedDate", ""),
+            "servicePeriodDays": wf_row.get("servicePeriodDays", 0),
+            "isDuplicate": wf_row.get("isDuplicate", False),
+            "duplicateOf": wf_row.get("duplicateOf", []),
+            "hasScraper": wf_row.get("hasScraper", False),
+            "scraperProvider": wf_row.get("scraperProvider", ""),
+            "lastBillPdfId": wf_row.get("lastBillPdfId", ""),
+            "lastBillKeyDate": wf_row.get("lastBillKeyDate", ""),
         }
         all_tasks.append(task)
 
@@ -13167,6 +13337,13 @@ def _generate_directed_plan(user: str) -> dict:
     # Step 5: Build processing tasks from pipeline bills
     for bill in stage_bills:
         ak = bill["accountKey"]
+        # Filter by allowed properties (mode-based)
+        bill_pid = ak.split("|")[0] if "|" in ak else ""
+        if allowed_property_ids is not None and bill_pid not in allowed_property_ids:
+            continue
+        if filter_vendor:
+            if bill.get("vendorName", "") != filter_vendor:
+                continue
         wf_row = wf_by_key.get(ak, {})
         acc = acct_by_key.get(ak, {})
         is_house = bool(acc.get("is_house", True))
@@ -13201,6 +13378,16 @@ def _generate_directed_plan(user: str) -> dict:
             "completedAction": None,
             "incompleteReason": None,
             "incompleteNotes": None,
+            # Enriched workflow cache data
+            "lastBillDate": wf_row.get("lastBillDate", ""),
+            "nextExpectedDate": wf_row.get("nextExpectedDate", ""),
+            "servicePeriodDays": wf_row.get("servicePeriodDays", 0),
+            "isDuplicate": wf_row.get("isDuplicate", False),
+            "duplicateOf": wf_row.get("duplicateOf", []),
+            "hasScraper": wf_row.get("hasScraper", False),
+            "scraperProvider": wf_row.get("scraperProvider", ""),
+            "lastBillPdfId": wf_row.get("lastBillPdfId", ""),
+            "lastBillKeyDate": wf_row.get("lastBillKeyDate", ""),
         }
         all_tasks.append(task)
 
@@ -13236,6 +13423,8 @@ def _generate_directed_plan(user: str) -> dict:
         "planDate": today.isoformat(),
         "generatedAt": now_iso,
         "userRate": user_rate,
+        "mode": mode,
+        "targetAp": target_ap if mode == "team_member" else "",
         "tasks": plan_tasks,
         "stats": {
             "totalTasks": len(plan_tasks),
@@ -20334,13 +20523,16 @@ def api_get_ap_team(user: str = Depends(require_user)):
     arr = _ddb_get_config("ap-team")
     if not isinstance(arr, list):
         arr = []
-    # normalize to {name}
+    # normalize to {name, email}
     out = []
     for r in arr:
         if isinstance(r, dict):
-            out.append({"name": str(r.get("name") or r.get("Name") or "").strip()})
+            out.append({
+                "name": str(r.get("name") or r.get("Name") or "").strip(),
+                "email": str(r.get("email") or "").strip(),
+            })
         elif isinstance(r, str):
-            out.append({"name": r})
+            out.append({"name": r, "email": ""})
     return {"items": out}
 
 
@@ -20358,8 +20550,9 @@ async def api_save_ap_team(request: Request, user: str = Depends(require_user)):
         if not isinstance(r, dict):
             continue
         name = str(r.get("name") or "").strip()
+        email = str(r.get("email") or "").strip()
         if name:
-            norm.append({"name": name})
+            norm.append({"name": name, "email": email})
     ok = _ddb_put_config("ap-team", norm)
     if not ok:
         return JSONResponse({"error": "save_failed"}, status_code=500)

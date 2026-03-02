@@ -70,6 +70,7 @@
           <thead>
             <tr>
               <th>Name</th>
+              <th>Email</th>
               <th style="width:120px">Actions</th>
             </tr>
           </thead>
@@ -97,15 +98,16 @@
       for(const r of state.items){
         const tr = document.createElement('tr');
         const tdN = document.createElement('td'); const inN = document.createElement('input'); inN.value = r.name||''; inN.oninput = ()=> r.name = inN.value; tdN.appendChild(inN); tr.appendChild(tdN);
+        const tdE = document.createElement('td'); const inE = document.createElement('input'); inE.type='email'; inE.placeholder='user@jrkresidential.com'; inE.value = r.email||''; inE.oninput = ()=> r.email = inE.value.trim(); tdE.appendChild(inE); tr.appendChild(tdE);
         const tdA = document.createElement('td'); tdA.className='row-actions';
         const bDel = document.createElement('button'); bDel.className='btn secondary'; bDel.textContent='Del'; bDel.onclick = ()=>{ const i = state.items.indexOf(r); if(i>=0){ state.items.splice(i,1); render(); } };
         tdA.appendChild(bDel); tr.appendChild(tdA);
         tb.appendChild(tr);
       }
     }
-    function addRow(){ state.items.push({name:''}); render(); }
+    function addRow(){ state.items.push({name:'', email:''}); render(); }
     async function submitAll(){
-      const payload = { items: state.items.map(x=>({ name: (x.name||'').trim() })).filter(x=>x.name) };
+      const payload = { items: state.items.map(x=>({ name: (x.name||'').trim(), email: (x.email||'').trim() })).filter(x=>x.name) };
       const r = await fetch('/api/config/ap-team', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify(payload)});
       if(!r.ok){ let body=''; try{body=await r.text()}catch{}; try{const j=JSON.parse(body); showToast('Save failed: '+(j.error||''), 'err');}catch{showToast('Save failed','err');} return; }
       const j = await r.json(); showToast('Saved '+(j.saved||0)+' members','ok');
