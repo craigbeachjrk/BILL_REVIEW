@@ -853,7 +853,16 @@ async function saveWeeklyTargets() {
    DIRECTED TAB (Daily Work Plan)
    ============================================================ */
 
+function dir_clearStats() {
+  document.getElementById('dir_statPlanned').textContent = '0';
+  document.getElementById('dir_statCompleted').textContent = '0';
+  document.getElementById('dir_statRemaining').textContent = '0';
+  document.getElementById('dir_statTime').textContent = '0m';
+  document.getElementById('dir_progressFill').style.width = '0%';
+  document.getElementById('dir_progressLabel').textContent = '';
+}
 function dir_showEmpty() {
+  dir_clearStats();
   document.getElementById('dir_planContent').innerHTML = `
     <div class="dir-empty-state">
       <div class="icon">&#128203;</div>
@@ -893,6 +902,7 @@ async function dir_generatePlan() {
     showToast('Plan generated!', 'ok');
   } catch (e) {
     showToast('Error generating plan: ' + e.message, 'err');
+    dir_clearStats();
   }
   dir_hideLoading();
 }
@@ -954,6 +964,7 @@ function dir_render() {
   if (!dir_plan) { dir_showEmpty(); return; }
   // Show message if user has no email configured in AP Team
   if (dir_plan.noEmailMatch) {
+    dir_clearStats();
     document.getElementById('dir_planContent').innerHTML = `
       <div class="dir-empty-state">
         <div class="icon">&#9888;</div>

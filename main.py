@@ -13221,50 +13221,55 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
 
     # Scan recent Stage 4/6 for processing task details (S3 keys for deep links)
     # Limited to 7 days since older bills are stale for daily processing
+    # NOTE: Skip for team_member mode — the S3 scan is expensive (28 list calls + file reads)
+    #       and causes timeouts. Workflow cache already provides pipeline status for all modes.
     start_7 = today - dt.timedelta(days=7)
     stage_bills: list[dict] = []
 
-    def _read_stage_bill(s3_key, sub_type):
-        """Read first record from a stage JSONL file for processing task metadata."""
-        try:
-            resp = s3.get_object(Bucket=BUCKET, Key=s3_key)
-            first_line = resp["Body"].read(524288).decode("utf-8", errors="ignore").split("\n")[0].strip()
-            if not first_line:
+    if mode != "team_member":
+        def _read_stage_bill(s3_key, sub_type):
+            """Read first record from a stage JSONL file for processing task metadata."""
+            try:
+                resp = s3.get_object(Bucket=BUCKET, Key=s3_key)
+                first_line = resp["Body"].read(524288).decode("utf-8", errors="ignore").split("\n")[0].strip()
+                if not first_line:
+                    return None
+                rec = json.loads(first_line)
+                pid = str(rec.get("EnrichedPropertyID") or rec.get("Property Id") or "").strip()
+                vid = str(rec.get("EnrichedVendorID") or rec.get("Vendor ID") or "").strip()
+                acct = str(rec.get("Account Number") or "").strip()
+                return {
+                    "s3Key": s3_key,
+                    "pdfId": hashlib.sha1(s3_key.encode()).hexdigest(),
+                    "accountKey": f"{pid}|{vid}|{acct}",
+                    "propertyName": str(rec.get("EnrichedPropertyName") or rec.get("Property Name") or ""),
+                    "vendorName": str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or ""),
+                    "subType": sub_type,
+                }
+            except Exception:
                 return None
-            rec = json.loads(first_line)
-            pid = str(rec.get("EnrichedPropertyID") or rec.get("Property Id") or "").strip()
-            vid = str(rec.get("EnrichedVendorID") or rec.get("Vendor ID") or "").strip()
-            acct = str(rec.get("Account Number") or "").strip()
-            return {
-                "s3Key": s3_key,
-                "pdfId": hashlib.sha1(s3_key.encode()).hexdigest(),
-                "accountKey": f"{pid}|{vid}|{acct}",
-                "propertyName": str(rec.get("EnrichedPropertyName") or rec.get("Property Name") or ""),
-                "vendorName": str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or ""),
-                "subType": sub_type,
-            }
-        except Exception:
-            return None
 
-    stage_keys_and_types = []
-    for prefix, sub_type in [(STAGE4_PREFIX, "review"), (STAGE6_PREFIX, "post")]:
-        try:
-            for s3_key in _iter_stage_objects(prefix, start_7, today):
-                if s3_key.endswith('.jsonl'):
-                    stage_keys_and_types.append((s3_key, sub_type))
-        except Exception as e:
-            print(f"[DIRECTED] Error listing {prefix}: {e}")
+        stage_keys_and_types = []
+        for prefix, sub_type in [(STAGE4_PREFIX, "review"), (STAGE6_PREFIX, "post")]:
+            try:
+                for s3_key in _iter_stage_objects(prefix, start_7, today):
+                    if s3_key.endswith('.jsonl'):
+                        stage_keys_and_types.append((s3_key, sub_type))
+            except Exception as e:
+                print(f"[DIRECTED] Error listing {prefix}: {e}")
 
-    if stage_keys_and_types:
-        futures = [_GLOBAL_EXECUTOR.submit(_read_stage_bill, k, st) for k, st in stage_keys_and_types]
-        try:
-            for f in as_completed(futures, timeout=30):
-                result = f.result()
-                if result:
-                    stage_bills.append(result)
-                    pipeline_account_keys.add(result["accountKey"])
-        except TimeoutError:
-            print("[DIRECTED] Timeout reading stage bills — proceeding with partial results")
+        if stage_keys_and_types:
+            futures = [_GLOBAL_EXECUTOR.submit(_read_stage_bill, k, st) for k, st in stage_keys_and_types]
+            try:
+                for f in as_completed(futures, timeout=30):
+                    result = f.result()
+                    if result:
+                        stage_bills.append(result)
+                        pipeline_account_keys.add(result["accountKey"])
+            except TimeoutError:
+                print("[DIRECTED] Timeout reading stage bills — proceeding with partial results")
+    else:
+        print(f"[DIRECTED] team_member mode — skipping S3 stage scan, using workflow cache for pipeline status")
 
     # Step 2: Build collection tasks (accounts with urgency but no bill in pipeline)
     links_map = scraper_links.get("links", {})
@@ -13340,7 +13345,8 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
         all_tasks.append(task)
 
     # Step 3: Check scraper PDF availability (parallel)
-    scraper_tasks = [t for t in all_tasks if t["source"]["scraperAvailable"]]
+    # Skip for team_member mode to avoid 30s timeout
+    scraper_tasks = [t for t in all_tasks if t["source"]["scraperAvailable"]] if mode != "team_member" else []
     if scraper_tasks:
         def _check_scraper_pdfs(task):
             ak = task["accountKey"]
@@ -13366,23 +13372,25 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
                 print("[DIRECTED] Timeout checking scraper PDFs — proceeding with partial results")
 
     # Step 4: Bitwarden resolution for non-scraper collection tasks (cached per provider)
-    bw_cache: dict[str, dict] = {}
-    for task in all_tasks:
-        if task["taskType"] != "collection":
-            continue
-        if task["source"]["scraperAvailable"]:
-            continue
-        provider = task["providerGroup"]
-        if provider not in bw_cache:
-            bw_cache[provider] = _bw_lookup(provider)
-        bw_result = bw_cache[provider]
-        task["source"]["bitwardenAvailable"] = bw_result.get("exists", False)
-        if bw_result.get("exists"):
-            task["source"]["resolution"] = "portal"
-            task["source"]["portalUrl"] = bw_result.get("portal_url", "")
-            task["source"]["portalUsername"] = bw_result.get("username", "")
-        else:
-            task["source"]["resolution"] = "mail"
+    # Skip for team_member mode to avoid extra network latency
+    if mode != "team_member":
+        bw_cache: dict[str, dict] = {}
+        for task in all_tasks:
+            if task["taskType"] != "collection":
+                continue
+            if task["source"]["scraperAvailable"]:
+                continue
+            provider = task["providerGroup"]
+            if provider not in bw_cache:
+                bw_cache[provider] = _bw_lookup(provider)
+            bw_result = bw_cache[provider]
+            task["source"]["bitwardenAvailable"] = bw_result.get("exists", False)
+            if bw_result.get("exists"):
+                task["source"]["resolution"] = "portal"
+                task["source"]["portalUrl"] = bw_result.get("portal_url", "")
+                task["source"]["portalUsername"] = bw_result.get("username", "")
+            else:
+                task["source"]["resolution"] = "mail"
 
     # Step 5: Build processing tasks from pipeline bills
     for bill in stage_bills:
@@ -13440,6 +13448,55 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
             "lastBillKeyDate": wf_row.get("lastBillKeyDate", ""),
         }
         all_tasks.append(task)
+
+    # Step 5b: For team_member mode (S3 scan skipped), build processing tasks from workflow cache
+    if mode == "team_member" and not stage_bills:
+        for ak in pipeline_account_keys:
+            wf_row = wf_by_key.get(ak, {})
+            acc = acct_by_key.get(ak, {})
+            is_house = bool(acc.get("is_house", True))
+            urgency_score = wf_row.get("urgencyScore", 1)
+            priority = _compute_task_priority(urgency_score, is_house, 0, False)
+            stage = wf_row.get("lastBillStage", "")
+            sub_type = "post" if stage == "PENDING" else "review"
+            task = {
+                "taskId": f"t_{_uuid.uuid4().hex[:8]}",
+                "taskType": "processing",
+                "subType": sub_type,
+                "s3Key": "",
+                "pdfId": wf_row.get("lastBillPdfId", ""),
+                "accountKey": ak,
+                "propertyId": str(acc.get("propertyId") or wf_row.get("propertyId") or ""),
+                "propertyName": str(acc.get("propertyName") or wf_row.get("propertyName") or ""),
+                "vendorId": str(acc.get("vendorId") or wf_row.get("vendorId") or ""),
+                "vendorName": str(acc.get("vendorName") or wf_row.get("vendorName") or ""),
+                "vendorCode": str(wf_row.get("vendorCode") or ""),
+                "accountNumber": str(acc.get("accountNumber") or wf_row.get("accountNumber") or ""),
+                "providerGroup": str(wf_row.get("vendorCode") or wf_row.get("vendorName") or "").lower(),
+                "urgencyStatus": wf_row.get("status", ""),
+                "urgencyScore": urgency_score,
+                "daysOverdue": wf_row.get("daysOverdue", 0),
+                "isHouse": is_house,
+                "avgAmount": 0,
+                "priorityScore": priority,
+                "estimatedMinutes": 0,
+                "source": {"scraperAvailable": False, "scraperPdfCount": 0, "bitwardenAvailable": None, "resolution": "pipeline"},
+                "status": "pending",
+                "completedAt": None,
+                "completedAction": None,
+                "incompleteReason": None,
+                "incompleteNotes": None,
+                "lastBillDate": wf_row.get("lastBillDate", ""),
+                "nextExpectedDate": wf_row.get("nextExpectedDate", ""),
+                "servicePeriodDays": wf_row.get("servicePeriodDays", 0),
+                "isDuplicate": wf_row.get("isDuplicate", False),
+                "duplicateOf": wf_row.get("duplicateOf", []),
+                "hasScraper": wf_row.get("hasScraper", False),
+                "scraperProvider": wf_row.get("scraperProvider", ""),
+                "lastBillPdfId": wf_row.get("lastBillPdfId", ""),
+                "lastBillKeyDate": wf_row.get("lastBillKeyDate", ""),
+            }
+            all_tasks.append(task)
 
     # Step 6: Two-tier sort — house first (by provider), then vacant (by property batch)
     house_tasks = [t for t in all_tasks if t["isHouse"]]
