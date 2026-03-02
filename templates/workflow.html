@@ -1089,9 +1089,12 @@ function dir_renderGroupedTasks(tasks, groupBy) {
     const propsSummary = groupBy === 'provider' && propsInGroup.length > 1
       ? ` across ${propsInGroup.length} properties`
       : '';
+    // Get vendor code from first task in group (for provider grouping)
+    const vendorCode = groupBy === 'provider' ? (groupTasks[0].vendorCode || groupTasks[0].vendorId || '') : '';
+    const vendorCodeHtml = vendorCode ? `<span style="color:#64748b;font-size:12px;font-weight:400;margin-left:6px">(${escapeHtml(vendorCode)})</span>` : '';
     html += `<div class="dir-group-header" onclick="dir_toggleGroup('${gid}')">
       <span class="arrow" id="dir_arrow_${gid}">&#9660;</span>
-      <strong>${escapeHtml(groupName)}</strong>
+      <strong>${escapeHtml(groupName)}</strong>${vendorCodeHtml}
       <span class="group-stats">${statusText}${propsSummary}</span>
       ${groupActions}
     </div>`;
@@ -1181,7 +1184,7 @@ function dir_renderTaskRow(t) {
       <span class="dir-type-badge ${t.taskType}">${t.taskType === 'collection' ? 'Missing Bill' : 'In Review'}</span>
       ${houseLabel}
       <span class="dir-col-property" title="${escapeHtml(t.propertyName)}">${escapeHtml(t.propertyName)}</span>
-      <span class="dir-col-vendor" title="${escapeHtml(t.vendorName)}">${escapeHtml(t.vendorName)}${dupBadge}${scraperBadge}</span>
+      <span class="dir-col-vendor" title="${escapeHtml(t.vendorName)}${t.vendorCode ? ' (' + t.vendorCode + ')' : ''}">${escapeHtml(t.vendorName)}${t.vendorCode ? ' <span style=\"color:#64748b;font-size:11px\">(' + escapeHtml(t.vendorCode) + ')</span>' : ''}${dupBadge}${scraperBadge}</span>
       <span class="dir-col-account">${escapeHtml(t.accountNumber)}</span>
       <span class="dir-amount">${t.avgAmount ? '$' + t.avgAmount.toLocaleString() : ''}</span>
       ${overdueHtml}
