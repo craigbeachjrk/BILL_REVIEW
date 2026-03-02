@@ -23137,7 +23137,7 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             except Exception:
                 continue
     if not rows:
-        return templates.TemplateResponse("error.html", {"request": request, "message": "No rows found for that document."}, status_code=404)
+        return templates.TemplateResponse("error.html", {"request": request, "title": "Invoice Not Found", "error": "No rows found for that document. It may have been archived or moved to a different stage."}, status_code=404)
     # build header defaults from first row (invoice-level)
     header_fields = [
         "EnrichedPropertyName","EnrichedPropertyID",

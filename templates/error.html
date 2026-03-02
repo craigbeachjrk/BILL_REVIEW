@@ -15,8 +15,8 @@
 </head>
 <body>
   <div class="card">
-    <h1>Access Denied</h1>
-    <p>{{ error }}</p>
+    <h1>{{ title | default("Access Denied") }}</h1>
+    <p>{{ error | default(message | default("")) }}</p>
     <a class="btn" href="/">Back to Home</a>
   </div>
 </body>
