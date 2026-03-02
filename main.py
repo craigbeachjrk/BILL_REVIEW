@@ -3308,6 +3308,27 @@ def _load_search_index_from_s3() -> bool:
         return False
 
 
+def _search_index_remove(pdf_ids: set):
+    """Remove entries from the in-memory search index by pdf_id.
+    Called when invoices are deleted or reworked so search results stay fresh.
+    """
+    if not pdf_ids:
+        return
+    with _SEARCH_INDEX_LOCK:
+        before = len(_SEARCH_INDEX["entries"])
+        _SEARCH_INDEX["entries"] = [e for e in _SEARCH_INDEX["entries"] if e["pdf_id"] not in pdf_ids]
+        after = len(_SEARCH_INDEX["entries"])
+        _SEARCH_INDEX["entry_count"] = after
+    removed = before - after
+    if removed:
+        print(f"[SEARCH INDEX] Removed {removed} stale entries for {len(pdf_ids)} pdf_ids")
+        # Persist updated index to S3 so stale entries don't reappear on restart
+        try:
+            _save_search_index_to_s3()
+        except Exception as e:
+            print(f"[SEARCH INDEX] Warning: failed to persist after removal: {e}")
+
+
 def _build_search_index(force_full: bool = False):
     """Build or refresh the in-memory search index from Stage 4 data.
     - On startup: loads persisted index from S3, then indexes only new dates.
@@ -22167,6 +22188,8 @@ def api_delete_parsed(date: str = Form(...), pdf_ids: str = Form(...), user: str
         invalidate_day_cache(y, m, d)
         _CACHE.pop(("day_status_counts", y, m, d), None)
         _CACHE.pop(("parse_dashboard",), None)
+        # Remove stale entries from search index
+        _search_index_remove(wanted)
         return {"ok": True, "deleted": deleted}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
@@ -22616,6 +22639,8 @@ def api_bulk_rework(
         invalidate_day_cache(y, m, d)
         _CACHE.pop(("day_status_counts", y, m, d), None)
         _CACHE.pop(("parse_dashboard",), None)
+        # Remove stale entries from search index
+        _search_index_remove(set(wanted))
 
         return {"ok": True, "sent": sent_count, "errors": errors if errors else None}
     except Exception as e:
@@ -22992,6 +23017,8 @@ def api_rework(
             invalidate_day_cache(y, m, d)
         except Exception:
             pass
+        # Remove stale entry from search index
+        _search_index_remove({pdf_id})
 
         return {"ok": True, "copied_key": dest_key, "meta_key": meta_key, "deleted": deleted}
     except Exception as e:
