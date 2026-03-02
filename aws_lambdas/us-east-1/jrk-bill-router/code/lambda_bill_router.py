@@ -145,8 +145,13 @@ def lambda_handler(event, context):
                     if "404" not in str(e) and "NoSuchKey" not in str(e):
                         print(json.dumps({"message": "Sidecar copy failed", "sidecar": sidecar_src, "error": str(e)}))
 
-            # Delete from pending
+            # Delete from pending (PDF and any sidecar files)
             s3.delete_object(Bucket=bucket, Key=key)
+            for sidecar_ext in ['.notes.json', '.rework.json']:
+                try:
+                    s3.delete_object(Bucket=bucket, Key=base_key + sidecar_ext)
+                except Exception:
+                    pass
 
             # Log routing decision
             log_routing_decision(key, page_count, file_size_mb, route, reason)

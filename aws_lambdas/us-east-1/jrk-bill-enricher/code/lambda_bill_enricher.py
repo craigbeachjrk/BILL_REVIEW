@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import boto3
 import base64
 import gzip
@@ -8,7 +9,7 @@ import requests
 from urllib.parse import unquote_plus
 import difflib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 s3 = boto3.client("s3")
 secrets = boto3.client("secretsmanager")
@@ -945,13 +946,39 @@ def lambda_handler(event, context):
         key = unquote_plus(record["s3"]["object"]["key"])
         if not key.startswith(INPUT_PREFIX):
             continue
+
+        # --- Timing instrumentation ---
+        t0 = time.time()
+        timing = {
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "stage": "enricher",
+            "lineCount": 0,
+            "success": False,
+            "sourceKey": key,
+        }
+
         obj = s3.get_object(Bucket=bucket, Key=key)
         body = obj["Body"].read().decode("utf-8", errors="ignore")
         lines = [ln for ln in body.splitlines() if ln.strip()]
+        timing["lineCount"] = len(lines)
+
+        t_enrich = time.time()
         enriched_lines = _enrich_lines(lines)
+        timing["enrichMs"] = int((time.time() - t_enrich) * 1000)
+        timing["success"] = True
+
         # Write to stage 4 with same partitioning and file stem
         stem = key.split("/", 1)[-1]  # drop prefix
         out_key = f"{OUTPUT_PREFIX}{stem}"
         s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
+
+        # Write timing sidecar to Stage 4
+        timing["totalMs"] = int((time.time() - t0) * 1000)
+        try:
+            timing_key = out_key.replace('.jsonl', '.timing.json')
+            s3.put_object(Bucket=BUCKET, Key=timing_key, Body=json.dumps(timing), ContentType='application/json')
+        except Exception:
+            pass
+        print(json.dumps({"_metric": "enrich_complete", **timing}))
         print(json.dumps({"message": "Enriched file written", "out_key": out_key, "lines": len(enriched_lines)}))
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

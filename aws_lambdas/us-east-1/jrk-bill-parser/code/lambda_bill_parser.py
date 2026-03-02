@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import time
+import random
 import base64
 import boto3
 import requests
@@ -560,7 +561,9 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
             reply_text = call_gemini_rest(api_key, pdf_bytes, prompt)
         except Exception as e:
             prev_reply = str(e)
-            time.sleep(3)
+            backoff = min(2 ** (attempts - 1), 30)  # 1, 2, 4, 8, 16, 30, 30...
+            jitter = random.uniform(0, backoff * 0.3)
+            time.sleep(backoff + jitter)
             continue
 
         prev_reply = reply_text
@@ -856,9 +859,24 @@ def lambda_handler(event, context):
         source_to_delete = key if (is_pending or is_standard) else None
         queue_name = "Pending" if is_pending else "Standard" if is_standard else None
 
+        # --- Timing instrumentation ---
+        t0 = time.time()
+        timing = {
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "stage": "parser",
+            "pageCount": 0,
+            "retryCount": 0,
+            "lineCount": 0,
+            "success": False,
+            "modelUsed": MODEL_NAME,
+            "sourceKey": suffix,
+        }
+
         # Download the PDF
+        t_download = time.time()
         obj = s3.get_object(Bucket=bucket, Key=dest_key_inputs)
         pdf_bytes = obj['Body'].read()
+        timing["downloadMs"] = int((time.time() - t_download) * 1000)
 
         # Count pages for page metadata (used in UI for page-to-line mapping)
         total_pages = count_pdf_pages(pdf_bytes)
@@ -875,6 +893,7 @@ def lambda_handler(event, context):
             continue
 
         # Rotate over up to 10 attempts, cycling API keys if needed
+        t_gemini = time.time()
         attempt = 0
         last_error = None
         rows = []
@@ -889,12 +908,28 @@ def lambda_handler(event, context):
                     break
             except Exception as e:
                 last_error = str(e)
-                time.sleep(3)
+                backoff = min(2 ** (attempt - 1), 30)
+                jitter = random.uniform(0, backoff * 0.3)
+                time.sleep(backoff + jitter)
+
+        timing["geminiMs"] = int((time.time() - t_gemini) * 1000)
+        timing["retryCount"] = attempt
+        timing["pageCount"] = total_pages
 
         if rows:
+            timing["lineCount"] = len(rows)
+            timing["success"] = True
             key_stem = f"{dest_key_inputs.split('/',1)[-1].rsplit('.',1)[0]}"
             out_key = write_ndjson(BUCKET, key_stem, rows, dest_key_inputs, bill_from=bill_from, pdf_id=key_stem, total_pages=total_pages)
             print(json.dumps({"message": "Parsed and wrote NDJSON", "out_key": out_key, "rows": len(rows), "total_pages": total_pages}))
+            # Write timing sidecar to Stage 3
+            timing["totalMs"] = int((time.time() - t0) * 1000)
+            try:
+                timing_key = out_key.replace('.jsonl', '.timing.json')
+                s3.put_object(Bucket=BUCKET, Key=timing_key, Body=json.dumps(timing), ContentType='application/json')
+            except Exception:
+                pass
+            print(json.dumps({"_metric": "parse_complete", **timing}))
             # NOW safe to delete source - output has been written successfully
             if source_to_delete:
                 try:
@@ -960,6 +995,10 @@ def lambda_handler(event, context):
                     "error": last_error,
                     "failed_key": failed_key
                 }))
+            # Emit timing for failed parse
+            timing["totalMs"] = int((time.time() - t0) * 1000)
+            timing["routedToLarge"] = not already_tried_large
+            print(json.dumps({"_metric": "parse_complete", **timing}))
             # Delete source after routing to large file or failed - processing is complete
             if source_to_delete:
                 try:

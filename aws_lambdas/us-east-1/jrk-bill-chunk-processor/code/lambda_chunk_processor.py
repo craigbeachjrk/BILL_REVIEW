@@ -756,6 +756,19 @@ def lambda_handler(event, context):
 
         print(json.dumps({"message": "Processing chunk", "job_id": job_id, "chunk_num": chunk_num}))
 
+        # --- Timing instrumentation ---
+        t0 = time.time()
+        timing = {
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "stage": "chunk_processor",
+            "jobId": job_id,
+            "chunkNum": chunk_num,
+            "lineCount": 0,
+            "retryCount": 0,
+            "success": False,
+            "modelUsed": MODEL_NAME,
+        }
+
         # Get job info
         job_info = get_job_info(job_id)
         if not job_info:
@@ -793,6 +806,10 @@ def lambda_handler(event, context):
             job_info.get('expected_lines', 0),
             deadline_ms=deadline_ms,
         )
+
+        timing["geminiMs"] = int((time.time() - t0) * 1000)
+        timing["lineCount"] = len(rows)
+        timing["success"] = len(rows) > 0
 
         # Emit alarm-friendly log if chunk parsing failed completely
         chunk_failed = len(rows) == 0 and "failed" in context_summary.lower()
@@ -832,6 +849,14 @@ def lambda_handler(event, context):
                 ContentType='application/json'
             )
             print(json.dumps({"message": "Chunk result saved", "result_key": result_key, "rows": len(rows), "failed": chunk_failed}))
+            # Write timing sidecar
+            timing["totalMs"] = int((time.time() - t0) * 1000)
+            try:
+                timing_key = result_key.replace('.json', '.timing.json')
+                s3.put_object(Bucket=bucket, Key=timing_key, Body=json.dumps(timing), ContentType='application/json')
+            except Exception:
+                pass
+            print(json.dumps({"_metric": "chunk_complete", **timing}))
         except Exception as e:
             print(json.dumps({"error": "failed_to_save_result", "message": str(e)}))
             continue

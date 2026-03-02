@@ -11307,6 +11307,129 @@ def api_metrics_pipeline_summary(user: str = Depends(require_user)):
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
+# -------- Parser Throughput & Queue Depth --------
+
+_PARSER_THROUGHPUT_CACHE: dict = {}
+
+@app.get("/api/parser/throughput")
+def api_parser_throughput(hours: int = 24, user: str = Depends(require_user)):
+    """Get parser throughput metrics from timing sidecar files in Stage 3 and Stage 4."""
+    try:
+        cache_key = ("parser_throughput", hours)
+        cached = _PARSER_THROUGHPUT_CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 300):  # 5 min cache
+            return cached.get("data")
+
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
+        records = []
+
+        # Scan Stage 3 and Stage 4 for .timing.json files
+        stage3_prefix = "Bill_Parser_3_Parsed_Outputs/"
+        stage4_prefix = ENRICH_PREFIX  # Bill_Parser_4_Enriched_Outputs/
+        for prefix in [stage3_prefix, stage4_prefix]:
+            # Use date-partitioned listing for efficiency
+            today = dt.datetime.utcnow().date()
+            for i in range(min(hours // 24 + 1, 7)):  # scan day partitions
+                target_date = today - dt.timedelta(days=i)
+                y, m, d = target_date.strftime('%Y'), target_date.strftime('%m'), target_date.strftime('%d')
+                day_prefix = f"{prefix}yyyy={y}/mm={m}/dd={d}/"
+                try:
+                    paginator = s3.get_paginator('list_objects_v2')
+                    for page in paginator.paginate(Bucket=BUCKET, Prefix=day_prefix):
+                        for obj in page.get("Contents", []) or []:
+                            k = obj.get("Key", "")
+                            if not k.endswith(".timing.json"):
+                                continue
+                            mod = obj.get("LastModified")
+                            if mod and mod.replace(tzinfo=dt.timezone.utc) < cutoff:
+                                continue
+                            try:
+                                body = s3.get_object(Bucket=BUCKET, Key=k)["Body"].read()
+                                rec = json.loads(body)
+                                rec["_stage"] = "parser" if "3_Parsed" in k else "enricher"
+                                records.append(rec)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+        # Aggregate by hour
+        by_hour = {}
+        for r in records:
+            started = r.get("startedAt", "")
+            if len(started) < 13:
+                continue
+            hour_key = started[:13]  # "2026-03-02T14"
+            bucket_data = by_hour.setdefault(hour_key, {
+                "count": 0, "totalMs": [], "geminiMs": [], "enrichMs": [],
+                "pages": 0, "lines": 0, "successes": 0, "failures": 0
+            })
+            bucket_data["count"] += 1
+            if r.get("totalMs"):
+                bucket_data["totalMs"].append(r["totalMs"])
+            if r.get("geminiMs"):
+                bucket_data["geminiMs"].append(r["geminiMs"])
+            if r.get("enrichMs"):
+                bucket_data["enrichMs"].append(r["enrichMs"])
+            bucket_data["pages"] += r.get("pageCount", 0)
+            bucket_data["lines"] += r.get("lineCount", 0)
+            if r.get("success"):
+                bucket_data["successes"] += 1
+            else:
+                bucket_data["failures"] += 1
+
+        # Compute averages
+        summary = {}
+        for hk, bd in sorted(by_hour.items()):
+            summary[hk] = {
+                "count": bd["count"],
+                "avgTotalMs": int(sum(bd["totalMs"]) / len(bd["totalMs"])) if bd["totalMs"] else 0,
+                "avgGeminiMs": int(sum(bd["geminiMs"]) / len(bd["geminiMs"])) if bd["geminiMs"] else 0,
+                "avgEnrichMs": int(sum(bd["enrichMs"]) / len(bd["enrichMs"])) if bd["enrichMs"] else 0,
+                "pages": bd["pages"],
+                "lines": bd["lines"],
+                "successes": bd["successes"],
+                "failures": bd["failures"],
+            }
+
+        result = {"hours": summary, "total_parsed": len(records)}
+        _PARSER_THROUGHPUT_CACHE[cache_key] = {"ts": time.time(), "data": result}
+        return result
+    except Exception as e:
+        print(f"[PARSER THROUGHPUT] Error: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+
+@app.get("/api/parser/queue-depth")
+def api_parser_queue_depth(user: str = Depends(require_user)):
+    """Quick count of PDF files waiting to be parsed across all input queues."""
+    try:
+        queue_defs = [
+            ("pending", "Bill_Parser_1_Pending_Parsing/"),
+            ("standard", "Bill_Parser_1_Standard/"),
+            ("large", "Bill_Parser_1_LargeFile/"),
+            ("rework", REWORK_PREFIX),
+            ("failed", FAILED_JOBS_PREFIX),
+        ]
+        counts = {}
+        for name, prefix in queue_defs:
+            count = 0
+            try:
+                paginator = s3.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                    for obj in page.get("Contents", []) or []:
+                        k = obj.get("Key", "")
+                        if k.endswith('.pdf'):
+                            count += 1
+            except Exception:
+                pass
+            counts[name] = count
+        return {"queues": counts, "total_waiting": sum(counts.values())}
+    except Exception as e:
+        print(f"[QUEUE DEPTH] Error: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+
 @app.get("/api/metrics/submitter-stats")
 def api_metrics_submitter_stats(date: str = "", start_date: str = "", end_date: str = "", user: str = Depends(require_user)):
     """Get submitter productivity stats - invoices, lines, and dollars per submitter.
