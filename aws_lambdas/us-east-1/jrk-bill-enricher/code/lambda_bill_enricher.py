@@ -33,6 +33,11 @@ _VENDOR_NAME_INDEX = None  # normalized name -> candidate
 _GL_CANDIDATES = None
 _UOM_MAPPINGS = None  # UOM conversion mappings
 
+# --- Warm-invocation match caches (persist across Lambda reuses) ---
+_VENDOR_MATCH_CACHE = {}    # norm_vendor -> {"id", "name", "score"}
+_PROPERTY_MATCH_CACHE = {}  # (norm_property, state) -> {"id", "name", ...}
+_GL_MATCH_CACHE = {}        # (hov, utility, norm_desc) -> {"id", "name", "number"}
+
 
 def _list_latest_object(bucket: str, prefix: str):
     resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
@@ -705,91 +710,152 @@ def _resolve_best_from_model(model_obj: dict, candidates: list, target: str) -> 
 def _enrich_lines(lines: list) -> list:
     _ensure_candidates_loaded()
     mkeys = _get_matcher_keys()
-    out = []
+
+    # --- Pass 0: Parse all lines into records ---
+    records = []
     for ln in lines:
         try:
-            rec = json.loads(ln)
+            records.append(json.loads(ln))
         except Exception:
             continue
-        # Use Bill From as fallback for vendor matching
-        vendor = (rec.get("Vendor Name") or rec.get("Bill From") or "").strip()
-        prop = (rec.get("Bill To Name First Line") or "").strip()
-        # address context for property matching
-        ctx = {
-            "city": (rec.get("Service City") or "").strip(),
-            "state": (rec.get("Service State") or "").strip(),
-            "zip": (rec.get("Service Zipcode") or "").strip(),
-            "utility_type": (rec.get("Utility Type") or "").strip(),
-        }
-        api_key = mkeys[(hash(rec.get("Invoice Number", "")) or 0) % len(mkeys)] if mkeys else None
-        if api_key:
+
+    if not records:
+        return []
+
+    api_key = mkeys[(hash(records[0].get("Invoice Number", "")) or 0) % len(mkeys)] if mkeys else None
+
+    # --- Pass 1: Deduplicate vendor & property matching ---
+    unique_vendors = {}     # norm_vendor -> {"id", "name", "score"}
+    unique_properties = {}  # (norm_prop, state_upper) -> {"id", "name", ...}
+
+    if api_key and (_VENDOR_CANDIDATES or _PROPERTY_CANDIDATES):
+        # Collect unique names with a representative record for context
+        vendor_raw = {}      # norm_vendor -> raw vendor string
+        property_reps = {}   # (norm_prop, state_upper) -> first record
+
+        for rec in records:
+            vendor = (rec.get("Vendor Name") or rec.get("Bill From") or "").strip()
             if vendor and _VENDOR_CANDIDATES:
-                # 1) Prefer exact normalized match to export vendor name
-                exact = _VENDOR_NAME_INDEX.get(_norm_name(vendor)) if _VENDOR_NAME_INDEX else None
-                if exact:
-                    best = {"id": exact.get("id"), "name": exact.get("name"), "score": 1.0}
+                nv = _norm_name(vendor)
+                if nv not in vendor_raw:
+                    vendor_raw[nv] = vendor
+
+            prop = (rec.get("Bill To Name First Line") or "").strip()
+            st = (rec.get("Service State") or "").strip().upper()
+            if prop and _PROPERTY_CANDIDATES:
+                pkey = (_norm_name(prop), st)
+                if pkey not in property_reps:
+                    property_reps[pkey] = rec
+
+        # --- Match each unique vendor (warm cache -> exact -> case-insensitive -> Gemini) ---
+        gemini_vendor_calls = 0
+        for nv, raw_vendor in vendor_raw.items():
+            # Warm-invocation cache (persists across Lambda reuses)
+            if nv in _VENDOR_MATCH_CACHE:
+                unique_vendors[nv] = _VENDOR_MATCH_CACHE[nv]
+                continue
+            # 1) Exact normalized match to export vendor name
+            exact = _VENDOR_NAME_INDEX.get(nv) if _VENDOR_NAME_INDEX else None
+            if exact:
+                best = {"id": exact.get("id"), "name": exact.get("name"), "score": 1.0}
+            else:
+                # 2) Case-insensitive exact match
+                vendor_lower = raw_vendor.lower().strip()
+                exact_ci = None
+                for cand in _VENDOR_CANDIDATES:
+                    if cand.get("name", "").lower().strip() == vendor_lower:
+                        exact_ci = cand
+                        break
+                if exact_ci:
+                    best = {"id": exact_ci.get("id"), "name": exact_ci.get("name"), "score": 1.0}
                 else:
-                    # 2) Try case-insensitive exact match before fuzzy matching
-                    vendor_lower = vendor.lower().strip()
-                    exact_case_insensitive = None
-                    for cand in _VENDOR_CANDIDATES:
-                        if cand.get("name", "").lower().strip() == vendor_lower:
-                            exact_case_insensitive = cand
-                            break
-                    if exact_case_insensitive:
-                        best = {"id": exact_case_insensitive.get("id"), "name": exact_case_insensitive.get("name"), "score": 1.0}
+                    # 3) Gemini fallback — only if all deterministic paths fail
+                    vm = _gemini_match(api_key, raw_vendor, _VENDOR_CANDIDATES, context={})
+                    best = _resolve_best_from_model(vm, _VENDOR_CANDIDATES, raw_vendor)
+                    gemini_vendor_calls += 1
+            unique_vendors[nv] = best
+            _VENDOR_MATCH_CACHE[nv] = best
+
+        # --- Match each unique property (warm cache -> state filter -> address narrow -> Gemini) ---
+        gemini_property_calls = 0
+        for (np, st), rep_rec in property_reps.items():
+            cache_key = (np, st)
+            # Warm-invocation cache
+            if cache_key in _PROPERTY_MATCH_CACHE:
+                unique_properties[cache_key] = _PROPERTY_MATCH_CACHE[cache_key]
+                continue
+
+            prop_str = (rep_rec.get("Bill To Name First Line") or "").strip()
+            ctx = {
+                "city": (rep_rec.get("Service City") or "").strip(),
+                "state": st,
+                "zip": (rep_rec.get("Service Zipcode") or "").strip(),
+                "utility_type": (rep_rec.get("Utility Type") or "").strip(),
+            }
+
+            # Filter candidates by state
+            cand_list = _PROPERTY_CANDIDATES
+            if st:
+                subset = [c for c in cand_list if str(c.get("state", "")).strip().upper() == st]
+                if subset:
+                    cand_list = subset
+
+            # Address-based deterministic narrowing
+            best = None
+            try:
+                num, street = _addr_num_and_street(rep_rec.get("Service Address"))
+                if num and street:
+                    nn = num.strip()
+                    ss = street.strip().lower()
+                    narrowed = [c for c in cand_list if nn in _norm_name(str(c.get("name", ""))) and ss in _norm_name(str(c.get("name", "")))]
+                    if narrowed:
+                        best = _deterministic_best(f"{nn} {ss}", narrowed)
                     else:
-                        # 3) Fall back to fuzzy matching only if no exact match found
-                        vm = _gemini_match(api_key, vendor, _VENDOR_CANDIDATES, context={"utility_type": ctx.get("utility_type")})
-                        best = _resolve_best_from_model(vm, _VENDOR_CANDIDATES, vendor)
-                # Only emit VENDOR fields as requested
+                        pm = _gemini_match(api_key, prop_str, cand_list, context={**ctx, "addr_hint": f"{nn} {ss}"})
+                        best = _resolve_best_from_model(pm, cand_list, prop_str)
+                        gemini_property_calls += 1
+                else:
+                    pm = _gemini_match(api_key, prop_str, cand_list, context=ctx)
+                    best = _resolve_best_from_model(pm, cand_list, prop_str)
+                    gemini_property_calls += 1
+            except Exception:
+                pm = _gemini_match(api_key, prop_str, cand_list, context=ctx)
+                best = _resolve_best_from_model(pm, cand_list, prop_str)
+                gemini_property_calls += 1
+
+            unique_properties[cache_key] = best
+            _PROPERTY_MATCH_CACHE[cache_key] = best
+
+        print(json.dumps({
+            "message": "Pass 1 dedup complete",
+            "lines": len(records),
+            "unique_vendors": len(vendor_raw),
+            "unique_properties": len(property_reps),
+            "gemini_vendor_calls": gemini_vendor_calls,
+            "gemini_property_calls": gemini_property_calls,
+        }))
+
+    # --- Pass 2: Apply enrichment to each record ---
+    out = []
+    gl_gemini_calls = 0
+    gl_cache_hits = 0
+    for rec in records:
+        api_key_line = mkeys[(hash(rec.get("Invoice Number", "")) or 0) % len(mkeys)] if mkeys else None
+        if api_key_line:
+            # Vendor: O(1) lookup from dedup results
+            vendor = (rec.get("Vendor Name") or rec.get("Bill From") or "").strip()
+            if vendor and _VENDOR_CANDIDATES:
+                nv = _norm_name(vendor)
+                best = unique_vendors.get(nv, {})
                 rec["EnrichedVendorName"] = best.get("name")
                 rec["EnrichedVendorID"] = best.get("id")
+
+            # Property: O(1) lookup from dedup results
+            prop = (rec.get("Bill To Name First Line") or "").strip()
+            st = (rec.get("Service State") or "").strip().upper()
             if prop and _PROPERTY_CANDIDATES:
-                # Filter property candidates by state first (if present)
-                cand_list = _PROPERTY_CANDIDATES
-                st = ctx.get("state", "").strip().upper()
-                if st:
-                    subset = [c for c in cand_list if str(c.get("state", "")).strip().upper() == st]
-                    if subset:
-                        cand_list = subset
-                # Deterministic boost: if Service Address contains number+street, prefer candidates containing both
-                try:
-                    num, street = _addr_num_and_street(rec.get("Service Address"))
-                    if num and street:
-                        nn = num.strip()
-                        ss = street.strip().lower()
-                        narrowed = []
-                        for c in cand_list:
-                            nm = _norm_name(str(c.get("name", "")))
-                            if nn in nm and ss in nm:
-                                narrowed.append(c)
-                        if narrowed:
-                            # Choose deterministically among narrowed using our simple scorer
-                            best = _deterministic_best(f"{nn} {ss}", narrowed)
-                            rec["EnrichedProperty"] = best
-                            rec["EnrichedPropertyName"] = best.get("name")
-                            rec["EnrichedPropertyID"] = best.get("id")
-                            # Skip model when high-confidence deterministic match found
-                            pass
-                        else:
-                            pm = _gemini_match(api_key, prop, cand_list, context={**ctx, "addr_hint": f"{nn} {ss}"})
-                            best = _resolve_best_from_model(pm, cand_list, prop)
-                            rec["EnrichedProperty"] = best
-                            rec["EnrichedPropertyName"] = best.get("name")
-                            rec["EnrichedPropertyID"] = best.get("id")
-                    else:
-                        pm = _gemini_match(api_key, prop, cand_list, context=ctx)
-                        best = _resolve_best_from_model(pm, cand_list, prop)
-                        rec["EnrichedProperty"] = best
-                        rec["EnrichedPropertyName"] = best.get("name")
-                        rec["EnrichedPropertyID"] = best.get("id")
-                except Exception:
-                    pm = _gemini_match(api_key, prop, cand_list, context=ctx)
-                    best = _resolve_best_from_model(pm, cand_list, prop)
-                    rec["EnrichedProperty"] = best
-                    rec["EnrichedPropertyName"] = best.get("name")
-                    rec["EnrichedPropertyID"] = best.get("id")
+                pkey = (_norm_name(prop), st)
+                best = unique_properties.get(pkey, {})
                 rec["EnrichedProperty"] = best
                 rec["EnrichedPropertyName"] = best.get("name")
                 rec["EnrichedPropertyID"] = best.get("id")
@@ -800,37 +866,46 @@ def _enrich_lines(lines: list) -> list:
             except Exception:
                 pass
 
-            # GL assignment (required): deterministic business rules first, then model fallback; always emit number from same record
+            # GL assignment: deterministic rules first, then cached Gemini fallback
             if _GL_CANDIDATES:
                 gbest = _choose_gl_deterministic(rec)
                 if not gbest:
-                    target = " | ".join([
-                        (rec.get("House Or Vacant") or "").strip(),
-                        (rec.get("Utility Type") or "").strip(),
-                        (rec.get("Line Item Description") or "").strip(),
-                    ]).strip()
-                    # Build candidate set respecting Vacant rule AND utility affinity
-                    hov_val = (rec.get("House Or Vacant") or "").strip().lower()
-                    util_aff = (rec.get("Utility Type") or "").strip().lower()
-                    base = _GL_CANDIDATES or []
-                    if util_aff == "water":
-                        base = [c for c in base if "water" in _norm_name(c.get("name", ""))] or base
-                    elif util_aff == "sewer" or util_aff == "stormwater":
-                        base = [c for c in base if "sewer" in _norm_name(c.get("name", "")) or "storm" in _norm_name(c.get("name", ""))] or base
-                    elif util_aff == "gas":
-                        base = [c for c in base if "gas" in _norm_name(c.get("name", ""))] or base
-                    elif util_aff in ("internet", "phone"):
-                        base = [c for c in base if any(k in _norm_name(c.get("name", "")) for k in ["telephone", "phone", "telecom", "internet"])] or base
-                    if hov_val == "vacant":
-                        cands = [c for c in base if "vacant" in _norm_name(c.get("name", ""))] or base
+                    # Check GL Gemini cache by (hov, utility, norm_description)
+                    hov_val = (rec.get("House Or Vacant") or "").strip()
+                    util_val = (rec.get("Utility Type") or "").strip()
+                    desc_val = _norm_name(rec.get("Line Item Description") or "")
+                    gl_cache_key = (hov_val.lower(), util_val.lower(), desc_val)
+
+                    if gl_cache_key in _GL_MATCH_CACHE:
+                        gbest = _GL_MATCH_CACHE[gl_cache_key]
+                        gl_cache_hits += 1
                     else:
-                        cands = [c for c in base if "vacant" not in _norm_name(c.get("name", ""))] or base
-                    gm = _gemini_match(api_key, target, cands, context={
-                        "house_or_vacant": rec.get("House Or Vacant"),
-                        "utility_type": rec.get("Utility Type"),
-                        "line_desc": rec.get("Line Item Description"),
-                    })
-                    gbest = _resolve_best_from_model(gm, cands, target)
+                        target = " | ".join([hov_val, util_val, (rec.get("Line Item Description") or "").strip()]).strip()
+                        # Build candidate set respecting Vacant rule AND utility affinity
+                        hov_lower = hov_val.lower()
+                        util_aff = util_val.lower()
+                        base = _GL_CANDIDATES or []
+                        if util_aff == "water":
+                            base = [c for c in base if "water" in _norm_name(c.get("name", ""))] or base
+                        elif util_aff in ("sewer", "stormwater"):
+                            base = [c for c in base if "sewer" in _norm_name(c.get("name", "")) or "storm" in _norm_name(c.get("name", ""))] or base
+                        elif util_aff == "gas":
+                            base = [c for c in base if "gas" in _norm_name(c.get("name", ""))] or base
+                        elif util_aff in ("internet", "phone"):
+                            base = [c for c in base if any(k in _norm_name(c.get("name", "")) for k in ["telephone", "phone", "telecom", "internet"])] or base
+                        if hov_lower == "vacant":
+                            cands = [c for c in base if "vacant" in _norm_name(c.get("name", ""))] or base
+                        else:
+                            cands = [c for c in base if "vacant" not in _norm_name(c.get("name", ""))] or base
+                        gm = _gemini_match(api_key_line, target, cands, context={
+                            "house_or_vacant": rec.get("House Or Vacant"),
+                            "utility_type": rec.get("Utility Type"),
+                            "line_desc": rec.get("Line Item Description"),
+                        })
+                        gbest = _resolve_best_from_model(gm, cands, target)
+                        _GL_MATCH_CACHE[gl_cache_key] = gbest
+                        gl_gemini_calls += 1
+
                 # Only utility GLs (electric, gas, water, sewer) can be swapped by
                 # House/Vacant or utility-affinity guards. Everything else is left alone.
                 _utility_gl_kw = {"electric", "gas", "water", "sewer"}
@@ -934,6 +1009,13 @@ def _enrich_lines(lines: list) -> list:
         except Exception:
             pass
         out.append(json.dumps(rec, ensure_ascii=False))
+
+    if gl_gemini_calls or gl_cache_hits:
+        print(json.dumps({
+            "message": "GL Gemini cache stats",
+            "gl_gemini_calls": gl_gemini_calls,
+            "gl_cache_hits": gl_cache_hits,
+        }))
     return out
 
 
