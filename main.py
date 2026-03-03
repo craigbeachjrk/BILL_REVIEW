@@ -451,6 +451,7 @@ s3 = boto3.client("s3", region_name=AWS_REGION, config=_boto_config)
 ddb = boto3.client("dynamodb", region_name=AWS_REGION, config=_boto_config)
 sqs = boto3.client("sqs", region_name=AWS_REGION, config=_boto_config)
 _lambda_client = boto3.client("lambda", region_name=AWS_REGION, config=_boto_config)
+_ses = boto3.client("ses", region_name=AWS_REGION, config=_boto_config)
 
 # Global thread pool for general parallel S3/DDB operations
 _GLOBAL_EXECUTOR = ThreadPoolExecutor(max_workers=20)
@@ -21340,6 +21341,8 @@ def api_get_debug_reports(user: str = Depends(require_user)):
                 "completed_by": item.get("completed_by", {}).get("S", ""),
                 "resolution_notes": item.get("resolution_notes", {}).get("S", ""),
                 "release_tag": item.get("release_tag", {}).get("S", ""),
+                "screenshots": item.get("screenshots", {}).get("S", ""),
+                "page_context": item.get("page_context", {}).get("S", ""),
             })
 
         # Sort by created_utc descending
@@ -21599,7 +21602,7 @@ def api_debug_release_notes(tag: str = "", user: str = Depends(require_user)):
 
 @app.post("/api/debug/report")
 async def api_create_debug_report(request: Request, user: str = Depends(require_user)):
-    """Create a new debug/improvement report."""
+    """Create a new debug/improvement report with optional screenshots and page context."""
     try:
         payload = await request.json()
     except Exception:
@@ -21611,6 +21614,10 @@ async def api_create_debug_report(request: Request, user: str = Depends(require_
     report_type = str(payload.get("type") or "bug").strip()
     priority = str(payload.get("priority") or "Medium").strip()
 
+    # New fields: screenshots (list of S3 keys) and page_context (dict)
+    screenshots = payload.get("screenshots") or []
+    page_context = payload.get("page_context") or {}
+
     if not title or not description:
         return JSONResponse({"error": "title and description required"}, status_code=400)
 
@@ -21618,22 +21625,41 @@ async def api_create_debug_report(request: Request, user: str = Depends(require_
     report_id = str(uuid.uuid4())
     now_utc = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
+    item = {
+        "report_id": {"S": report_id},
+        "title": {"S": title},
+        "description": {"S": description},
+        "page_url": {"S": page_url},
+        "requestor": {"S": user},
+        "status": {"S": "Open"},
+        "priority": {"S": priority},
+        "type": {"S": report_type},
+        "created_utc": {"S": now_utc},
+        "updated_utc": {"S": now_utc},
+    }
+    if screenshots:
+        item["screenshots"] = {"S": json.dumps(screenshots)}
+    if page_context:
+        item["page_context"] = {"S": json.dumps(page_context)}
+
     try:
-        ddb.put_item(
-            TableName=DEBUG_TABLE,
-            Item={
-                "report_id": {"S": report_id},
-                "title": {"S": title},
-                "description": {"S": description},
-                "page_url": {"S": page_url},
-                "requestor": {"S": user},
-                "status": {"S": "Open"},
-                "priority": {"S": priority},
-                "type": {"S": report_type},
-                "created_utc": {"S": now_utc},
-                "updated_utc": {"S": now_utc},
-            }
-        )
+        ddb.put_item(TableName=DEBUG_TABLE, Item=item)
+
+        # Fire-and-forget SES email notification
+        try:
+            type_labels = {"bug": "Bug", "enhancement": "Enhancement", "feature": "Feature Request"}
+            type_label = type_labels.get(report_type, report_type.capitalize())
+            subject = f"[{type_label}] {title} — from {user}"
+            body_html = _build_improve_email_html(
+                report_type, title, description, user, page_url,
+                page_context if page_context else None,
+                screenshots if screenshots else [],
+            )
+            _GLOBAL_EXECUTOR.submit(_send_improve_email, subject, body_html,
+                                     [user] if "@" in user else None)
+        except Exception as email_err:
+            print(f"[IMPROVE] Email scheduling failed (non-blocking): {email_err}")
+
         return {"ok": True, "report_id": report_id}
     except Exception as e:
         print(f"[DEBUG API] Error creating report: {e}")
@@ -21713,6 +21739,194 @@ def api_delete_debug_report(report_id: str, user: str = Depends(require_user)):
     except Exception as e:
         print(f"[DEBUG API] Error deleting report: {e}")
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+
+# -----------  IMPROVE: Screenshot upload + email notifications  -----------
+
+_IMPROVE_SCREENSHOT_MAX_COUNT = 5
+_IMPROVE_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+_IMPROVE_SCREENSHOT_PREFIX = "improve-screenshots"
+_IMPROVE_EMAIL_RECIPIENTS = ["cbeach@jrk.com"]
+_IMPROVE_EMAIL_SENDER = os.getenv("IMPROVE_EMAIL_SENDER", "noreply@jrkresidential.com")
+
+
+def _send_improve_email(subject: str, body_html: str, extra_to: list[str] | None = None):
+    """Fire-and-forget SES email for IMPROVE reports."""
+    to_list = list(_IMPROVE_EMAIL_RECIPIENTS)
+    if extra_to:
+        for addr in extra_to:
+            if addr and addr not in to_list:
+                to_list.append(addr)
+    try:
+        _ses.send_email(
+            Source=_IMPROVE_EMAIL_SENDER,
+            Destination={"ToAddresses": to_list},
+            Message={
+                "Subject": {"Data": subject},
+                "Body": {"Html": {"Data": body_html}},
+            },
+        )
+        print(f"[IMPROVE] Email sent to {to_list}: {subject}")
+    except Exception as e:
+        print(f"[IMPROVE] Email send failed: {e}")
+
+
+def _build_improve_email_html(report_type: str, title: str, description: str,
+                               requestor: str, page_url: str,
+                               page_context: dict | None, screenshot_keys: list[str]) -> str:
+    """Build HTML body for IMPROVE report email notification."""
+    import html as _html
+    _esc = _html.escape
+
+    type_colors = {"bug": "#ef4444", "enhancement": "#8b5cf6", "feature": "#10b981"}
+    badge_color = type_colors.get(report_type, "#64748b")
+    badge_label = _esc(report_type.capitalize())
+
+    # Build page context summary
+    ctx_html = ""
+    if page_context:
+        ctx_parts = []
+        if page_context.get("pathname"):
+            ctx_parts.append(f"<b>Path:</b> {_esc(str(page_context['pathname']))}")
+        if page_context.get("viewport"):
+            ctx_parts.append(f"<b>Viewport:</b> {_esc(str(page_context['viewport']))}")
+        if page_context.get("userAgent"):
+            ua = str(page_context["userAgent"])[:120]
+            ctx_parts.append(f"<b>UA:</b> {_esc(ua)}")
+        if page_context.get("pageErrors"):
+            errs = page_context["pageErrors"]
+            if isinstance(errs, list):
+                ctx_parts.append(f"<b>Page errors:</b> {len(errs)} captured")
+        if page_context.get("consoleErrors"):
+            cerrs = page_context["consoleErrors"]
+            if isinstance(cerrs, list):
+                ctx_parts.append(f"<b>Console errors:</b> {len(cerrs)} captured")
+        if ctx_parts:
+            ctx_html = "<p style='font-size:13px;color:#64748b'>" + " &bull; ".join(ctx_parts) + "</p>"
+
+    # Build screenshot links
+    ss_html = ""
+    if screenshot_keys:
+        ss_links = []
+        for key in screenshot_keys:
+            try:
+                url = s3.generate_presigned_url("get_object", Params={"Bucket": BUCKET, "Key": key}, ExpiresIn=604800)
+                ss_links.append(f'<a href="{_esc(url)}" target="_blank"><img src="{_esc(url)}" style="max-height:120px;border-radius:6px;border:1px solid #e5e7eb;margin-right:8px" /></a>')
+            except Exception:
+                ss_links.append(f"<code>{_esc(str(key))}</code>")
+        ss_html = "<p><b>Screenshots:</b></p><div style='display:flex;flex-wrap:wrap;gap:8px'>" + "".join(ss_links) + "</div>"
+
+    return f"""
+    <div style="font-family:Inter,system-ui,sans-serif;max-width:600px;margin:0 auto">
+      <div style="padding:20px;background:#f8fafc;border-radius:12px;border:1px solid #e5e7eb">
+        <div style="margin-bottom:12px">
+          <span style="background:{badge_color};color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">{badge_label}</span>
+        </div>
+        <h2 style="margin:0 0 8px 0;font-size:18px;color:#0f172a">{_esc(title)}</h2>
+        <p style="margin:0 0 12px 0;color:#334155;white-space:pre-wrap">{_esc(description)}</p>
+        <p style="font-size:13px;color:#64748b"><b>From:</b> {_esc(requestor)} &bull; <b>Page:</b> {_esc(page_url)}</p>
+        {ctx_html}
+        {ss_html}
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0" />
+        <p style="font-size:12px;color:#94a3b8"><a href="https://billreview.jrkresidential.com/debug">View in Issue Tracker</a></p>
+      </div>
+    </div>
+    """
+
+
+@app.post("/api/debug/upload-screenshot")
+async def api_upload_screenshot(request: Request, user: str = Depends(require_user)):
+    """Upload a screenshot image (base64) to S3 for an IMPROVE report."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    report_id = str(payload.get("report_id") or "").strip()
+    image_data = str(payload.get("image_data") or "").strip()
+    content_type = str(payload.get("content_type") or "image/png").strip()
+
+    if not report_id or not image_data:
+        return JSONResponse({"error": "report_id and image_data required"}, status_code=400)
+
+    # Validate report_id: no path separators or traversal
+    import re as _re
+    if not _re.match(r'^[a-zA-Z0-9_-]{1,128}$', report_id):
+        return JSONResponse({"error": "invalid report_id"}, status_code=400)
+
+    # Validate and determine file extension from content type
+    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+    if content_type not in ext_map:
+        return JSONResponse({"error": f"unsupported image type: {content_type}"}, status_code=400)
+    ext = ext_map[content_type]
+
+    # Decode base64
+    try:
+        # Strip data URI prefix if present
+        if "," in image_data:
+            image_data = image_data.split(",", 1)[1]
+        raw = base64.b64decode(image_data)
+    except Exception:
+        return JSONResponse({"error": "invalid base64 image data"}, status_code=400)
+
+    if len(raw) > _IMPROVE_SCREENSHOT_MAX_BYTES:
+        return JSONResponse({"error": f"image exceeds {_IMPROVE_SCREENSHOT_MAX_BYTES // (1024*1024)}MB limit"}, status_code=400)
+
+    # Check existing screenshot count for this report
+    try:
+        existing = s3.list_objects_v2(Bucket=BUCKET, Prefix=f"{_IMPROVE_SCREENSHOT_PREFIX}/{report_id}/", MaxKeys=_IMPROVE_SCREENSHOT_MAX_COUNT + 1)
+        if existing.get("KeyCount", 0) >= _IMPROVE_SCREENSHOT_MAX_COUNT:
+            return JSONResponse({"error": f"max {_IMPROVE_SCREENSHOT_MAX_COUNT} screenshots per report"}, status_code=400)
+    except Exception:
+        pass  # If listing fails, allow upload anyway
+
+    import uuid
+    file_id = str(uuid.uuid4())
+    s3_key = f"{_IMPROVE_SCREENSHOT_PREFIX}/{report_id}/{file_id}.{ext}"
+
+    try:
+        s3.put_object(Bucket=BUCKET, Key=s3_key, Body=raw, ContentType=content_type)
+    except Exception as e:
+        print(f"[IMPROVE] Screenshot upload failed: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "screenshot upload")}, status_code=500)
+
+    # Generate presigned URL for immediate preview
+    presigned_url = s3.generate_presigned_url("get_object", Params={"Bucket": BUCKET, "Key": s3_key}, ExpiresIn=3600)
+
+    return {"ok": True, "key": s3_key, "url": presigned_url}
+
+
+@app.get("/api/debug/report/{report_id}/screenshots")
+def api_get_report_screenshots(report_id: str, user: str = Depends(require_user)):
+    """Return presigned URLs for all screenshots attached to a report.
+
+    Reads S3 keys from the DynamoDB record's `screenshots` field (JSON array),
+    which stores the actual keys used during upload (may differ from report_id prefix).
+    """
+    try:
+        # Read screenshot keys from DynamoDB record (source of truth)
+        item = ddb.get_item(
+            TableName=DEBUG_TABLE,
+            Key={"report_id": {"S": report_id}},
+            ProjectionExpression="screenshots",
+        ).get("Item", {})
+
+        keys_json = item.get("screenshots", {}).get("S", "")
+        s3_keys = json.loads(keys_json) if keys_json else []
+
+        screenshots = []
+        for key in s3_keys:
+            if not isinstance(key, str) or not key:
+                continue
+            try:
+                url = s3.generate_presigned_url("get_object", Params={"Bucket": BUCKET, "Key": key}, ExpiresIn=3600)
+                screenshots.append({"key": key, "url": url})
+            except Exception:
+                screenshots.append({"key": key, "url": ""})
+        return {"ok": True, "screenshots": screenshots}
+    except Exception as e:
+        print(f"[IMPROVE] Error listing screenshots: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "screenshots")}, status_code=500)
 
 
 # simple in-memory cache for track API
