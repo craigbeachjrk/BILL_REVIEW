@@ -135,6 +135,12 @@ REWORK_PREFIX = os.getenv("REWORK_PREFIX", "Bill_Parser_Rework_Input/")
 CHECK_SLIPS_TABLE = os.getenv("CHECK_SLIPS_TABLE", "jrk-check-slips")
 CHECK_SLIP_INVOICES_TABLE = os.getenv("CHECK_SLIP_INVOICES_TABLE", "jrk-check-slip-invoices")
 
+# IMPROVE Agent (ECS Fargate) — empty = disabled (safe default)
+IMPROVE_AGENT_CLUSTER = os.getenv("IMPROVE_AGENT_CLUSTER", "")
+IMPROVE_AGENT_TASK_DEF = os.getenv("IMPROVE_AGENT_TASK_DEF", "")
+IMPROVE_AGENT_SUBNETS = [s for s in os.getenv("IMPROVE_AGENT_SUBNETS", "").split(",") if s]
+IMPROVE_AGENT_SG = os.getenv("IMPROVE_AGENT_SG", "")
+
 # Admin users who can access CONFIG, Vendor Corrections, Gap Analysis, etc.
 ADMIN_USERS = {"tma@jrk.com", "cbeach@jrk.com"}
 
@@ -452,6 +458,7 @@ ddb = boto3.client("dynamodb", region_name=AWS_REGION, config=_boto_config)
 sqs = boto3.client("sqs", region_name=AWS_REGION, config=_boto_config)
 _lambda_client = boto3.client("lambda", region_name=AWS_REGION, config=_boto_config)
 _ses = boto3.client("ses", region_name=AWS_REGION, config=_boto_config)
+_ecs = boto3.client("ecs", region_name=AWS_REGION, config=_boto_config)
 
 # Global thread pool for general parallel S3/DDB operations
 _GLOBAL_EXECUTOR = ThreadPoolExecutor(max_workers=20)
@@ -21659,6 +21666,27 @@ async def api_create_debug_report(request: Request, user: str = Depends(require_
                                      [user] if "@" in user else None)
         except Exception as email_err:
             print(f"[IMPROVE] Email scheduling failed (non-blocking): {email_err}")
+
+        # Fire-and-forget: launch ECS Fargate IMPROVE agent (no-op if env vars empty)
+        if IMPROVE_AGENT_CLUSTER and IMPROVE_AGENT_TASK_DEF:
+            try:
+                _ecs.run_task(
+                    cluster=IMPROVE_AGENT_CLUSTER,
+                    taskDefinition=IMPROVE_AGENT_TASK_DEF,
+                    launchType="FARGATE",
+                    networkConfiguration={"awsvpcConfiguration": {
+                        "subnets": IMPROVE_AGENT_SUBNETS,
+                        "securityGroups": [IMPROVE_AGENT_SG],
+                        "assignPublicIp": "ENABLED",
+                    }},
+                    overrides={"containerOverrides": [{
+                        "name": "improve-agent",
+                        "environment": [{"name": "REPORT_ID", "value": report_id}],
+                    }]},
+                )
+                print(f"[IMPROVE] ECS agent triggered for report {report_id}")
+            except Exception as ecs_err:
+                print(f"[IMPROVE] ECS agent trigger failed (non-blocking): {ecs_err}")
 
         return {"ok": True, "report_id": report_id}
     except Exception as e:
