@@ -137,6 +137,7 @@ def get_job_info(job_id: str) -> dict:
             'chunks_completed': int(item['chunks_completed']['N']),
             'status': item['status']['S'],
             'previous_context': item.get('previous_context', {}).get('S', ''),
+            'header_context': item.get('header_context', {}).get('S', ''),
             'chunk_results': [r['S'] for r in item.get('chunk_results', {}).get('L', [])],
             'expected_lines': int(item.get('expected_lines', {}).get('N', '0')),
             'bill_from': item.get('bill_from', {}).get('S', ''),
@@ -145,6 +146,33 @@ def get_job_info(job_id: str) -> dict:
     except Exception as e:
         print(f"Error getting job info: {e}")
         return None
+
+
+def wait_for_header_context(job_id: str, max_wait_seconds: int = 30) -> str:
+    """Wait for chunk 1 to populate header_context. Polls DynamoDB every 2s.
+
+    Chunks 2+ call this before building their Gemini prompt so they always
+    get the authoritative header info from page 1 (vendor, account, address)
+    rather than a race-prone 'previous_context' that any chunk can overwrite.
+    """
+    waited = 0
+    while waited < max_wait_seconds:
+        try:
+            resp = ddb.get_item(
+                TableName=JOBS_TABLE,
+                Key={'job_id': {'S': job_id}},
+                ProjectionExpression='header_context'
+            )
+            ctx = resp.get('Item', {}).get('header_context', {}).get('S', '')
+            if ctx:
+                print(json.dumps({"message": "Got header_context from chunk 1", "job_id": job_id, "waited_seconds": waited}))
+                return ctx
+        except Exception as e:
+            print(json.dumps({"warning": "Failed to read header_context", "error": str(e)[:200]}))
+        time.sleep(2)
+        waited += 2
+    print(json.dumps({"warning": "header_context not available after waiting", "job_id": job_id, "waited_seconds": max_wait_seconds}))
+    return ''
 
 
 class RateLimitError(Exception):
@@ -704,24 +732,56 @@ Use the vendor, account number, bill dates, and service address from the previou
     return [], f"Chunk {chunk_num} failed after {MAX_ATTEMPTS} attempts: {last_error[:100] if last_error else 'unknown'}"
 
 
-def update_job_progress(job_id: str, chunk_num: int, result_key: str, context_summary: str):
-    """Update job record with chunk completion."""
+def update_job_progress(job_id: str, chunk_num: int, result_key: str, context_summary: str) -> bool:
+    """Update job record with chunk completion.
+
+    Uses a conditional write on completed_chunks_set to prevent double-counting
+    if S3 triggers the Lambda twice for the same chunk.
+
+    Chunk 1 additionally sets header_context — the authoritative header info
+    that all subsequent chunks use (immune to out-of-order completion).
+
+    Returns True if this was a new (first) completion, False if duplicate.
+    """
     try:
-        # Atomically increment chunks_completed and append result
+        # Build SET clause parts
+        set_parts = [
+            "chunks_completed = chunks_completed + :inc",
+            "previous_context = :context",
+            "chunk_results = list_append(if_not_exists(chunk_results, :empty_list), :result)",
+        ]
+        expr_values = {
+            ':inc': {'N': '1'},
+            ':context': {'S': context_summary},
+            ':result': {'L': [{'S': result_key}]},
+            ':empty_list': {'L': []},
+            ':chunk_set': {'SS': [str(chunk_num)]},
+            ':chunk_str': {'S': str(chunk_num)},
+        }
+
+        # Chunk 1 sets the authoritative header_context
+        if chunk_num == 1:
+            set_parts.append("header_context = :header_ctx")
+            expr_values[':header_ctx'] = {'S': context_summary}
+
+        update_expr = "SET " + ", ".join(set_parts) + " ADD completed_chunks_set :chunk_set"
+
+        # Conditional: only proceed if this chunk hasn't already been counted
         ddb.update_item(
             TableName=JOBS_TABLE,
             Key={'job_id': {'S': job_id}},
-            UpdateExpression="SET chunks_completed = chunks_completed + :inc, previous_context = :context, chunk_results = list_append(if_not_exists(chunk_results, :empty_list), :result)",
-            ExpressionAttributeValues={
-                ':inc': {'N': '1'},
-                ':context': {'S': context_summary},
-                ':result': {'L': [{'S': result_key}]},
-                ':empty_list': {'L': []}
-            }
+            UpdateExpression=update_expr,
+            ConditionExpression="attribute_not_exists(completed_chunks_set) OR NOT contains(completed_chunks_set, :chunk_str)",
+            ExpressionAttributeValues=expr_values
         )
         print(json.dumps({"message": "Job progress updated", "job_id": job_id, "chunk": chunk_num}))
+        return True
+    except ddb.exceptions.ConditionalCheckFailedException:
+        print(json.dumps({"warning": "Duplicate chunk detected, skipping progress update", "job_id": job_id, "chunk": chunk_num}))
+        return False
     except Exception as e:
         print(f"Error updating job progress: {e}")
+        return False
 
 
 def lambda_handler(event, context):
@@ -796,13 +856,26 @@ def lambda_handler(event, context):
             remaining = context.get_remaining_time_in_millis() - 15_000
             deadline_ms = int(time.time() * 1000) + max(0, remaining)
 
+        # Determine context for this chunk:
+        # - Chunk 1 has no prior context (it IS the header source)
+        # - Chunks 2+ wait for chunk 1's header_context (authoritative, race-free)
+        if chunk_num > 1:
+            context_for_chunk = wait_for_header_context(job_id)
+            if not context_for_chunk:
+                # Fallback: use whatever's already in the job record
+                context_for_chunk = job_info.get('header_context') or job_info.get('previous_context', '')
+                if context_for_chunk:
+                    print(json.dumps({"message": "Using fallback context from job record", "job_id": job_id, "chunk": chunk_num}))
+        else:
+            context_for_chunk = ''  # Chunk 1 has no prior context
+
         # Parse chunk with key rotation and exponential backoff
         rows, context_summary = parse_chunk_with_retry(
             keys,  # Pass all keys for rotation
             pdf_bytes,
             chunk_num,
             job_info['total_chunks'],
-            job_info['previous_context'],
+            context_for_chunk,
             job_info.get('expected_lines', 0),
             deadline_ms=deadline_ms,
         )
@@ -861,8 +934,12 @@ def lambda_handler(event, context):
             print(json.dumps({"error": "failed_to_save_result", "message": str(e)}))
             continue
 
-        # Update job progress
-        update_job_progress(job_id, chunk_num, result_key, context_summary)
+        # Update job progress (with dedup protection)
+        was_new = update_job_progress(job_id, chunk_num, result_key, context_summary)
+
+        if not was_new:
+            print(json.dumps({"message": "Duplicate chunk processing detected, skipping completion check", "job_id": job_id, "chunk": chunk_num}))
+            continue
 
         # Check if all chunks completed
         if job_info['chunks_completed'] + 1 >= job_info['total_chunks']:

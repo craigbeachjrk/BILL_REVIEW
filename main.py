@@ -10163,13 +10163,17 @@ def _workflow_tracker_refresh_loop():
     """Background loop that keeps workflow tracker cache warm.
     Refreshes every 4 minutes (cache TTL is 5 minutes)."""
     _REFRESH_INTERVAL = 240  # 4 minutes
-    # Initial load
-    try:
-        data = _compute_workflow_tracker()
-        _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
-        print("[WORKFLOW TRACKER BG] Initial cache load complete")
-    except Exception as e:
-        print(f"[WORKFLOW TRACKER BG] Initial load error: {e}")
+    # Initial load with retries
+    for attempt in range(3):
+        try:
+            data = _compute_workflow_tracker()
+            _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
+            print("[WORKFLOW TRACKER BG] Initial cache load complete")
+            break
+        except Exception as e:
+            print(f"[WORKFLOW TRACKER BG] Initial load attempt {attempt+1} failed: {e}")
+            if attempt < 2:
+                time.sleep(30)
     while True:
         time.sleep(_REFRESH_INTERVAL)
         try:
@@ -10713,7 +10717,7 @@ def api_directed_generate(request: Request, user: str = Depends(require_user)):
             user, mode=mode, target_ap=target_ap,
             filter_property=filter_property, filter_vendor=filter_vendor,
         )
-        return {"ok": True, "stats": plan.get("stats", {})}
+        return {"ok": True, "plan": plan, "stats": plan.get("stats", {})}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "generating plan")}, status_code=500)
 

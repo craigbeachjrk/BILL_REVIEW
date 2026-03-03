@@ -654,26 +654,25 @@ let weeklyObjectives = null;
 /* ============================================================
    INIT
    ============================================================ */
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initTrackerEvents();
   initLateBillsEvents();
   initGlobalApFilter();
 
-  // Load directed plan + reason codes + weekly objectives in parallel
-  const [planResp, codesResp] = await Promise.all([
-    fetch('/api/directed/plan'),
-    fetch('/api/directed/reason-codes'),
-  ]);
-  const planData = await planResp.json();
-  const codesData = await codesResp.json();
-  dir_reasonCodes = codesData.codes || [];
-  if (planData.plan) {
-    dir_plan = planData.plan;
-    dir_render();
-  } else {
-    dir_showEmpty();
-  }
+  // Non-blocking load of plan + reason codes
+  Promise.all([
+    fetch('/api/directed/plan').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    fetch('/api/directed/reason-codes').then(r => r.ok ? r.json() : {codes:[]}).catch(() => ({codes:[]})),
+  ]).then(([planData, codesData]) => {
+    dir_reasonCodes = codesData.codes || [];
+    if (planData.plan) {
+      dir_plan = planData.plan;
+      dir_render();
+    } else {
+      dir_showEmpty();
+    }
+  });
 
   loadWeeklyObjectives();
 });
@@ -834,7 +833,7 @@ async function saveWeeklyTargets() {
     const resp = await fetch('/api/workflow/weekly-objectives', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ targets })
+      body: JSON.stringify({ week: weeklyObjectives?.week || null, targets })
     });
     const data = await resp.json();
     if (data.ok) {
@@ -903,9 +902,7 @@ async function dir_generatePlan() {
       dir_hideLoading();
       return;
     }
-    const resp = await fetch('/api/directed/plan');
-    const data = await resp.json();
-    dir_plan = data.plan;
+    dir_plan = genData.plan;
     dir_historyCache = {};  // clear stale cache
     dir_render();
     showToast('Plan generated!', 'ok');
@@ -1561,6 +1558,10 @@ async function loadTrackerData(forceRefresh) {
   try {
     const url = '/api/workflow/completion-tracker' + (forceRefresh ? '?refresh=1' : '');
     const resp = await fetch(url);
+    if (!resp.ok) {
+      container.innerHTML = `<div class="loading" style="color:#ef4444">Server error (${resp.status}). Click Recalculate to retry.</div>`;
+      return;
+    }
     trackerData = await resp.json();
     if (trackerData.error) {
       container.innerHTML = '<div class="loading" style="color:#ef4444">Error: ' + trackerData.error + '</div>';

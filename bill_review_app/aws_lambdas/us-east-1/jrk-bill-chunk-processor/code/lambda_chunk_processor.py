@@ -19,7 +19,7 @@ secrets = boto3.client("secretsmanager")
 
 # Configuration
 BUCKET = os.getenv("BUCKET", "jrk-analytics-billing")
-MAX_ATTEMPTS = 6  # Number of retry attempts with key rotation
+MAX_ATTEMPTS = 10  # Number of retry attempts with key rotation (match number of API keys)
 BASE_BACKOFF_SECONDS = 2  # Base delay for exponential backoff
 CHUNK_STAGGER_SECONDS = 1.5  # Delay per chunk number to stagger API calls
 CHUNKS_PREFIX = os.getenv("CHUNKS_PREFIX", "Bill_Parser_1_LargeFile_Chunks/")
@@ -40,46 +40,65 @@ COLUMNS = [
 ]
 
 PROMPT_TEMPLATE = """
-You are an expert utility-bill parser. Output ONLY pipe-separated (|) rows with exactly {col_count} fields ({pipe_count} pipes) in this order:
-{columns}
+You are an expert utility-bill parser. Output ONLY a JSON array of objects. Each object represents one line item.
+
+**OUTPUT FORMAT**: Return a JSON array like this:
+```json
+[
+  {{"bill_to_name": "Customer Name", "vendor_name": "Utility Co", "account_number": "12345", ...}},
+  {{"bill_to_name": "Customer Name", "vendor_name": "Utility Co", "account_number": "12345", ...}}
+]
+```
+
+**REQUIRED FIELDS FOR EACH OBJECT** (use these exact key names):
+- bill_to_name: Customer name (first line)
+- bill_to_name_2: Secondary name or c/o
+- vendor_name: Utility company name (e.g., "Southern California Edison", "PG&E")
+- invoice_number: Bill/invoice reference number
+- account_number: Customer account (digits only)
+- line_item_account: Sub-account if different from main account
+- service_address: Street address for service
+- service_city: City
+- service_zipcode: Zip code
+- service_state: 2-letter state code
+- meter_number: Meter ID
+- meter_size: Meter size (e.g., "5/8 inch")
+- house_or_vacant: "House" or "Vacant"
+- bill_period_start: Start date (MM/DD/YYYY)
+- bill_period_end: End date (MM/DD/YYYY)
+- utility_type: ONE OF: Electricity, Gas, Water, Sewer, Trash, Stormwater, HOA, Internet, Phone
+- consumption: Usage quantity (number)
+- uom: Unit of measure (kWh, CCF, gallons, therms)
+- prev_reading: Previous meter reading (number)
+- prev_reading_date: Previous reading date
+- curr_reading: Current meter reading (number)
+- curr_reading_date: Current reading date
+- rate: Rate per unit (number)
+- days: Number of days in billing period (number)
+- description: Line item description (e.g., "Electric Delivery", "Generation Charge")
+- charge: Dollar amount for this line item (number like 45.67)
+- bill_date: Invoice date (MM/DD/YYYY)
+- due_date: Payment due date (MM/DD/YYYY or text)
+- special_instructions: Any special notes (max 50 chars)
 
 {context_note}
 
-CRITICAL: For EVERY row you output, include ALL header-level fields (Bill To Name, Vendor Name, Invoice Number, Account Number, Service Address, Bill Date, Due Date, etc.) even if you extracted them from earlier pages. Repeat these fields on EVERY line item row.
+**CRITICAL RULES:**
+1. For EVERY line item, repeat ALL header fields (bill_to_name, vendor_name, account_number, service_address, bill_date, etc.)
+2. Extract EVERY dollar amount as a separate line item - charges, taxes, fees, credits, adjustments
+3. The "description" field MUST be text describing the charge (e.g., "Distribution Charge"), NOT a date or number
+4. The "charge" field MUST be a number (the dollar amount)
+5. For Southern California Edison and similar multi-page bills, extract ALL line items from EVERY service address
+6. DO NOT return only "Total Due" - extract the breakdown of charges
 
-EXTRACTION - Extract EVERY line that has a dollar amount as a separate row. This includes:
-- All charges (base, service, delivery, usage, demand, generation, transmission, distribution)
-- All taxes, fees, surcharges, and regulatory charges
-- All credits, adjustments, and discounts
-- Each line item showing any charge or credit amount
-- Energy charges by tier (extract each tier as a separate row)
-- Franchise fees, public purpose programs, nuclear decommissioning
-- ANY line with a $ amount - extract it!
+**WHAT TO EXTRACT:**
+- All charges (base, service, delivery, usage, demand, generation, transmission)
+- All taxes, fees, surcharges, regulatory charges
+- Credits, adjustments, discounts
+- Energy charges by tier (each tier = separate row)
+- Franchise fees, public purpose programs
 
-DO NOT output ONLY a "Total Due" or "Amount Due" or "Balance Due" line. These are summary totals. However, if the page ONLY shows a total with no breakdown, extract the total as a single line item rather than returning EMPTY.
-
-IMPORTANT: PG&E and other utility bills often have detailed charge breakdowns. Look for:
-- Electric/Gas generation charges
-- Electric/Gas delivery charges
-- Baseline vs over-baseline rates
-- Time-of-use rate tiers
-- Public purpose programs
-- Each of these should be a SEPARATE row
-
-Rules and standardizations:
-- Utility Type must be standardized to one of EXACTLY these values: Electricity | Gas | Trash | Water | Sewer | Stormwater | HOA | Internet | Phone
-- Account Number: remove any non-digit characters
-- House Or Vacant: return "House" for now
-- Consumption Amount: Round to two decimal places if > 10 units
-- Special Instructions: cap at 50 characters
-- For Inferred Fields: if you infer CRITICAL fields, list column names separated by hyphen; else leave blank.
-
-CRITICAL FORMATTING:
-- NEVER include pipe characters (|) within any field value - use dashes (-) or commas instead
-- Each row must have EXACTLY {col_count} fields separated by EXACTLY {pipe_count} pipes
-- Line Item Description should NOT contain pipes - use dashes to separate parts if needed
-
-NEVER return EMPTY if you see ANY dollar amounts on the page. If there's at least one $ amount, extract it.
+Return ONLY the JSON array, no markdown code blocks, no explanation text.
 """.strip()
 
 
@@ -93,12 +112,12 @@ def get_keys_from_secret() -> list:
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, dict) and "keys" in parsed:
-                return [str(k).strip() for k in parsed["keys"]][:3]
+                return [str(k).strip() for k in parsed["keys"]][:10]
         except:
             pass
         if "," in raw:
-            return [k.strip() for k in raw.split(",") if k.strip()][:3]
-        return [k.strip() for k in raw.splitlines() if k.strip()][:3]
+            return [k.strip() for k in raw.split(",") if k.strip()][:10]
+        return [k.strip() for k in raw.splitlines() if k.strip()][:10]
     except Exception as e:
         print(f"Error getting keys: {e}")
         return []
@@ -118,13 +137,42 @@ def get_job_info(job_id: str) -> dict:
             'chunks_completed': int(item['chunks_completed']['N']),
             'status': item['status']['S'],
             'previous_context': item.get('previous_context', {}).get('S', ''),
+            'header_context': item.get('header_context', {}).get('S', ''),
             'chunk_results': [r['S'] for r in item.get('chunk_results', {}).get('L', [])],
             'expected_lines': int(item.get('expected_lines', {}).get('N', '0')),
-            'bill_from': item.get('bill_from', {}).get('S', '')
+            'bill_from': item.get('bill_from', {}).get('S', ''),
+            'pages_per_chunk': int(item.get('pages_per_chunk', {}).get('N', '2')),  # Default to 2 pages per chunk
         }
     except Exception as e:
         print(f"Error getting job info: {e}")
         return None
+
+
+def wait_for_header_context(job_id: str, max_wait_seconds: int = 30) -> str:
+    """Wait for chunk 1 to populate header_context. Polls DynamoDB every 2s.
+
+    Chunks 2+ call this before building their Gemini prompt so they always
+    get the authoritative header info from page 1 (vendor, account, address)
+    rather than a race-prone 'previous_context' that any chunk can overwrite.
+    """
+    waited = 0
+    while waited < max_wait_seconds:
+        try:
+            resp = ddb.get_item(
+                TableName=JOBS_TABLE,
+                Key={'job_id': {'S': job_id}},
+                ProjectionExpression='header_context'
+            )
+            ctx = resp.get('Item', {}).get('header_context', {}).get('S', '')
+            if ctx:
+                print(json.dumps({"message": "Got header_context from chunk 1", "job_id": job_id, "waited_seconds": waited}))
+                return ctx
+        except Exception as e:
+            print(json.dumps({"warning": "Failed to read header_context", "error": str(e)[:200]}))
+        time.sleep(2)
+        waited += 2
+    print(json.dumps({"warning": "header_context not available after waiting", "job_id": job_id, "waited_seconds": max_wait_seconds}))
+    return ''
 
 
 class RateLimitError(Exception):
@@ -341,7 +389,10 @@ def call_gemini_api(api_key: str, pdf_bytes: bytes, prompt: str, timeout: int = 
                     {"text": prompt},
                 ],
             }
-        ]
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json"
+        }
     }
     headers = {"Content-Type": "application/json"}
 
@@ -365,7 +416,16 @@ def call_gemini_api(api_key: str, pdf_bytes: bytes, prompt: str, timeout: int = 
         raise
 
 
-def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0) -> tuple[list[list[str]], str]:
+def _remaining_ms(deadline_epoch_ms: int) -> int:
+    """Milliseconds remaining until deadline.  Returns 0 if already past."""
+    return max(0, deadline_epoch_ms - int(time.time() * 1000))
+
+
+# Minimum time (ms) we need to safely attempt one API call + save result
+MIN_TIME_FOR_ATTEMPT_MS = 30_000  # 30 seconds — generous buffer for API + S3 write
+
+
+def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0) -> tuple[list[list[str]], str]:
     """
     Parse a PDF chunk with key rotation and exponential backoff.
 
@@ -373,6 +433,11 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
     1. Key rotation - cycles through all available API keys
     2. Exponential backoff - increasing delays on 429 errors
     3. Staggered processing - initial delay based on chunk number
+    4. Time-budget awareness - stops retrying before Lambda timeout
+
+    Args:
+        deadline_ms: epoch-millisecond deadline from Lambda context.  If 0,
+                     no budget enforcement (unit-test / local mode).
 
     Returns rows + new context summary. Returns empty on complete failure.
     """
@@ -385,17 +450,39 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
         time.sleep(stagger_delay)
 
     # Build context note for prompt
+    context_service_address = ""  # Will be populated from previous context for post-processing
+    context_service_city = ""
+    context_service_state = ""
+    context_service_zip = ""
+
     if previous_context and chunk_num > 1:
-        context_note = f"IMPORTANT: This is chunk {chunk_num} of {total_chunks}. Previous chunks contained:\n{previous_context}\n\nUse the vendor, account number, bill dates, and service address from the previous context and include them on EVERY row you output from this chunk. Continue extracting line items from this chunk, maintaining consistency with previous data."
+        # Extract service address from previous context for post-processing fallback
+        import re as _re_ctx
+        addr_match = _re_ctx.search(r'Service Address:\s*([^|,]+)', previous_context)
+        if addr_match:
+            context_service_address = addr_match.group(1).strip()
+        city_match = _re_ctx.search(r'Service Address:[^,]+,\s*([^,]+),', previous_context)
+        if city_match:
+            context_service_city = city_match.group(1).strip()
+        state_zip_match = _re_ctx.search(r'Service Address:[^,]+,[^,]+,\s*([A-Z]{2})\s+(\d{5})', previous_context)
+        if state_zip_match:
+            context_service_state = state_zip_match.group(1).strip()
+            context_service_zip = state_zip_match.group(2).strip()
+
+        context_note = f"""IMPORTANT: This is chunk {chunk_num} of {total_chunks}. Previous chunks contained:
+{previous_context}
+
+**CRITICAL SERVICE ADDRESS REQUIREMENT**:
+- The service address from chunk 1 is: {context_service_address}
+- You MUST include this EXACT service address on EVERY row you output from this chunk
+- NEVER return an empty service_address field - always use the address from chunk 1
+- If this chunk shows a different service address, use that one; otherwise use: {context_service_address}
+
+Use the vendor, account number, bill dates, and service address from the previous context and include them on EVERY row you output from this chunk. Continue extracting line items from this chunk, maintaining consistency with previous data."""
     else:
         context_note = f"This is chunk {chunk_num} of {total_chunks} from a multi-page invoice. Extract header information (vendor, account, dates, addresses) and include them on EVERY row."
 
-    prompt = PROMPT_TEMPLATE.format(
-        col_count=len(COLUMNS),
-        pipe_count=len(COLUMNS)-1,
-        columns=' | '.join(COLUMNS),
-        context_note=context_note
-    )
+    prompt = PROMPT_TEMPLATE.format(context_note=context_note)
 
     # Add expected_lines hint if provided from rework metadata
     if expected_lines and expected_lines > 0:
@@ -407,59 +494,178 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
 
     # Retry loop with key rotation and exponential backoff
     last_error = None
+    prev_content_errors = []  # Track validation errors for retry feedback
+
     for attempt in range(MAX_ATTEMPTS):
+        # --- Time-budget guard: bail if we don't have enough time for another attempt ---
+        if deadline_ms and _remaining_ms(deadline_ms) < MIN_TIME_FOR_ATTEMPT_MS:
+            print(json.dumps({
+                "warning": "time_budget_exhausted",
+                "chunk": chunk_num,
+                "attempt": attempt + 1,
+                "remaining_ms": _remaining_ms(deadline_ms),
+                "min_required_ms": MIN_TIME_FOR_ATTEMPT_MS,
+            }))
+            break  # fall through to the "all attempts exhausted" path below
+
         # Rotate through API keys
         api_key = api_keys[attempt % len(api_keys)]
         key_index = attempt % len(api_keys)
 
         try:
+            # Build the prompt - add validation error feedback if retrying due to content errors
+            current_prompt = prompt
+            if attempt > 0 and prev_content_errors:
+                current_prompt += ("\n\n**CONTENT VALIDATION ERRORS FROM YOUR PREVIOUS ATTEMPT**:\n"
+                           + "\n".join(prev_content_errors[:10]) +
+                           "\n\nFix these field mapping issues. Make sure:\n"
+                           "- 'description' field contains TEXT describing the charge (like 'Electric Delivery') - NOT dates or numbers\n"
+                           "- 'charge' field contains DOLLAR AMOUNTS as numbers (like 45.67) - NOT dates\n"
+                           "- 'utility_type' field is one of: Electricity, Gas, Water, Sewer, Trash - NOT a date\n"
+                           "- Date values only appear in: bill_period_start, bill_period_end, prev_reading_date, curr_reading_date, bill_date, due_date\n"
+                           "Re-parse the document carefully and ensure each value goes to the correct field.")
+
             print(json.dumps({
                 "message": "Attempting API call",
                 "chunk": chunk_num,
                 "attempt": attempt + 1,
                 "max_attempts": MAX_ATTEMPTS,
-                "key_index": key_index
+                "key_index": key_index,
+                "has_prev_errors": len(prev_content_errors) > 0
             }))
 
-            reply_text = call_gemini_api(api_key, pdf_bytes, prompt, timeout=90)
+            reply_text = call_gemini_api(api_key, pdf_bytes, current_prompt, timeout=90)
 
             # Success! Parse the response
             if reply_text.upper() == "EMPTY":
                 print(json.dumps({"message": "chunk_reported_empty", "chunk": chunk_num}))
                 return [], f"Chunk {chunk_num} empty (no line items)"
 
-            # Parse pipe-delimited response
+            # Parse JSON response
             rows = []
-            normalized_count = 0  # Rows that needed normalization
-            for line in reply_text.splitlines():
-                line = line.strip()
-                if not line:
+            invalid_rows = []  # Track rows that failed validation
+            all_content_errors = []  # Collect all validation errors for potential retry
+
+            # Try to parse JSON - handle markdown code blocks
+            json_text = reply_text.strip()
+            if json_text.startswith("```"):
+                # Remove markdown code block wrapper
+                lines = json_text.split("\n")
+                # Find start and end of code block
+                start_idx = 0
+                end_idx = len(lines)
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("```") and i == 0:
+                        start_idx = 1
+                    elif line.strip() == "```":
+                        end_idx = i
+                        break
+                json_text = "\n".join(lines[start_idx:end_idx])
+
+            try:
+                items = json.loads(json_text)
+                if not isinstance(items, list):
+                    items = [items]  # Single object, wrap in list
+            except json.JSONDecodeError as e:
+                print(json.dumps({"error": "json_parse_failed", "chunk": chunk_num, "error_msg": str(e), "preview": json_text[:500]}))
+                # Fall back to trying to extract JSON array from text
+                import re
+                json_match = re.search(r'\[[\s\S]*\]', json_text)
+                if json_match:
+                    try:
+                        items = json.loads(json_match.group())
+                    except:
+                        items = []
+                else:
+                    items = []
+
+            # JSON field to COLUMNS index mapping
+            JSON_TO_COLUMN = {
+                "bill_to_name": 0, "bill_to_name_2": 1, "vendor_name": 2, "invoice_number": 3,
+                "account_number": 4, "line_item_account": 5, "service_address": 6, "service_city": 7,
+                "service_zipcode": 8, "service_state": 9, "meter_number": 10, "meter_size": 11,
+                "house_or_vacant": 12, "bill_period_start": 13, "bill_period_end": 14, "utility_type": 15,
+                "consumption": 16, "uom": 17, "prev_reading": 18, "prev_reading_date": 19,
+                "curr_reading": 20, "curr_reading_date": 21, "rate": 22, "days": 23,
+                "description": 24, "charge": 25, "bill_date": 26, "due_date": 27,
+                "special_instructions": 28
+            }
+
+            print(json.dumps({"message": "Parsing JSON items", "chunk": chunk_num, "item_count": len(items)}))
+
+            for item_idx, item in enumerate(items):
+                if not isinstance(item, dict):
                     continue
-                parts = [p.strip() for p in line.split('|')]
 
-                # Skip header rows or lines with too few parts (likely not data)
-                if len(parts) < 10:
-                    continue
+                # Convert JSON object to row array matching COLUMNS order
+                row = [""] * len(COLUMNS)
+                for json_key, col_idx in JSON_TO_COLUMN.items():
+                    value = item.get(json_key, "")
+                    # Convert non-string values to string
+                    if value is None:
+                        value = ""
+                    elif isinstance(value, (int, float)):
+                        value = str(value)
+                    row[col_idx] = cleanse_field(str(value))
 
-                # Normalize the row (handles extra/missing columns and cleanses pipes)
-                if len(parts) != len(COLUMNS):
-                    normalized_count += 1
-                    if normalized_count <= 3:  # Log first 3 normalizations
-                        print(json.dumps({"message": "row_normalized", "chunk": chunk_num, "original_cols": len(parts), "expected": len(COLUMNS), "preview": line[:200]}))
-
-                normalized = normalize_row(parts, len(COLUMNS))
+                # POST-PROCESSING: Fill empty service address from context (chunk 2+)
+                # This ensures rows don't get assigned to wrong properties due to missing address
+                if chunk_num > 1 and context_service_address:
+                    # Index 6 = Service Address, 7 = City, 8 = Zip, 9 = State
+                    if not row[6] or not row[6].strip():
+                        row[6] = context_service_address
+                        print(json.dumps({
+                            "message": "Filled empty service address from context",
+                            "chunk": chunk_num,
+                            "row": item_idx + 1,
+                            "address": context_service_address
+                        }))
+                    if not row[7] or not row[7].strip():
+                        row[7] = context_service_city
+                    if not row[8] or not row[8].strip():
+                        row[8] = context_service_zip
+                    if not row[9] or not row[9].strip():
+                        row[9] = context_service_state
 
                 # Validate content types
-                is_valid, content_errors = validate_row_content(normalized)
+                is_valid, content_errors = validate_row_content(row)
                 if not is_valid:
                     print(json.dumps({
                         "warning": "content_validation_failed",
                         "chunk": chunk_num,
-                        "row": len(rows) + 1,
+                        "row": item_idx + 1,
                         "errors": content_errors[:3]  # Log first 3 errors
                     }))
+                    invalid_rows.append(row)
+                    all_content_errors.extend(content_errors)
+                else:
+                    rows.append(row)
 
-                rows.append(normalized)
+            # Check if we need to retry due to too many validation failures
+            total_rows = len(rows) + len(invalid_rows)
+            if len(invalid_rows) > MAX_DROPPED_ROWS_BEFORE_RETRY and attempt < MAX_ATTEMPTS - 1:
+                print(json.dumps({
+                    "warning": "too_many_validation_failures_retrying",
+                    "chunk": chunk_num,
+                    "attempt": attempt + 1,
+                    "valid_rows": len(rows),
+                    "invalid_rows": len(invalid_rows),
+                    "sample_errors": all_content_errors[:5]
+                }))
+                prev_content_errors = all_content_errors  # Save for next attempt's prompt
+                time.sleep(BASE_BACKOFF_SECONDS)  # Brief delay before retry
+                continue  # Retry with validation error feedback
+
+            # If we're on the last attempt or validation passed, include invalid rows with warning
+            if invalid_rows:
+                print(json.dumps({
+                    "warning": "accepting_invalid_rows",
+                    "chunk": chunk_num,
+                    "valid_rows": len(rows),
+                    "invalid_rows": len(invalid_rows),
+                    "reason": "final_attempt_or_within_threshold"
+                }))
+                rows.extend(invalid_rows)  # Include them anyway on final attempt
 
             # Generate context summary for next chunk
             if rows:
@@ -483,14 +689,16 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
             else:
                 context_summary = f"No items extracted from chunk {chunk_num}"
 
-            if normalized_count > 0:
-                print(json.dumps({"message": "rows_normalized_total", "chunk": chunk_num, "normalized": normalized_count, "total_rows": len(rows)}))
             print(json.dumps({"message": "Chunk parsed successfully", "chunk": chunk_num, "rows": len(rows), "attempt": attempt + 1}))
             return rows, context_summary
 
         except RateLimitError as e:
             # Exponential backoff for rate limit errors
             backoff_delay = BASE_BACKOFF_SECONDS * (2 ** attempt)  # 2, 4, 8, 16, 32, 64 seconds
+            # Cap backoff so we don't sleep past the deadline
+            if deadline_ms:
+                max_sleep = max(0, (_remaining_ms(deadline_ms) - MIN_TIME_FOR_ATTEMPT_MS) / 1000)
+                backoff_delay = min(backoff_delay, max_sleep)
             last_error = str(e)
             print(json.dumps({
                 "warning": "rate_limit_hit",
@@ -524,24 +732,56 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
     return [], f"Chunk {chunk_num} failed after {MAX_ATTEMPTS} attempts: {last_error[:100] if last_error else 'unknown'}"
 
 
-def update_job_progress(job_id: str, chunk_num: int, result_key: str, context_summary: str):
-    """Update job record with chunk completion."""
+def update_job_progress(job_id: str, chunk_num: int, result_key: str, context_summary: str) -> bool:
+    """Update job record with chunk completion.
+
+    Uses a conditional write on completed_chunks_set to prevent double-counting
+    if S3 triggers the Lambda twice for the same chunk.
+
+    Chunk 1 additionally sets header_context — the authoritative header info
+    that all subsequent chunks use (immune to out-of-order completion).
+
+    Returns True if this was a new (first) completion, False if duplicate.
+    """
     try:
-        # Atomically increment chunks_completed and append result
+        # Build SET clause parts
+        set_parts = [
+            "chunks_completed = chunks_completed + :inc",
+            "previous_context = :context",
+            "chunk_results = list_append(if_not_exists(chunk_results, :empty_list), :result)",
+        ]
+        expr_values = {
+            ':inc': {'N': '1'},
+            ':context': {'S': context_summary},
+            ':result': {'L': [{'S': result_key}]},
+            ':empty_list': {'L': []},
+            ':chunk_set': {'SS': [str(chunk_num)]},
+            ':chunk_str': {'S': str(chunk_num)},
+        }
+
+        # Chunk 1 sets the authoritative header_context
+        if chunk_num == 1:
+            set_parts.append("header_context = :header_ctx")
+            expr_values[':header_ctx'] = {'S': context_summary}
+
+        update_expr = "SET " + ", ".join(set_parts) + " ADD completed_chunks_set :chunk_set"
+
+        # Conditional: only proceed if this chunk hasn't already been counted
         ddb.update_item(
             TableName=JOBS_TABLE,
             Key={'job_id': {'S': job_id}},
-            UpdateExpression="SET chunks_completed = chunks_completed + :inc, previous_context = :context, chunk_results = list_append(if_not_exists(chunk_results, :empty_list), :result)",
-            ExpressionAttributeValues={
-                ':inc': {'N': '1'},
-                ':context': {'S': context_summary},
-                ':result': {'L': [{'S': result_key}]},
-                ':empty_list': {'L': []}
-            }
+            UpdateExpression=update_expr,
+            ConditionExpression="attribute_not_exists(completed_chunks_set) OR NOT contains(completed_chunks_set, :chunk_str)",
+            ExpressionAttributeValues=expr_values
         )
         print(json.dumps({"message": "Job progress updated", "job_id": job_id, "chunk": chunk_num}))
+        return True
+    except ddb.exceptions.ConditionalCheckFailedException:
+        print(json.dumps({"warning": "Duplicate chunk detected, skipping progress update", "job_id": job_id, "chunk": chunk_num}))
+        return False
     except Exception as e:
         print(f"Error updating job progress: {e}")
+        return False
 
 
 def lambda_handler(event, context):
@@ -576,6 +816,19 @@ def lambda_handler(event, context):
 
         print(json.dumps({"message": "Processing chunk", "job_id": job_id, "chunk_num": chunk_num}))
 
+        # --- Timing instrumentation ---
+        t0 = time.time()
+        timing = {
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "stage": "chunk_processor",
+            "jobId": job_id,
+            "chunkNum": chunk_num,
+            "lineCount": 0,
+            "retryCount": 0,
+            "success": False,
+            "modelUsed": MODEL_NAME,
+        }
+
         # Get job info
         job_info = get_job_info(job_id)
         if not job_info:
@@ -596,25 +849,71 @@ def lambda_handler(event, context):
             print(json.dumps({"error": "no_api_keys"}))
             continue
 
+        # Compute deadline from Lambda context so retries don't exceed the timeout
+        deadline_ms = 0
+        if context and hasattr(context, 'get_remaining_time_in_millis'):
+            # Leave 15s buffer for saving result + updating DynamoDB after parsing
+            remaining = context.get_remaining_time_in_millis() - 15_000
+            deadline_ms = int(time.time() * 1000) + max(0, remaining)
+
+        # Determine context for this chunk:
+        # - Chunk 1 has no prior context (it IS the header source)
+        # - Chunks 2+ wait for chunk 1's header_context (authoritative, race-free)
+        if chunk_num > 1:
+            context_for_chunk = wait_for_header_context(job_id)
+            if not context_for_chunk:
+                # Fallback: use whatever's already in the job record
+                context_for_chunk = job_info.get('header_context') or job_info.get('previous_context', '')
+                if context_for_chunk:
+                    print(json.dumps({"message": "Using fallback context from job record", "job_id": job_id, "chunk": chunk_num}))
+        else:
+            context_for_chunk = ''  # Chunk 1 has no prior context
+
         # Parse chunk with key rotation and exponential backoff
         rows, context_summary = parse_chunk_with_retry(
             keys,  # Pass all keys for rotation
             pdf_bytes,
             chunk_num,
             job_info['total_chunks'],
-            job_info['previous_context'],
-            job_info.get('expected_lines', 0)
+            context_for_chunk,
+            job_info.get('expected_lines', 0),
+            deadline_ms=deadline_ms,
         )
 
-        # Save chunk result to S3
+        timing["geminiMs"] = int((time.time() - t0) * 1000)
+        timing["lineCount"] = len(rows)
+        timing["success"] = len(rows) > 0
+
+        # Emit alarm-friendly log if chunk parsing failed completely
+        chunk_failed = len(rows) == 0 and "failed" in context_summary.lower()
+        if chunk_failed:
+            print(json.dumps({
+                "alarm": "CHUNK_PARSE_FAILED",
+                "job_id": job_id,
+                "chunk_num": chunk_num,
+                "source_file": job_info.get("source_file", key),
+                "context_summary": context_summary[:300],
+            }))
+
+        # ALWAYS save chunk result to S3, even with 0 rows.
+        # This ensures the aggregator can detect completion and not hang forever.
         result_key = f"{CHUNK_RESULTS_PREFIX}{job_id}/chunk_{str(chunk_num).zfill(3)}.json"
         try:
+            # Calculate page range for this chunk (for UI page-to-line mapping)
+            pages_per_chunk = job_info.get('pages_per_chunk', 2)
+            source_page_start = (chunk_num - 1) * pages_per_chunk + 1
+            source_page_end = chunk_num * pages_per_chunk  # May exceed actual total for last chunk
+
             result_data = {
                 "job_id": job_id,
                 "chunk_num": chunk_num,
                 "rows": rows,
                 "context_summary": context_summary,
-                "parsed_at": datetime.now(timezone.utc).isoformat()
+                "parsed_at": datetime.now(timezone.utc).isoformat(),
+                "failed": chunk_failed,
+                "pages_per_chunk": pages_per_chunk,
+                "source_page_start": source_page_start,
+                "source_page_end": source_page_end,
             }
             s3.put_object(
                 Bucket=bucket,
@@ -622,13 +921,25 @@ def lambda_handler(event, context):
                 Body=json.dumps(result_data, ensure_ascii=False).encode('utf-8'),
                 ContentType='application/json'
             )
-            print(json.dumps({"message": "Chunk result saved", "result_key": result_key}))
+            print(json.dumps({"message": "Chunk result saved", "result_key": result_key, "rows": len(rows), "failed": chunk_failed}))
+            # Write timing sidecar
+            timing["totalMs"] = int((time.time() - t0) * 1000)
+            try:
+                timing_key = result_key.replace('.json', '.timing.json')
+                s3.put_object(Bucket=bucket, Key=timing_key, Body=json.dumps(timing), ContentType='application/json')
+            except Exception:
+                pass
+            print(json.dumps({"_metric": "chunk_complete", **timing}))
         except Exception as e:
             print(json.dumps({"error": "failed_to_save_result", "message": str(e)}))
             continue
 
-        # Update job progress
-        update_job_progress(job_id, chunk_num, result_key, context_summary)
+        # Update job progress (with dedup protection)
+        was_new = update_job_progress(job_id, chunk_num, result_key, context_summary)
+
+        if not was_new:
+            print(json.dumps({"message": "Duplicate chunk processing detected, skipping completion check", "job_id": job_id, "chunk": chunk_num}))
+            continue
 
         # Check if all chunks completed
         if job_info['chunks_completed'] + 1 >= job_info['total_chunks']:

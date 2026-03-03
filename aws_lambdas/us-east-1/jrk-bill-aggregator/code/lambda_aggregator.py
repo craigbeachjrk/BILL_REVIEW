@@ -83,10 +83,32 @@ def combine_chunk_results(job_info: dict) -> list[dict]:
             print(f"Error listing S3 results: {e}")
             return []
 
+    # Deduplicate result keys (list_append could add same key twice
+    # if the chunk processor Lambda was triggered twice for the same chunk)
+    seen_keys = set()
+    unique_keys = []
+    for k in result_keys:
+        if k not in seen_keys:
+            seen_keys.add(k)
+            unique_keys.append(k)
+    if len(unique_keys) < len(result_keys):
+        print(json.dumps({"warning": "Deduplicated result keys", "original": len(result_keys), "unique": len(unique_keys)}))
+    result_keys = unique_keys
+
+    # Track seen chunk numbers to prevent duplicate chunk data
+    seen_chunks = set()
+
     for result_key in result_keys:
         chunk_data = get_chunk_result(result_key)
         if chunk_data and 'rows' in chunk_data:
             chunk_num = chunk_data.get('chunk_num', 0)
+
+            # Skip duplicate chunks (same chunk_num from different result keys)
+            if chunk_num in seen_chunks:
+                print(json.dumps({"warning": "Duplicate chunk skipped", "chunk_num": chunk_num, "result_key": result_key}))
+                continue
+            seen_chunks.add(chunk_num)
+
             source_page_start = chunk_data.get('source_page_start', 0)
             source_page_end = chunk_data.get('source_page_end', 0)
 
@@ -105,6 +127,11 @@ def combine_chunk_results(job_info: dict) -> list[dict]:
                 "rows": len(chunk_data['rows']),
                 "pages": f"{source_page_start}-{source_page_end}"
             }))
+
+    # Sort by chunk_num to guarantee correct page order
+    # (S3 lexicographic sort on zero-padded names should already be correct,
+    # but DynamoDB chunk_results list order is not guaranteed)
+    all_rows.sort(key=lambda r: r.get('chunk_num', 0))
 
     return all_rows
 

@@ -108,6 +108,7 @@ def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_ke
         'chunk_keys': {'L': [{'S': k} for k in chunk_keys]},
         'chunk_results': {'L': []},  # Will be populated by chunk processors
         'previous_context': {'S': ''},  # Summary of previous chunks for context
+        'header_context': {'S': ''},  # Chunk 1's header info — authoritative source for all subsequent chunks
         'expected_lines': {'N': str(expected_lines)},  # Hint for chunk processors
         'bill_from': {'S': bill_from},  # Vendor hint for chunk processors
         'pages_per_chunk': {'N': str(pages_per_chunk)},  # Pages per chunk for page tracking

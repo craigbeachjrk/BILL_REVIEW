@@ -60,8 +60,11 @@ def get_chunk_result(result_key: str) -> dict:
         return None
 
 
-def combine_chunk_results(job_info: dict) -> list[list[str]]:
-    """Combine all chunk results into single list of rows."""
+def combine_chunk_results(job_info: dict) -> list[dict]:
+    """Combine all chunk results into single list of rows with page metadata.
+
+    Returns list of dicts: {"row": [...], "source_page_start": N, "source_page_end": N, "chunk_num": N}
+    """
     all_rows = []
 
     # Get all chunk result keys - if not in DynamoDB, list from S3
@@ -80,23 +83,115 @@ def combine_chunk_results(job_info: dict) -> list[list[str]]:
             print(f"Error listing S3 results: {e}")
             return []
 
+    # Deduplicate result keys (list_append could add same key twice
+    # if the chunk processor Lambda was triggered twice for the same chunk)
+    seen_keys = set()
+    unique_keys = []
+    for k in result_keys:
+        if k not in seen_keys:
+            seen_keys.add(k)
+            unique_keys.append(k)
+    if len(unique_keys) < len(result_keys):
+        print(json.dumps({"warning": "Deduplicated result keys", "original": len(result_keys), "unique": len(unique_keys)}))
+    result_keys = unique_keys
+
+    # Track seen chunk numbers to prevent duplicate chunk data
+    seen_chunks = set()
+
     for result_key in result_keys:
         chunk_data = get_chunk_result(result_key)
         if chunk_data and 'rows' in chunk_data:
-            all_rows.extend(chunk_data['rows'])
+            chunk_num = chunk_data.get('chunk_num', 0)
+
+            # Skip duplicate chunks (same chunk_num from different result keys)
+            if chunk_num in seen_chunks:
+                print(json.dumps({"warning": "Duplicate chunk skipped", "chunk_num": chunk_num, "result_key": result_key}))
+                continue
+            seen_chunks.add(chunk_num)
+
+            source_page_start = chunk_data.get('source_page_start', 0)
+            source_page_end = chunk_data.get('source_page_end', 0)
+
+            # Wrap each row with its page metadata
+            for row in chunk_data['rows']:
+                all_rows.append({
+                    "row": row,
+                    "chunk_num": chunk_num,
+                    "source_page_start": source_page_start,
+                    "source_page_end": source_page_end,
+                })
+
             print(json.dumps({
                 "message": "Added chunk rows",
-                "chunk": chunk_data.get('chunk_num'),
-                "rows": len(chunk_data['rows'])
+                "chunk": chunk_num,
+                "rows": len(chunk_data['rows']),
+                "pages": f"{source_page_start}-{source_page_end}"
             }))
+
+    # Sort by chunk_num to guarantee correct page order
+    # (S3 lexicographic sort on zero-padded names should already be correct,
+    # but DynamoDB chunk_results list order is not guaranteed)
+    all_rows.sort(key=lambda r: r.get('chunk_num', 0))
 
     return all_rows
 
 
-def write_final_jsonl(job_info: dict, all_rows: list[list[str]]) -> str:
-    """Write combined results to final JSONL file in Stage 3."""
+def write_final_jsonl(job_info: dict, all_rows: list[dict]) -> str:
+    """Write combined results to final JSONL file in Stage 3.
+
+    Args:
+        job_info: Job metadata from DynamoDB
+        all_rows: List of dicts with {"row": [...], "chunk_num": N, "source_page_start": N, "source_page_end": N}
+    """
+    import re as _re
     now = datetime.now(timezone.utc)
     parsed_at_utc = now.isoformat()
+
+    # helper to coerce various date strings into MM/DD/YYYY
+    def fmt_us_date(s: str) -> str:
+        if not s:
+            return ""
+        s = str(s).strip()
+
+        # First try flexible regex for M-D-YY, M/D/YY, M-D-YYYY, M/D/YYYY formats
+        # This handles single-digit months/days like "11-2-25" or "1-2-25"
+        flex_match = _re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$', s)
+        if flex_match:
+            m, d, y = flex_match.groups()
+            m, d = int(m), int(d)
+            y = int(y)
+            # Convert 2-digit year to 4-digit (assume 2000s for 00-99)
+            if y < 100:
+                y = 2000 + y if y < 50 else 1900 + y
+            if 1 <= m <= 12 and 1 <= d <= 31:
+                return f"{m:02d}/{d:02d}/{y:04d}"
+
+        # common patterns with zero-padded values
+        fmts = [
+            "%m/%d/%Y", "%m/%d/%y",
+            "%Y-%m-%d", "%Y/%m/%d",
+            "%m-%d-%Y", "%m-%d-%y",
+            "%b %d, %Y", "%B %d, %Y",
+        ]
+        for f in fmts:
+            try:
+                dt = datetime.strptime(s, f)
+                return dt.strftime("%m/%d/%Y")
+            except Exception:
+                pass
+        # try to pull 8 digits like 20250813 or 08132025
+        digits = _re.sub(r"\D", "", s)
+        try:
+            if len(digits) == 8:
+                # try YYYYMMDD then MMDDYYYY
+                try:
+                    dt = datetime.strptime(digits, "%Y%m%d")
+                except Exception:
+                    dt = datetime.strptime(digits, "%m%d%Y")
+                return dt.strftime("%m/%d/%Y")
+        except Exception:
+            pass
+        return s  # give up: keep original
 
     # Extract source filename for output key
     source_file = job_info['source_file']
@@ -107,10 +202,25 @@ def write_final_jsonl(job_info: dict, all_rows: list[list[str]]) -> str:
 
     key_stem = source_filename.rsplit('.', 1)[0] if '.' in source_filename else source_filename
 
-    # First pass: convert rows to dicts
+    # First pass: convert rows to dicts with page metadata
     all_records = []
-    for row in all_rows:
-        data = {k: v for k, v in zip(COLUMNS, row[:len(COLUMNS)])}
+    for row_data in all_rows:
+        row = row_data.get("row", row_data) if isinstance(row_data, dict) else row_data
+        # Handle both old format (list) and new format (dict with "row")
+        if isinstance(row, dict) and "row" not in row:
+            # Already a dict - just use it
+            data = row
+        else:
+            # Convert list row to dict
+            actual_row = row if isinstance(row, list) else row_data
+            data = {k: v for k, v in zip(COLUMNS, actual_row[:len(COLUMNS)])}
+
+        # Add page metadata if present
+        if isinstance(row_data, dict):
+            data["source_chunk"] = row_data.get("chunk_num", 0)
+            data["source_page_start"] = row_data.get("source_page_start", 0)
+            data["source_page_end"] = row_data.get("source_page_end", 0)
+
         all_records.append(data)
 
     # Apply header-level field normalization - ensure all line items have the same header fields
@@ -120,18 +230,38 @@ def write_final_jsonl(job_info: dict, all_rows: list[list[str]]) -> str:
         "Invoice Number", "Account Number", "Bill Date", "Due Date"
     ]
 
+    from collections import Counter
+
+    # First, normalize Account Number - use Line Item Account Number as fallback
+    for record in all_records:
+        acct = record.get("Account Number", "").strip()
+        line_acct = record.get("Line Item Account Number", "").strip()
+        if not acct and line_acct:
+            record["Account Number"] = line_acct
+        elif acct and not line_acct:
+            record["Line Item Account Number"] = acct
+
     for field in header_fields:
         # Find the most common non-empty value for this field
         values = [r.get(field, "").strip() for r in all_records if r.get(field, "").strip()]
         if values:
             # Use most common value (in case of conflicts)
-            from collections import Counter
             most_common_value = Counter(values).most_common(1)[0][0]
 
             # Apply to all records that are missing this field
             for record in all_records:
                 if not record.get(field, "").strip():
                     record[field] = most_common_value
+
+    # Normalize all date fields to MM/DD/YYYY format
+    date_fields = [
+        "Bill Period Start", "Bill Period End", "Bill Date", "Due Date",
+        "Previous Reading Date", "Current Reading Date"
+    ]
+    for record in all_records:
+        for dk in date_fields:
+            if dk in record and isinstance(record[dk], str):
+                record[dk] = fmt_us_date(record[dk])
 
     # Second pass: create JSONL with normalized data
     ndjson_lines = []
