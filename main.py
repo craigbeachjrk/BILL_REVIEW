@@ -24,15 +24,21 @@ def _entrata_post_succeeded(resp_text: str) -> tuple[bool, str]:
             if any(k in status_msg for k in ["duplicate", "already exists", "already posted", "invoice exists"]):
                 return False, "duplicate"
             # Treat any explicit error status as failure
-            if status in ("error", "fail", "failed"):
+            if status in ("error", "fail", "failed", "rejected", "declined", "unauthorized", "forbidden", "denied"):
                 return False, status
             # Heuristic success
-            if status in ("ok", "success"):
+            if status in ("ok", "success", "created", "accepted", "submitted", "completed", "processed"):
                 return True, status
+            # If status field is present but unknown (e.g. "warning", "pending", some numeric string),
+            # treat as failure to prevent invoices from being incorrectly moved to Stage 7.
+            # Only fall through to keyword scan when there is NO status field at all
+            # (e.g. Entrata returns {invoiceId: "123"} with no status key).
+            if status:
+                return False, f"unknown_status:{status}"
             # If no obvious signals, fall back to keyword scan
         # Keyword scan on text
         low = t.lower()
-        if any(k in low for k in ["duplicate", "already exists", "already posted", "error", "failed", "failure"]):
+        if any(k in low for k in ["duplicate", "already exists", "already posted", "error", "failed", "failure", "rejected", "unauthorized"]):
             # Prefer specific duplicate reason if present
             if "duplicate" in low or "already" in low:
                 return False, "duplicate"
@@ -2595,8 +2601,14 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
                     "invalid_property": "The property ID is not valid in Entrata.",
                     "invalid_gl": "The GL account is not valid in Entrata.",
                     "http_error": "Entrata did not respond in time. Check Entrata for this invoice before retrying.",
+                    "rejected": "Entrata rejected this invoice. Verify vendor, property, and GL account are valid.",
+                    "declined": "Entrata declined this invoice. Verify invoice details before retrying.",
+                    "unauthorized": "Entrata API credentials or permissions issue. Contact your administrator.",
                 }
                 hint = error_hints.get(reason, "Check the invoice details and try again.")
+                # Handle dynamic unknown_status:XYZ reasons
+                if reason.startswith("unknown_status:"):
+                    hint = f"Entrata returned an unrecognized status. Invoice was NOT posted — check Entrata before retrying."
                 err_entry: dict = {"key": key, "error": f"Entrata rejected invoice: {reason}", "code": "post_failed", "hint": hint, "response": (text[:500] if isinstance(text, str) else "")}
                 # If duplicate, flag as repostable with current suffix so frontend can escalate
                 if reason == "duplicate":
@@ -23289,8 +23301,10 @@ def api_rework(
         except Exception:
             exp_lines_val = None
 
-        # Resolve expected account number: prefer header draft override, fall back to source row
-        expected_account_number = str(header_draft.get("fields", {}).get("Account Number", "")).strip()
+        # Resolve expected account number: prefer explicit form value, then header draft override, fall back to source row
+        expected_account_number = str(account_number or "").strip()
+        if not expected_account_number:
+            expected_account_number = str(header_draft.get("fields", {}).get("Account Number", "")).strip()
         if not expected_account_number:
             expected_account_number = str(first.get("Account Number", "") or "").strip()
 
