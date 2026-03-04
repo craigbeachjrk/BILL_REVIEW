@@ -41,6 +41,142 @@ CLONE_DIR = "/tmp/repo"
 EMAIL_SENDER = os.environ.get("IMPROVE_EMAIL_SENDER", "noreply@jrkanalytics.com")
 EMAIL_RECIPIENTS = ["cbeach@jrk.com"]
 
+# ---------------------------------------------------------------------------
+# Investigation context — injected into every prompt so the agent can
+# trace data/pipeline issues across S3, DynamoDB, CloudWatch, and Lambda.
+# ---------------------------------------------------------------------------
+INVESTIGATION_CONTEXT = """
+## AWS Investigation Context
+
+CRITICAL: You have READ-ONLY access to AWS resources. NEVER run any write/delete/
+put/update commands (no `aws s3 rm`, `aws dynamodb put-item`, `aws s3 cp`, etc.).
+Only use GET, LIST, QUERY, SCAN, DESCRIBE, and FILTER operations.
+
+### S3 Bucket: jrk-analytics-billing
+Invoice PDFs and JSONL data flow through numbered stage prefixes:
+
+| Prefix | Description |
+|--------|-------------|
+| `Bill_Parser_1_Pending_Parsing/` | Raw PDFs waiting for parser Lambda |
+| `Bill_Parser_2_Parsed_Inputs/` | Parser output (JSONL + original PDF) |
+| `Bill_Parser_4_Enriched_Outputs/` | Enriched with vendor/property data |
+| `Bill_Parser_5_Overrides/` | User-applied overrides |
+| `Bill_Parser_6_PreEntrata_Submission/` | Ready for Entrata AP posting |
+| `Bill_Parser_7_PostEntrata_Submission/` | Posted to Entrata |
+| `Bill_Parser_8_UBI_Assigned/` | UBI billing period assigned |
+| `Bill_Parser_9_Flagged_Review/` | Flagged for QC review |
+| `Bill_Parser_Rework_Input/` | Bills sent back for re-parsing |
+| `Bill_Parser_Failed_Jobs/` | Failed parse diagnostics |
+| `Bill_Parser_99_Historical Archive/` | Archived bills |
+| `Bill_Parser_Config/` | Config files (parser prompts, etc.) |
+| `Bill_Parser_Enrichment/exports/` | Dimension table exports |
+| `improve-screenshots/` | IMPROVE agent screenshots |
+
+**Partition pattern:** `yyyy={YYYY}/mm={MM}/dd={DD}/`
+Example: `Bill_Parser_4_Enriched_Outputs/yyyy=2026/mm=02/dd=28/`
+
+**JSONL file format:** Each invoice is a `.jsonl` file where line 1 is the header
+(vendor, property, invoice_number, dates, etc.) and subsequent lines are line items
+(charge_code, amount, uom, etc.).
+
+**pdf_id:** SHA1 hash of the S3 key. Used as the primary identifier across all stages.
+```python
+import hashlib
+pdf_id = hashlib.sha1(s3_key.encode()).hexdigest()
+```
+
+### DynamoDB Tables (all in us-east-1)
+
+| Table | Key Schema | Purpose |
+|-------|-----------|---------|
+| `jrk-bill-review` | `pk` (S) | Bill review records |
+| `jrk-bill-drafts` | `pk` (S) | User draft edits (pk: `draft#{pdf_id}#...`) |
+| `jrk-bill-config` | `config_key` (S) | App configuration |
+| `jrk-bill-review-debug` | `report_id` (S) | IMPROVE agent debug/reports |
+| `jrk-bill-parser-errors` | `pk` (S) | Parser error records |
+| `jrk-bill-manual-entries` | `pk` (S) | Manual CSV uploads |
+| `jrk-bill-billback-master` | `pk` (S), `sk` (S) | Billback line items by period |
+| `jrk-bill-ubi-assignments` | `pk` (S) | UBI period assignments |
+| `jrk-bill-ubi-archived` | `pk` (S) | Archived UBI records |
+| `jrk-check-slips` | `pk` (S) | Check slip records |
+| `jrk-check-slip-invoices` | `pk` (S) | Invoice-to-slip mapping |
+| `jrk-url-short` | `pk` (S) | URL shortening |
+
+**Draft key pattern:** `draft#{pdf_id}#__header__#{username}` — stores user overrides
+for vendor, property, etc.
+
+### Lambda Functions (all `jrk-*` in us-east-1)
+
+| Function | Purpose |
+|----------|---------|
+| `jrk-bill-router` | Routes incoming bill PDFs to parser |
+| `jrk-bill-parser` | Parses PDF content via Claude |
+| `jrk-bill-large-parser` | Handles large/multi-page bills |
+| `jrk-bill-chunk-processor` | Processes chunked bill pages |
+| `jrk-bill-enricher` | Enriches with vendor/property from dimensions |
+| `jrk-bill-aggregator` | Aggregates parsed bill data |
+| `jrk-bill-parser-failure-router` | Routes failed parsing jobs |
+| `jrk-bill-parser-rework` | Re-processes reworked bills |
+| `jrk-presigned-upload` | Generates presigned S3 upload URLs |
+| `jrk-email-ingest` | Ingests emailed bills |
+| `jrk-vendor-validator` | Validates vendor data |
+| `jrk-vendor-notifier` | Sends vendor notifications |
+| `jrk-meter-cleaner` | Cleans meter data |
+| `jrk-bw-lookup` | Bandwidth/utility lookups |
+
+### Example AWS CLI Commands
+
+**List files in a stage for a specific date:**
+```bash
+aws s3 ls s3://jrk-analytics-billing/Bill_Parser_4_Enriched_Outputs/yyyy=2026/mm=02/dd=28/ --region us-east-1
+```
+
+**Search for a file across stages:**
+```bash
+for stage in 1_Pending_Parsing 2_Parsed_Inputs 4_Enriched_Outputs 5_Overrides 6_PreEntrata_Submission 7_PostEntrata_Submission 8_UBI_Assigned 9_Flagged_Review Rework_Input Failed_Jobs; do
+  echo "=== Bill_Parser_${stage} ==="
+  aws s3 ls "s3://jrk-analytics-billing/Bill_Parser_${stage}/" --recursive --region us-east-1 | grep -i "SEARCH_TERM" || echo "(none)"
+done
+```
+
+**Read a JSONL file:**
+```bash
+aws s3 cp s3://jrk-analytics-billing/Bill_Parser_4_Enriched_Outputs/yyyy=2026/mm=02/dd=28/filename.jsonl - --region us-east-1
+```
+
+**Query DynamoDB by pdf_id (drafts table):**
+```bash
+aws dynamodb query --table-name jrk-bill-drafts --key-condition-expression "pk = :pk" --expression-attribute-values '{":pk":{"S":"draft#PDFID#__header__"}}' --region us-east-1
+```
+
+**Scan DynamoDB for a value:**
+```bash
+aws dynamodb scan --table-name jrk-bill-review --filter-expression "contains(invoice_number, :v)" --expression-attribute-values '{":v":{"S":"INV-12345"}}' --region us-east-1
+```
+
+**Check Lambda CloudWatch logs:**
+```bash
+aws logs filter-log-events --log-group-name /aws/lambda/jrk-bill-parser --filter-pattern "SEARCH_TERM" --start-time $(date -d '24 hours ago' +%s)000 --region us-east-1
+```
+
+**Check Lambda errors in last 24h:**
+```bash
+aws logs filter-log-events --log-group-name /aws/lambda/jrk-bill-enricher --filter-pattern "ERROR" --start-time $(date -d '24 hours ago' +%s)000 --region us-east-1
+```
+
+### Investigation Strategy for Missing Invoices
+1. **Identify the file:** Search S3 stages by filename, vendor, or date
+2. **Trace the pipeline:** Check each stage in order (1→2→4→6→7→8→9)
+3. **Check for failures:** Look in `Bill_Parser_Failed_Jobs/` and `jrk-bill-parser-errors` table
+4. **Check rework:** Look in `Bill_Parser_Rework_Input/`
+5. **Check Lambda logs:** Search CloudWatch for the filename or pdf_id
+6. **Check DynamoDB:** Query `jrk-bill-drafts` and `jrk-bill-review` for the pdf_id
+7. **Summarize:** Report where the invoice is, where it stopped, and why
+
+When investigating, always start by identifying what data you have (filename, vendor,
+date, invoice number, pdf_id) and use that to search systematically.
+"""
+
 # Boto3 clients
 ddb = boto3.client("dynamodb", region_name=AWS_REGION)
 ses = boto3.client("ses", region_name=AWS_REGION)
@@ -144,8 +280,12 @@ def build_prompt(report: dict, screenshot_urls: list[str]) -> str:
     # Type-specific instruction header
     type_instructions = {
         "bug": (
-            "You are fixing a bug reported by a user. "
-            "Find the root cause and implement a targeted fix. "
+            "You are investigating a bug reported by a user. "
+            "First determine if this is a CODE bug or a DATA/PIPELINE issue. "
+            "For data issues (missing invoices, wrong stage, pipeline failures), "
+            "use AWS CLI and boto3 to investigate across S3 stages, DynamoDB, "
+            "and CloudWatch Logs before looking at code. "
+            "For code bugs, find the root cause and implement a targeted fix. "
             "Read CLAUDE.md first for project conventions."
         ),
         "enhancement": (
@@ -192,7 +332,12 @@ def build_prompt(report: dict, screenshot_urls: list[str]) -> str:
         for i, url in enumerate(screenshot_urls, 1):
             parts.append(f"  Screenshot {i}: {url}")
 
-    parts.append("\n**IMPORTANT:** Do NOT deploy or run deploy_app.ps1. Only commit your changes.")
+    parts.append("\n**IMPORTANT RULES:**")
+    parts.append("- Do NOT deploy or run deploy_app.ps1. Only commit your changes.")
+    parts.append("- You MUST actually edit the files to implement your fix. Do NOT just describe or explain what needs to change — use your tools to open the files and make the edits.")
+    parts.append("- After editing, verify your changes by reading the modified files to confirm correctness.")
+    parts.append("- If a file is too large to read entirely, read the specific line range you need to edit.")
+    parts.append(INVESTIGATION_CONTEXT)
 
     return "\n".join(parts)
 
@@ -263,7 +408,7 @@ def run_claude(prompt: str, anthropic_key: str) -> dict:
     if result.returncode != 0:
         error_detail = output.get("result", result.stderr[:500]) if output else result.stderr[:500]
         raise RuntimeError(f"Claude Code exited with rc={result.returncode}: {error_detail}")
-    return output or {"result": result.stdout[:5000]}
+    return output or {"result": result.stdout}
 
 
 def commit_and_push(branch: str, report: dict) -> bool:
@@ -299,7 +444,7 @@ def create_pr(branch: str, report: dict, claude_output: dict) -> str:
     # Extract summary from Claude output
     summary = ""
     if isinstance(claude_output, dict):
-        summary = claude_output.get("result", str(claude_output))[:2000]
+        summary = claude_output.get("result", str(claude_output))
     if not summary:
         summary = "See commits for details."
 
@@ -351,7 +496,7 @@ def send_result_email(report: dict, pr_url: str, summary: str, success: bool):
             f"<b>Requested by:</b> {requestor}</p>"
             f"<p><b>Pull Request:</b> <a href='{pr_url}'>{pr_url}</a></p>"
             f"<h3>Agent Summary</h3>"
-            f"<pre>{summary[:3000]}</pre>"
+            f"<pre>{summary}</pre>"
             f"<hr><p><i>Review the PR and merge if the changes look good.</i></p>"
         )
     else:
@@ -362,7 +507,7 @@ def send_result_email(report: dict, pr_url: str, summary: str, success: bool):
             f"<b>Title:</b> {title}<br>"
             f"<b>Requested by:</b> {requestor}</p>"
             f"<h3>Error</h3>"
-            f"<pre>{summary[:3000]}</pre>"
+            f"<pre>{summary}</pre>"
             f"<hr><p><i>The agent was unable to complete this task. Manual intervention required.</i></p>"
         )
 
@@ -378,6 +523,60 @@ def send_result_email(report: dict, pr_url: str, summary: str, success: bool):
         log(f"Email sent to {to_list}")
     except Exception as e:
         log(f"Email send failed: {e}")
+
+
+# Keywords that indicate the agent performed an AWS investigation
+_INVESTIGATION_KEYWORDS = [
+    "s3://", "dynamodb", "pipeline", "stage", "Bill_Parser_",
+    "aws s3", "aws dynamodb", "aws logs", "CloudWatch", "Lambda",
+    "pdf_id", "JSONL", "enricher", "parser", "invoice not found",
+    "investigation", "traced", "log-group",
+]
+
+
+def _is_investigation(summary: str) -> bool:
+    """Return True if the agent summary looks like an AWS investigation."""
+    lower = summary.lower()
+    matches = sum(1 for kw in _INVESTIGATION_KEYWORDS if kw.lower() in lower)
+    return matches >= 2
+
+
+def send_investigation_email(report: dict, findings: str):
+    """Send SES email with investigation findings (no code changes made)."""
+    requestor = report.get("requestor", "")
+    title = report.get("title", "")
+    rtype = report.get("type", "bug")
+
+    to_list = list(EMAIL_RECIPIENTS)
+    if requestor and "@" in requestor and requestor not in to_list:
+        to_list.append(requestor)
+
+    subject = f"[IMPROVE Agent] Investigation Complete: {title}"
+    body = (
+        f"<h2>IMPROVE Agent — Investigation Complete</h2>"
+        f"<p><b>Type:</b> {rtype}<br>"
+        f"<b>Title:</b> {title}<br>"
+        f"<b>Requested by:</b> {requestor}</p>"
+        f"<h3>Findings</h3>"
+        f"<pre>{findings}</pre>"
+        f"<hr>"
+        f"<p><i>No code changes were made. "
+        f"Review the findings above and take manual corrective action "
+        f"if needed.</i></p>"
+    )
+
+    try:
+        ses.send_email(
+            Source=EMAIL_SENDER,
+            Destination={"ToAddresses": to_list},
+            Message={
+                "Subject": {"Data": subject},
+                "Body": {"Html": {"Data": body}},
+            },
+        )
+        log(f"Investigation email sent to {to_list}")
+    except Exception as e:
+        log(f"Investigation email send failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -434,19 +633,26 @@ def main():
         # Extract summary text
         agent_summary = ""
         if isinstance(claude_output, dict):
-            agent_summary = claude_output.get("result", json.dumps(claude_output))[:5000]
+            agent_summary = claude_output.get("result", json.dumps(claude_output))
         else:
-            agent_summary = str(claude_output)[:5000]
+            agent_summary = str(claude_output)
 
         # 8. Commit and push
         has_changes = commit_and_push(branch, report)
 
         if not has_changes:
             no_change_summary = agent_summary or "Claude Code ran but produced no file changes."
-            update_status(REPORT_ID, "Agent No Changes", extra={
-                "agent_summary": no_change_summary,
-            })
-            send_result_email(report, "", no_change_summary, False)
+            if _is_investigation(no_change_summary):
+                log("Investigation detected (no code changes expected)")
+                update_status(REPORT_ID, "Investigation Complete", extra={
+                    "agent_summary": no_change_summary,
+                })
+                send_investigation_email(report, no_change_summary)
+            else:
+                update_status(REPORT_ID, "Agent No Changes", extra={
+                    "agent_summary": no_change_summary,
+                })
+                send_result_email(report, "", no_change_summary, False)
             return
 
         # 9. Create PR

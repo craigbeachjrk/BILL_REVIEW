@@ -190,12 +190,61 @@ $taskPolicy = @'
       }
     },
     {
-      "Sid": "S3ReadScreenshots",
+      "Sid": "S3Read",
       "Effect": "Allow",
       "Action": [
-        "s3:GetObject"
+        "s3:GetObject",
+        "s3:ListBucket"
       ],
-      "Resource": "arn:aws:s3:::jrk-analytics-billing/improve-screenshots/*"
+      "Resource": [
+        "arn:aws:s3:::jrk-analytics-billing",
+        "arn:aws:s3:::jrk-analytics-billing/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDBRead",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:__AWS_REGION__:__AWS_ACCOUNT__:table/jrk-bill-*",
+        "arn:aws:dynamodb:__AWS_REGION__:__AWS_ACCOUNT__:table/jrk-bill-*/index/*",
+        "arn:aws:dynamodb:__AWS_REGION__:__AWS_ACCOUNT__:table/jrk-check-*",
+        "arn:aws:dynamodb:__AWS_REGION__:__AWS_ACCOUNT__:table/jrk-check-*/index/*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents",
+        "logs:StartQuery",
+        "logs:GetQueryResults",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:__AWS_REGION__:__AWS_ACCOUNT__:log-group:/aws/lambda/jrk-*"
+    },
+    {
+      "Sid": "LambdaRead",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration"
+      ],
+      "Resource": "arn:aws:lambda:__AWS_REGION__:__AWS_ACCOUNT__:function:jrk-*"
+    },
+    {
+      "Sid": "CloudWatchMetrics",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:GetMetricData"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "SecretsManager",

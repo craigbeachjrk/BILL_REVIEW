@@ -104,11 +104,10 @@
       #cfgTable col:nth-child(9){ width:8.5% }
     }
     /* ===IMPROVE-CSS-START=== */
-    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000}
-    .improve-modal-overlay.show{display:block}
-    .improve-modal-box{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:540px;width:92%;padding:24px;max-height:calc(100vh - 60px);overflow-y:auto;z-index:10001}
-    .improve-modal-box .improve-drag-handle{cursor:move;user-select:none;display:flex;align-items:center;justify-content:space-between;margin:0 0 12px 0}
-    .improve-modal-box .improve-drag-handle h2{margin:0;font-size:18px}
+    .improve-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center}
+    .improve-modal-overlay.show{display:flex}
+    .improve-modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:540px;width:92%;padding:24px;max-height:calc(100vh - 60px);overflow-y:auto}
+    .improve-modal-box h2{margin:0 0 12px 0;font-size:18px}
     .improve-modal-box label{display:block;margin-bottom:4px;font-weight:600;font-size:13px}
     .improve-modal-box input,.improve-modal-box textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;font-family:inherit;font-size:14px;box-sizing:border-box}
     .improve-modal-box textarea{min-height:100px;resize:vertical}
@@ -142,18 +141,15 @@
     <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
     <div>
       <button id="submitBtn" class="btn" title="Save Accounts To Track">Submit</button>
-      <a class="btn secondary" href="/">Back</a>
-      <button class="btn secondary" id="improveBtn">IMPROVE</button>
-    </div>
+      <a class="btn secondary" href="/">Back</a>    </div>
+  <button class="btn secondary" id="improveBtn">IMPROVE</button>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
   <div id="improveToast" class="improve-toast"></div>
 
   <div id="improveModal" class="improve-modal-overlay">
-    <div class="improve-modal-box" id="improveModalBox">
-      <div class="improve-drag-handle" id="improveDragHandle">
-        <h2>Report an Issue or Idea</h2>
-      </div>
+    <div class="improve-modal-box">
+      <h2>Report an Issue or Idea</h2>
       <div class="improve-path-badge" id="improvePagePath"></div>
 
       <div class="improve-type-group" id="improveTypeGroup">
@@ -587,9 +583,7 @@
       }
 
       // ---------- refs ----------
-      const overlay     = document.getElementById('improveModal');
-      const modalBox    = document.getElementById('improveModalBox');
-      const dragHandle  = document.getElementById('improveDragHandle');
+      const modal       = document.getElementById('improveModal');
       const improveBtn  = document.getElementById('improveBtn');
       const cancelBtn   = document.getElementById('cancelReport');
       const submitBtn   = document.getElementById('submitReport');
@@ -601,51 +595,18 @@
       const pathBadge   = document.getElementById('improvePagePath');
       const typeGroup   = document.getElementById('improveTypeGroup');
 
-      if (!improveBtn || !overlay) return;
+      if (!improveBtn || !modal) return;
 
       // ---------- state ----------
       let _ssKeys = [];        // uploaded S3 keys
       let _ssUploading = 0;
       let _tempReportId = '';  // generated before first upload so screenshots share an id
       let _consoleErrors = []; // captured console errors
-      const CACHE_KEY = 'improve_form_draft';
 
       // capture console errors for page context
       window.addEventListener('error', function(e){
         _consoleErrors.push({msg: e.message || '', src: e.filename || '', line: e.lineno || 0});
         if (_consoleErrors.length > 20) _consoleErrors.shift();
-      });
-
-      // ---------- form draft cache (sessionStorage) ----------
-      function saveDraft(){
-        var checkedType = typeGroup.querySelector('input[type=radio]:checked');
-        var draft = {
-          title: titleInput.value,
-          description: descInput.value,
-          type: checkedType ? checkedType.value : 'bug',
-          ssKeys: _ssKeys,
-          tempReportId: _tempReportId
-        };
-        try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(draft)); } catch(e){}
-      }
-
-      function loadDraft(){
-        try {
-          var raw = sessionStorage.getItem(CACHE_KEY);
-          if (!raw) return null;
-          return JSON.parse(raw);
-        } catch(e){ return null; }
-      }
-
-      function clearDraft(){
-        try { sessionStorage.removeItem(CACHE_KEY); } catch(e){}
-      }
-
-      // Auto-save draft on input
-      titleInput.addEventListener('input', saveDraft);
-      descInput.addEventListener('input', saveDraft);
-      typeGroup.querySelectorAll('input[type=radio]').forEach(function(r){
-        r.addEventListener('change', function(){ updateTypeStyles(); saveDraft(); });
       });
 
       // ---------- type selector ----------
@@ -659,44 +620,15 @@
           checked.parentElement.className = 'sel-' + v;
         }
       }
+      typeGroup.querySelectorAll('input[type=radio]').forEach(function(r){
+        r.addEventListener('change', updateTypeStyles);
+      });
 
       // ---------- page path ----------
       function refreshPathBadge(){
         pathBadge.textContent = window.location.pathname + (window.location.search || '');
         pathBadge.title = window.location.href;
       }
-
-      // ---------- drag to move ----------
-      (function(){
-        let isDragging = false, startX = 0, startY = 0, origLeft = 0, origTop = 0;
-
-        dragHandle.addEventListener('mousedown', function(e){
-          if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
-          isDragging = true;
-          startX = e.clientX;
-          startY = e.clientY;
-          var rect = modalBox.getBoundingClientRect();
-          origLeft = rect.left;
-          origTop = rect.top;
-          // Switch from centered transform to explicit position
-          modalBox.style.transform = 'none';
-          modalBox.style.left = origLeft + 'px';
-          modalBox.style.top = origTop + 'px';
-          e.preventDefault();
-        });
-
-        document.addEventListener('mousemove', function(e){
-          if (!isDragging) return;
-          var dx = e.clientX - startX;
-          var dy = e.clientY - startY;
-          modalBox.style.left = (origLeft + dx) + 'px';
-          modalBox.style.top = (origTop + dy) + 'px';
-        });
-
-        document.addEventListener('mouseup', function(){
-          isDragging = false;
-        });
-      })();
 
       // ---------- open / close ----------
       function resetModal(){
@@ -708,76 +640,25 @@
         _tempReportId = '';
         const bugRadio = typeGroup.querySelector('input[value=bug]');
         if (bugRadio) { bugRadio.checked = true; updateTypeStyles(); }
-        // Reset position to center
-        modalBox.style.transform = 'translate(-50%,-50%)';
-        modalBox.style.left = '50%';
-        modalBox.style.top = '50%';
-        clearDraft();
-      }
-
-      function restoreDraft(){
-        var draft = loadDraft();
-        if (!draft) return false;
-        if (draft.title) titleInput.value = draft.title;
-        if (draft.description) descInput.value = draft.description;
-        if (draft.type) {
-          var radio = typeGroup.querySelector('input[value="' + draft.type + '"]');
-          if (radio) { radio.checked = true; updateTypeStyles(); }
-        }
-        if (draft.tempReportId) _tempReportId = draft.tempReportId;
-        if (draft.ssKeys && draft.ssKeys.length) {
-          _ssKeys = draft.ssKeys;
-          // Show placeholder thumbs for previously uploaded screenshots
-          _ssKeys.forEach(function(key){
-            var thumb = document.createElement('div');
-            thumb.className = 'improve-ss-thumb';
-            var img = document.createElement('img');
-            img.src = '/api/debug/screenshot-thumb?key=' + encodeURIComponent(key);
-            img.alt = 'screenshot';
-            img.onerror = function(){ img.style.background = '#e5e7eb'; img.alt = 'SS'; };
-            thumb.appendChild(img);
-            var removeBtn = document.createElement('button');
-            removeBtn.className = 'ss-remove';
-            removeBtn.textContent = '\u00d7';
-            removeBtn.addEventListener('click', function(){
-              thumb.remove();
-              _ssKeys = _ssKeys.filter(function(k){ return k !== key; });
-              saveDraft();
-            });
-            thumb.appendChild(removeBtn);
-            ssStrip.appendChild(thumb);
-          });
-        }
-        return !!(draft.title || draft.description);
-      }
-
-      function closeModal(){
-        overlay.classList.remove('show');
-        saveDraft();
       }
 
       improveBtn.addEventListener('click', function(){
-        if (!_tempReportId) {
-          _tempReportId = crypto.randomUUID ? crypto.randomUUID() : ('xx-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-        }
+        _tempReportId = crypto.randomUUID ? crypto.randomUUID() : ('xx-' + Date.now() + '-' + Math.random().toString(36).slice(2));
         refreshPathBadge();
-        // Restore any cached draft
-        var hadDraft = restoreDraft();
-        if (!hadDraft && !_tempReportId) {
-          _tempReportId = crypto.randomUUID ? crypto.randomUUID() : ('xx-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-        }
-        overlay.classList.add('show');
-        // Reset position to center each time opened
-        modalBox.style.transform = 'translate(-50%,-50%)';
-        modalBox.style.left = '50%';
-        modalBox.style.top = '50%';
+        modal.classList.add('show');
         titleInput.focus();
       });
 
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', function(){
+        modal.classList.remove('show');
+        resetModal();
+      });
 
-      overlay.addEventListener('click', function(e){
-        if (e.target === overlay) closeModal();
+      modal.addEventListener('click', function(e){
+        if (e.target === modal){
+          modal.classList.remove('show');
+          resetModal();
+        }
       });
 
       // ---------- screenshot helpers ----------
@@ -828,18 +709,16 @@
               thumb.classList.remove('improve-ss-uploading');
               const key = data.key;
               _ssKeys.push(key);
-              saveDraft();
               removeBtn.addEventListener('click', function(){
                 thumb.remove();
                 _ssKeys = _ssKeys.filter(function(k){ return k !== key; });
-                saveDraft();
               });
             } else {
               thumb.remove();
               showImproveToast(data.error || 'Upload failed', 'err');
             }
           })
-          .catch(function(err){
+          .catch(function(){
             _ssUploading--;
             thumb.remove();
             showImproveToast('Screenshot upload failed', 'err');
@@ -848,18 +727,17 @@
         reader.readAsDataURL(file);
       }
 
-      // Paste handler — handles ALL pasted images (not just the first)
+      // Paste handler — only active when modal is open
       document.addEventListener('paste', function(e){
-        if (!overlay.classList.contains('show')) return;
+        if (!modal.classList.contains('show')) return;
         const items = (e.clipboardData || {}).items || [];
-        let hadImage = false;
         for (let i = 0; i < items.length; i++){
           if (items[i].type.indexOf('image') !== -1){
-            hadImage = true;
+            e.preventDefault();
             addScreenshotFile(items[i].getAsFile());
+            return;
           }
         }
-        if (hadImage) e.preventDefault();
       });
 
       // Click-to-upload via hidden file input
@@ -889,6 +767,7 @@
           viewport: window.innerWidth + 'x' + window.innerHeight,
           userAgent: navigator.userAgent
         };
+        // Capture visible error messages on the page
         var errEls = document.querySelectorAll('.error, .err, [role=alert]');
         var pageErrors = [];
         errEls.forEach(function(el){
@@ -902,6 +781,7 @@
 
       // ---------- submit ----------
       submitBtn.addEventListener('click', async function(){
+        if (submitBtn.disabled) return;
         var title = titleInput.value.trim();
         var description = descInput.value.trim();
 
@@ -913,6 +793,9 @@
           showImproveToast('Screenshots still uploading...', 'err');
           return;
         }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
 
         var checkedType = typeGroup.querySelector('input[type=radio]:checked');
         var reportType = checkedType ? checkedType.value : 'bug';
@@ -932,10 +815,13 @@
           });
           if (!resp.ok) throw new Error('Submit failed');
           showImproveToast('Report submitted!', 'ok');
-          overlay.classList.remove('show');
+          modal.classList.remove('show');
           resetModal();
         } catch (e) {
           showImproveToast('Error submitting report', 'err');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit';
         }
       });
     })();

@@ -320,6 +320,7 @@ MODAL_JS = """
 
       // ---------- submit ----------
       submitBtn.addEventListener('click', async function(){
+        if (submitBtn.disabled) return;
         var title = titleInput.value.trim();
         var description = descInput.value.trim();
 
@@ -331,6 +332,9 @@ MODAL_JS = """
           showImproveToast('Screenshots still uploading...', 'err');
           return;
         }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
 
         var checkedType = typeGroup.querySelector('input[type=radio]:checked');
         var reportType = checkedType ? checkedType.value : 'bug';
@@ -354,6 +358,9 @@ MODAL_JS = """
           resetModal();
         } catch (e) {
           showImproveToast('Error submitting report', 'err');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit';
         }
       });
     })();
