@@ -24,5 +24,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY agent_runner.py /app/agent_runner.py
 
+# Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash agent && chown -R agent:agent /app
+USER agent
+
 WORKDIR /app
 ENTRYPOINT ["python", "agent_runner.py"]

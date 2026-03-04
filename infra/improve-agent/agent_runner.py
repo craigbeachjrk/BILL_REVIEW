@@ -38,7 +38,7 @@ REPO_SLUG = os.environ.get("REPO_SLUG", "craigbeachjrk/BILL_REVIEW")
 REPO_URL_TEMPLATE = "https://{}@github.com/{}.git"
 CLONE_DIR = "/tmp/repo"
 
-EMAIL_SENDER = os.environ.get("IMPROVE_EMAIL_SENDER", "noreply@jrkresidential.com")
+EMAIL_SENDER = os.environ.get("IMPROVE_EMAIL_SENDER", "noreply@jrkanalytics.com")
 EMAIL_RECIPIENTS = ["cbeach@jrk.com"]
 
 # Boto3 clients
@@ -206,7 +206,7 @@ def run_cmd(cmd: list[str], cwd: str | None = None, env: dict | None = None,
     merged_env = {**os.environ, **(env or {})}
     log(f"$ {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, env=merged_env,
-                            capture_output=True, text=True, timeout=600)
+                            capture_output=True, text=True, timeout=1200)
     if result.stdout:
         # Truncate long output for logging
         out = result.stdout[:2000]
@@ -227,7 +227,7 @@ def clone_repo(gh_token: str) -> str:
     url = REPO_URL_TEMPLATE.format(gh_token, REPO_SLUG)
     run_cmd(["git", "clone", "--depth=1", url, CLONE_DIR])
     # Configure git identity for commits
-    run_cmd(["git", "config", "user.email", "improve-agent@jrkresidential.com"], cwd=CLONE_DIR)
+    run_cmd(["git", "config", "user.email", "improve-agent@jrkanalytics.com"], cwd=CLONE_DIR)
     run_cmd(["git", "config", "user.name", "IMPROVE Agent"], cwd=CLONE_DIR)
     return CLONE_DIR
 

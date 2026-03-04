@@ -81,7 +81,7 @@ $executionTrustPolicy = @'
 '@
 
 $executionTrustFile = [System.IO.Path]::GetTempFileName()
-$executionTrustPolicy | Out-File -FilePath $executionTrustFile -Encoding utf8
+[System.IO.File]::WriteAllText($executionTrustFile, $executionTrustPolicy)
 
 try {
     aws iam get-role --role-name $EXECUTION_ROLE --profile $PROFILE 2>$null | Out-Null
@@ -102,7 +102,7 @@ aws iam attach-role-policy `
     --profile $PROFILE 2>$null
 
 # Secrets Manager access for execution role (to inject secrets into container)
-$execSecretsPolicy = @"
+$execSecretsPolicy = @'
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -112,14 +112,16 @@ $execSecretsPolicy = @"
         "secretsmanager:GetSecretValue"
       ],
       "Resource": [
-        "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT}:secret:improve-agent/*"
+        "arn:aws:secretsmanager:__AWS_REGION__:__AWS_ACCOUNT__:secret:improve-agent/*"
       ]
     }
   ]
 }
-"@
+'@
+$execSecretsPolicy = $execSecretsPolicy -replace '__AWS_REGION__', $AWS_REGION
+$execSecretsPolicy = $execSecretsPolicy -replace '__AWS_ACCOUNT__', $AWS_ACCOUNT
 $execSecretsPolicyFile = [System.IO.Path]::GetTempFileName()
-$execSecretsPolicy | Out-File -FilePath $execSecretsPolicyFile -Encoding utf8
+[System.IO.File]::WriteAllText($execSecretsPolicyFile, $execSecretsPolicy)
 
 aws iam put-role-policy `
     --role-name $EXECUTION_ROLE `
@@ -147,7 +149,7 @@ $taskTrustPolicy = @'
 }
 '@
 $taskTrustFile = [System.IO.Path]::GetTempFileName()
-$taskTrustPolicy | Out-File -FilePath $taskTrustFile -Encoding utf8
+[System.IO.File]::WriteAllText($taskTrustFile, $taskTrustPolicy)
 
 try {
     aws iam get-role --role-name $TASK_ROLE --profile $PROFILE 2>$null | Out-Null
@@ -161,7 +163,7 @@ try {
 }
 Remove-Item $taskTrustFile -ErrorAction SilentlyContinue
 
-$taskPolicy = @"
+$taskPolicy = @'
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -174,7 +176,7 @@ $taskPolicy = @"
         "dynamodb:UpdateItem",
         "dynamodb:Query"
       ],
-      "Resource": "arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT}:table/jrk-bill-review-debug"
+      "Resource": "arn:aws:dynamodb:__AWS_REGION__:__AWS_ACCOUNT__:table/jrk-bill-review-debug"
     },
     {
       "Sid": "SES",
@@ -183,7 +185,7 @@ $taskPolicy = @"
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "ses:FromAddress": "noreply@jrkresidential.com"
+          "ses:FromAddress": "noreply@jrkanalytics.com"
         }
       }
     },
@@ -201,13 +203,15 @@ $taskPolicy = @"
       "Action": [
         "secretsmanager:GetSecretValue"
       ],
-      "Resource": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT}:secret:improve-agent/*"
+      "Resource": "arn:aws:secretsmanager:__AWS_REGION__:__AWS_ACCOUNT__:secret:improve-agent/*"
     }
   ]
 }
-"@
+'@
+$taskPolicy = $taskPolicy -replace '__AWS_REGION__', $AWS_REGION
+$taskPolicy = $taskPolicy -replace '__AWS_ACCOUNT__', $AWS_ACCOUNT
 $taskPolicyFile = [System.IO.Path]::GetTempFileName()
-$taskPolicy | Out-File -FilePath $taskPolicyFile -Encoding utf8
+[System.IO.File]::WriteAllText($taskPolicyFile, $taskPolicy)
 
 aws iam put-role-policy `
     --role-name $TASK_ROLE `
@@ -238,7 +242,7 @@ foreach ($secret in $secrets) {
             --secret-string "PLACEHOLDER-REPLACE-ME" `
             --region $AWS_REGION `
             --profile $PROFILE
-        Write-Host "  Secret '$($secret.Name)' created (placeholder value — update before use!)." -ForegroundColor Yellow
+        Write-Host "  Secret '$($secret.Name)' created (placeholder value -- update before use!)." -ForegroundColor Yellow
     }
 }
 
@@ -310,39 +314,46 @@ Write-Host "  Subnets: $subnetIds" -ForegroundColor Gray
 # ---------------------------------------------------------------------------
 Write-Host "`n[9/9] Registering ECS task definition" -ForegroundColor Yellow
 
-$taskDef = @"
+$taskDef = @'
 {
-  "family": "$AGENT_NAME",
+  "family": "__AGENT_NAME__",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "1024",
-  "memory": "2048",
-  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT}:role/${EXECUTION_ROLE}",
-  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT}:role/${TASK_ROLE}",
+  "cpu": "2048",
+  "memory": "4096",
+  "executionRoleArn": "arn:aws:iam::__AWS_ACCOUNT__:role/__EXECUTION_ROLE__",
+  "taskRoleArn": "arn:aws:iam::__AWS_ACCOUNT__:role/__TASK_ROLE__",
   "containerDefinitions": [
     {
       "name": "improve-agent",
-      "image": "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest",
+      "image": "__AWS_ACCOUNT__.dkr.ecr.__AWS_REGION__.amazonaws.com/__ECR_REPO__:latest",
       "essential": true,
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "$LOG_GROUP",
-          "awslogs-region": "$AWS_REGION",
+          "awslogs-group": "__LOG_GROUP__",
+          "awslogs-region": "__AWS_REGION__",
           "awslogs-stream-prefix": "agent"
         }
       },
       "environment": [
-        { "name": "AWS_REGION", "value": "$AWS_REGION" },
+        { "name": "AWS_REGION", "value": "__AWS_REGION__" },
         { "name": "DEBUG_TABLE", "value": "jrk-bill-review-debug" },
         { "name": "S3_BUCKET", "value": "jrk-analytics-billing" }
       ]
     }
   ]
 }
-"@
+'@
+$taskDef = $taskDef -replace '__AGENT_NAME__', $AGENT_NAME
+$taskDef = $taskDef -replace '__AWS_ACCOUNT__', $AWS_ACCOUNT
+$taskDef = $taskDef -replace '__AWS_REGION__', $AWS_REGION
+$taskDef = $taskDef -replace '__EXECUTION_ROLE__', $EXECUTION_ROLE
+$taskDef = $taskDef -replace '__TASK_ROLE__', $TASK_ROLE
+$taskDef = $taskDef -replace '__ECR_REPO__', $ECR_REPO
+$taskDef = $taskDef -replace '__LOG_GROUP__', $LOG_GROUP
 $taskDefFile = [System.IO.Path]::GetTempFileName()
-$taskDef | Out-File -FilePath $taskDefFile -Encoding utf8
+[System.IO.File]::WriteAllText($taskDefFile, $taskDef)
 
 aws ecs register-task-definition `
     --cli-input-json "file://$taskDefFile" `

@@ -1,35 +1,72 @@
-# Ignore local build artifacts in this app folder
+# ── Zip / archive artifacts ──────────────────────────────────
 bill_review_app_src.zip
 *.zip
 
-# Node/Python caches just in case
+# ── Caches ───────────────────────────────────────────────────
 node_modules/
 __pycache__/
+*.pyc
 *.log
 
-# Local temp files
+# ── Local temp files ─────────────────────────────────────────
 C:temp*.json
 
-# Secrets - never commit
+# ── Secrets ──────────────────────────────────────────────────
 secrets/
 
-# Claude local settings
+# ── Claude local settings ───────────────────────────────────
 .claude/settings.local.json
 
-# Lambda dependencies (only commit lambda_*.py files, not dependencies)
-aws_lambdas/**/boto3*/
-aws_lambdas/**/botocore*/
-aws_lambdas/**/urllib3*/
-aws_lambdas/**/certifi*/
-aws_lambdas/**/charset*/
-aws_lambdas/**/idna*/
-aws_lambdas/**/s3transfer*/
-aws_lambdas/**/jmespath*/
-aws_lambdas/**/dateutil*/
-aws_lambdas/**/six*/
-aws_lambdas/**/google*/
-aws_lambdas/**/*.dist-info/
-aws_lambdas/**/bin/
+# ── Pip metadata (everywhere) ───────────────────────────────
+**/*.dist-info/
 
-# Deploy folder dependencies
+# ── Vendored dependency directories ─────────────────────────
+**/vendor/
+**/layer_build/
+
+# ── Build directory (keep build_vendor_cache.py) ─────────────
+build/*
+!build/build_vendor_cache.py
+
+# ── Deploy build artifacts ───────────────────────────────────
+bill_review_app/deploy/aws/build/
 deploy/aws/build/
+
+# ── Lambda vendor packages in code/ directories ─────────────
+# These are pip-installed packages bundled for Lambda deployment.
+# Source files (lambda_*.py, error_tracker.py, six.py, etc.) are
+# NOT matched by these rules and remain tracked.
+**/aws_lambdas/**/code/bin/
+**/aws_lambdas/**/code/boto3/
+**/aws_lambdas/**/code/botocore/
+**/aws_lambdas/**/code/PyPDF2/
+**/aws_lambdas/**/code/certifi/
+**/aws_lambdas/**/code/charset_normalizer/
+**/aws_lambdas/**/code/dateutil/
+**/aws_lambdas/**/code/idna/
+**/aws_lambdas/**/code/jmespath/
+**/aws_lambdas/**/code/requests/
+**/aws_lambdas/**/code/s3transfer/
+**/aws_lambdas/**/code/urllib3/
+**/aws_lambdas/**/code/annotated_types/
+**/aws_lambdas/**/code/apiclient/
+**/aws_lambdas/**/code/cachetools/
+**/aws_lambdas/**/code/colorama/
+**/aws_lambdas/**/code/google/
+**/aws_lambdas/**/code/google_auth_httplib2.py
+**/aws_lambdas/**/code/googleapis_common_protos*/
+**/aws_lambdas/**/code/grpc/
+**/aws_lambdas/**/code/grpc_status/
+**/aws_lambdas/**/code/httplib2/
+**/aws_lambdas/**/code/proto/
+**/aws_lambdas/**/code/pyasn1/
+**/aws_lambdas/**/code/pyasn1_modules/
+**/aws_lambdas/**/code/pydantic/
+**/aws_lambdas/**/code/pydantic_core/
+**/aws_lambdas/**/code/pyparsing/
+**/aws_lambdas/**/code/rsa/
+**/aws_lambdas/**/code/tqdm/
+**/aws_lambdas/**/code/typing_extensions.py
+**/aws_lambdas/**/code/typing_inspection/
+**/aws_lambdas/**/code/uritemplate/
+**/aws_lambdas/**/code/*.pth

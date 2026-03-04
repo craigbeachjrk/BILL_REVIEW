@@ -21775,7 +21775,7 @@ _IMPROVE_SCREENSHOT_MAX_COUNT = 5
 _IMPROVE_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 _IMPROVE_SCREENSHOT_PREFIX = "improve-screenshots"
 _IMPROVE_EMAIL_RECIPIENTS = ["cbeach@jrk.com"]
-_IMPROVE_EMAIL_SENDER = os.getenv("IMPROVE_EMAIL_SENDER", "noreply@jrkresidential.com")
+_IMPROVE_EMAIL_SENDER = os.getenv("IMPROVE_EMAIL_SENDER", "noreply@jrkanalytics.com")
 
 
 def _send_improve_email(subject: str, body_html: str, extra_to: list[str] | None = None):
@@ -22324,7 +22324,6 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
         # Update property if not set (first row may not have it)
         if not g.get("property") and property_name:
             g["property"] = property_name
-        g["count"] += 1
         # Sum up line item charges (exclude summary/aggregate rows like subtotals, taxes, totals)
         try:
             desc = str(r.get("Line Item Description", "")).upper().strip()
@@ -22340,6 +22339,7 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
             is_summary_row = exact_summary or any(re.search(p, desc) for p in summary_patterns)
 
             if not is_summary_row:
+                g["count"] += 1
                 charge_str = str(r.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
                 g["total_amount"] += float(charge_str) if charge_str else 0.0
         except (ValueError, TypeError):
@@ -24263,7 +24263,16 @@ def api_invoices(date: str, user: str = Depends(require_user), response: Respons
         hdr = header_by_pdf.get(pid, {})
         # If header changed account/vendor, reflect in list display (grouping stays by invoice number here)
         g = inv.setdefault(inv_no, {"invoice": inv_no, "count": 0, "status": "REVIEW"})
-        g["count"] += 1
+        # Exclude summary/aggregate rows from count (same logic as /invoices page)
+        desc = str(r.get("Line Item Description", "")).upper().strip()
+        summary_patterns = [
+            r'\bSUBTOTAL\b', r'\bGRAND TOTAL\b', r'\bBALANCE DUE\b', r'\bAMOUNT DUE\b',
+            r'\bTOTAL DUE\b', r'\bTOTAL CHARGES?\b', r'\bTOTAL AMOUNT\b'
+        ]
+        exact_summary = desc in ['TOTAL', 'SUBTOTAL', 'TAX', 'TAXES', 'BALANCE', 'AMOUNT DUE', 'TOTAL DUE']
+        is_summary_row = exact_summary or any(re.search(p, desc) for p in summary_patterns)
+        if not is_summary_row:
+            g["count"] += 1
     try:
         if response is not None:
             response.headers["Cache-Control"] = f"private, max-age={CACHE_TTL_SECONDS}"
