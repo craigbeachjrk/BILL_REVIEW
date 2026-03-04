@@ -53,11 +53,11 @@ def split_pdf_into_chunks(pdf_bytes: bytes, pages_per_chunk: int) -> list[bytes]
 
 
 def get_rework_metadata(bucket: str, pdf_key: str) -> dict:
-    """Read .rework.json sidecar file to get expected_lines and bill_from hints.
+    """Read .rework.json sidecar file to get expected_lines, bill_from, and expected_account_number hints.
 
     The sidecar files are in Bill_Parser_1_Pending_Parsing/ (router only copies PDF).
     """
-    metadata = {'expected_lines': 0, 'bill_from': ''}
+    metadata = {'expected_lines': 0, 'bill_from': '', 'expected_account_number': ''}
 
     # Extract suffix from the key (remove prefix)
     if pdf_key.startswith(LARGEFILE_PREFIX):
@@ -76,6 +76,7 @@ def get_rework_metadata(bucket: str, pdf_key: str) -> dict:
         data = json.loads(obj['Body'].read().decode('utf-8', 'ignore'))
         metadata['expected_lines'] = int(data.get('expected_line_count') or data.get('expected_lines') or data.get('min_lines') or 0)
         metadata['bill_from'] = str(data.get('Bill From') or data.get('bill_from') or '').strip()
+        metadata['expected_account_number'] = str(data.get('expected_account_number') or '').strip()
         print(json.dumps({"message": "Rework metadata found", "expected_lines": metadata['expected_lines'], "bill_from": metadata['bill_from'][:50], "key": rework_key}))
     except Exception:
         pass
@@ -89,13 +90,15 @@ def get_rework_metadata(bucket: str, pdf_key: str) -> dict:
             metadata['expected_lines'] = int(data.get('expected_line_count') or data.get('expected_lines') or data.get('min_lines') or 0)
             if not metadata['bill_from']:
                 metadata['bill_from'] = str(data.get('Bill From') or data.get('bill_from') or '').strip()
+            if not metadata['expected_account_number']:
+                metadata['expected_account_number'] = str(data.get('expected_account_number') or '').strip()
         except Exception:
             pass
 
     return metadata
 
 
-def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_keys: list[str], expected_lines: int = 0, bill_from: str = '', pages_per_chunk: int = 2):
+def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_keys: list[str], expected_lines: int = 0, bill_from: str = '', pages_per_chunk: int = 2, expected_account_number: str = ''):
     """Create job tracking record in DynamoDB."""
     now = datetime.now(timezone.utc)
     item = {
@@ -112,6 +115,7 @@ def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_ke
         'expected_lines': {'N': str(expected_lines)},  # Hint for chunk processors
         'bill_from': {'S': bill_from},  # Vendor hint for chunk processors
         'pages_per_chunk': {'N': str(pages_per_chunk)},  # Pages per chunk for page tracking
+        'expected_account_number': {'S': expected_account_number},  # Account number hint for chunk processors
     }
     ddb.put_item(TableName=JOBS_TABLE, Item=item)
     print(json.dumps({"message": "Job record created", "job_id": job_id, "total_chunks": total_chunks, "expected_lines": expected_lines, "pages_per_chunk": pages_per_chunk}))
@@ -180,7 +184,7 @@ def lambda_handler(event, context):
             chunk_key = f"{CHUNKS_PREFIX}{job_id}/chunk_{chunk_num}.pdf"
             chunk_keys.append(chunk_key)
 
-        # Get rework metadata (expected_lines, bill_from) from sidecar files
+        # Get rework metadata (expected_lines, bill_from, expected_account_number) from sidecar files
         metadata = get_rework_metadata(bucket, key)
 
         # CRITICAL: Create job tracking record BEFORE uploading chunks
@@ -189,7 +193,8 @@ def lambda_handler(event, context):
             create_job_record(job_id, dest_key_inputs, len(chunks), chunk_keys,
                             expected_lines=metadata['expected_lines'],
                             bill_from=metadata['bill_from'],
-                            pages_per_chunk=PAGES_PER_CHUNK)
+                            pages_per_chunk=PAGES_PER_CHUNK,
+                            expected_account_number=metadata['expected_account_number'])
         except Exception as e:
             print(json.dumps({"error": "failed_to_create_job_record", "job_id": job_id, "message": str(e)}))
             continue  # Don't upload chunks if job record creation fails

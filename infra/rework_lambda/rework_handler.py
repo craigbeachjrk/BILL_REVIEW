@@ -27,6 +27,7 @@ def handler(event, ctx):
         meta = _get_sidecar(b, src_key)
         notes = str(meta.get("notes", ""))
         bill_from = str(meta.get("Bill From") or meta.get("bill_from") or "")
+        expected_account_number = str(meta.get("expected_account_number") or meta.get("account_number") or "").strip()
 
         # Extract expected_line_count: prefer structured field, fall back to regex on notes
         expected_line_count = None
@@ -55,6 +56,8 @@ def handler(event, ctx):
             md["x-amz-meta-rework-notes"] = notes[:MAX_META]
         if bill_from:
             md["x-amz-meta-bill-from"] = bill_from[:MAX_META]
+        if expected_account_number:
+            md["x-amz-meta-expected-account-number"] = expected_account_number[:MAX_META]
         if expected_line_count is not None:
             for meta_key in ("x-amz-meta-expected-lines", "x-amz-meta-expected_line_count", "x-amz-meta-line_count", "x-amz-meta-min_lines"):
                 md[meta_key] = str(expected_line_count)
@@ -71,6 +74,7 @@ def handler(event, ctx):
             "instructions": notes,  # duplicate under a second key for compatibility
             "Bill From": bill_from,
             "bill_from": bill_from,
+            "expected_account_number": expected_account_number,
             "expected_line_count": expected_line_count,
             "expectedLines": expected_line_count,
             "expected_lines": expected_line_count,
