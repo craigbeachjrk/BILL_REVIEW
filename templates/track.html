@@ -121,8 +121,7 @@
 <body>
   <header class="top">
     <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
-    <div>      <button class="btn secondary" onclick="history.back()">Back</button>    </div>
-  <button class="btn secondary" id="improveBtn">IMPROVE</button>
+    <div>      <button class="btn secondary" onclick="history.back()">Back</button>    </div>  <button class="btn secondary" id="improveBtn">IMPROVE</button>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
   <div id="improveToast" class="improve-toast"></div>
@@ -706,6 +705,8 @@
         _ssKeys = [];
         _ssUploading = 0;
         _tempReportId = '';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit';
         const bugRadio = typeGroup.querySelector('input[value=bug]');
         if (bugRadio) { bugRadio.checked = true; updateTypeStyles(); }
       }

@@ -167,8 +167,7 @@
           <div class="timer-value" id="timerValue">0:00</div>
           <div class="timer-label">Time on invoice</div>
         </div>
-      </div>      <button class="btn secondary" onclick="history.back()">Back</button>    </div>
-  <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      </div>      <button class="btn secondary" onclick="history.back()">Back</button>    </div>  <button class="btn secondary" id="improveBtn">IMPROVE</button>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
   <div id="improveToast" class="improve-toast"></div>
@@ -3349,6 +3348,8 @@
         _ssKeys = [];
         _ssUploading = 0;
         _tempReportId = '';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit';
         const bugRadio = typeGroup.querySelector('input[value=bug]');
         if (bugRadio) { bugRadio.checked = true; updateTypeStyles(); }
       }
