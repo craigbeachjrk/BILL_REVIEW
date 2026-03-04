@@ -39,7 +39,10 @@ REPO_URL_TEMPLATE = "https://{}@github.com/{}.git"
 CLONE_DIR = "/tmp/repo"
 
 EMAIL_SENDER = os.environ.get("IMPROVE_EMAIL_SENDER", "noreply@jrkanalytics.com")
-EMAIL_RECIPIENTS = ["cbeach@jrk.com"]
+# Base recipients for all emails (report submitted, failed, investigation, no changes)
+EMAIL_RECIPIENTS = ["utilities@jrk.com", "cbeach@jrk.com"]
+# Additional recipients only for PR-created emails
+EMAIL_RECIPIENTS_PR = ["utilities@jrk.com", "cbeach@jrk.com", "tdavies@jrk.com"]
 
 # ---------------------------------------------------------------------------
 # Investigation context — injected into every prompt so the agent can
@@ -483,7 +486,8 @@ def send_result_email(report: dict, pr_url: str, summary: str, success: bool):
     title = report.get("title", "")
     rtype = report.get("type", "bug")
 
-    to_list = list(EMAIL_RECIPIENTS)
+    base = EMAIL_RECIPIENTS_PR if success else EMAIL_RECIPIENTS
+    to_list = list(base)
     if requestor and "@" in requestor and requestor not in to_list:
         to_list.append(requestor)
 

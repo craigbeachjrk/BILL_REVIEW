@@ -21792,7 +21792,7 @@ def api_delete_debug_report(report_id: str, user: str = Depends(require_user)):
 _IMPROVE_SCREENSHOT_MAX_COUNT = 5
 _IMPROVE_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 _IMPROVE_SCREENSHOT_PREFIX = "improve-screenshots"
-_IMPROVE_EMAIL_RECIPIENTS = ["cbeach@jrk.com"]
+_IMPROVE_EMAIL_RECIPIENTS = ["utilities@jrk.com", "cbeach@jrk.com"]
 _IMPROVE_EMAIL_SENDER = os.getenv("IMPROVE_EMAIL_SENDER", "noreply@jrkanalytics.com")
 
 
