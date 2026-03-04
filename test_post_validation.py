@@ -83,12 +83,16 @@ def _entrata_post_succeeded(resp_text):
             status_msg = f"{status} {msg}"
             if any(k in status_msg for k in ["duplicate", "already exists", "already posted", "invoice exists"]):
                 return False, "duplicate"
-            if status in ("error", "fail", "failed"):
+            if status in ("error", "fail", "failed", "rejected", "declined", "unauthorized", "forbidden", "denied"):
                 return False, status
-            if status in ("ok", "success"):
+            if status in ("ok", "success", "created", "accepted", "submitted", "completed", "processed"):
                 return True, status
+            # If status field is present but unknown, treat as failure (conservative)
+            # Only fall through to keyword scan when there is NO status field at all
+            if status:
+                return False, f"unknown_status:{status}"
         low = t.lower()
-        if any(k in low for k in ["duplicate", "already exists", "already posted", "error", "failed", "failure"]):
+        if any(k in low for k in ["duplicate", "already exists", "already posted", "error", "failed", "failure", "rejected", "unauthorized"]):
             if "duplicate" in low or "already" in low:
                 return False, "duplicate"
             return False, "error"
@@ -1335,6 +1339,51 @@ class TestEntrataResponseEdgeCases:
         success, reason = _entrata_post_succeeded(resp)
         assert success is False
         assert reason == "error"
+
+    def test_rejected_status_is_failure(self):
+        """status='rejected' should be treated as failure, not default-success."""
+        resp = json.dumps({
+            "response": {
+                "result": {
+                    "status": "rejected",
+                    "message": "Account not found"
+                }
+            }
+        })
+        success, reason = _entrata_post_succeeded(resp)
+        assert success is False, "rejected status must not cause invoice to move to Stage 7"
+        assert reason == "rejected"
+
+    def test_declined_status_is_failure(self):
+        """status='declined' should be treated as failure."""
+        resp = json.dumps({"status": "declined", "message": "Vendor not active"})
+        success, reason = _entrata_post_succeeded(resp)
+        assert success is False
+        assert reason == "declined"
+
+    def test_unknown_status_is_failure(self):
+        """Unknown status values (not ok/success/error/fail/failed) must be treated as failure.
+        This prevents invoices from being incorrectly moved to Stage 7 when Entrata returns
+        a non-standard rejection status."""
+        resp = json.dumps({"response": {"result": {"status": "warning", "message": "Review required"}}})
+        success, reason = _entrata_post_succeeded(resp)
+        assert success is False, "Unknown status should be treated as failure (conservative)"
+        assert "unknown_status" in reason
+
+    def test_new_success_statuses(self):
+        """created/accepted/submitted/completed/processed should all be treated as success."""
+        for st in ("created", "accepted", "submitted", "completed", "processed"):
+            resp = json.dumps({"response": {"result": {"status": st}}})
+            success, reason = _entrata_post_succeeded(resp)
+            assert success is True, f"status='{st}' should be treated as success"
+
+    def test_no_status_field_with_invoice_id_defaults_success(self):
+        """JSON with no status field but an invoiceId should still default to success.
+        This preserves backward-compat with Entrata responses that return just the
+        created invoice data without an explicit status field."""
+        resp = json.dumps({"response": {"result": {"invoiceId": "999", "postedDate": "2026-03-04"}}})
+        success, reason = _entrata_post_succeeded(resp)
+        assert success is True, "No status field + invoice data should default to success"
 
 
 # ===========================================================================
