@@ -142,6 +142,7 @@ def get_job_info(job_id: str) -> dict:
             'expected_lines': int(item.get('expected_lines', {}).get('N', '0')),
             'bill_from': item.get('bill_from', {}).get('S', ''),
             'pages_per_chunk': int(item.get('pages_per_chunk', {}).get('N', '2')),  # Default to 2 pages per chunk
+            'expected_account_number': item.get('expected_account_number', {}).get('S', ''),
         }
     except Exception as e:
         print(f"Error getting job info: {e}")
@@ -425,7 +426,7 @@ def _remaining_ms(deadline_epoch_ms: int) -> int:
 MIN_TIME_FOR_ATTEMPT_MS = 30_000  # 30 seconds — generous buffer for API + S3 write
 
 
-def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0) -> tuple[list[list[str]], str]:
+def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0, expected_account_number: str = '') -> tuple[list[list[str]], str]:
     """
     Parse a PDF chunk with key rotation and exponential backoff.
 
@@ -484,6 +485,11 @@ Use the vendor, account number, bill dates, and service address from the previou
 
     prompt = PROMPT_TEMPLATE.format(context_note=context_note)
 
+    # Add expected_account_number hint if provided from rework metadata
+    if expected_account_number:
+        prompt += (f"\n\n**ACCOUNT NUMBER CORRECTION**: A human reviewer has verified that the correct Account Number for this bill is '{expected_account_number}'. "
+                   f"You MUST use '{expected_account_number}' as the Account Number (digits only) for ALL rows. "
+                   "Do NOT use any other account number found on the bill.")
     # Add expected_lines hint if provided from rework metadata
     if expected_lines and expected_lines > 0:
         lines_per_chunk = max(1, expected_lines // total_chunks)
@@ -878,6 +884,7 @@ def lambda_handler(event, context):
             context_for_chunk,
             job_info.get('expected_lines', 0),
             deadline_ms=deadline_ms,
+            expected_account_number=job_info.get('expected_account_number', ''),
         )
 
         timing["geminiMs"] = int((time.time() - t0) * 1000)

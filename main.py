@@ -22913,13 +22913,16 @@ def api_bulk_rework(
                 continue
 
             # Write sidecar rework.json with notes
+            bulk_acct = str(first.get("Account Number", "") or "").strip()
             meta = {
                 "notes": notes,
                 "user": user,
                 "rework_ts": ts,
                 "original_pdf_id": pid,
+                "Bill From": first.get("Bill From", ""),
                 "bill_from": first.get("Bill From", ""),
-                "account_number": first.get("Account Number", ""),
+                "account_number": bulk_acct,
+                "expected_account_number": bulk_acct,
                 "bill_date": first.get("Bill Date", ""),
             }
             meta_key = dest_key.rsplit('.', 1)[0] + ".rework.json"
@@ -23286,6 +23289,11 @@ def api_rework(
         except Exception:
             exp_lines_val = None
 
+        # Resolve expected account number: prefer header draft override, fall back to source row
+        expected_account_number = str(header_draft.get("fields", {}).get("Account Number", "")).strip()
+        if not expected_account_number:
+            expected_account_number = str(first.get("Account Number", "") or "").strip()
+
         meta = {
             "requested_by": user,
             "requested_utc": dt.datetime.utcnow().isoformat(),
@@ -23298,6 +23306,8 @@ def api_rework(
             "notes": notes or "",
             "Bill From": bill_from_val,
         }
+        if expected_account_number:
+            meta["expected_account_number"] = expected_account_number
         if exp_lines_val is not None:
             # include multiple synonymous keys for downstream compatibility
             meta["expected_line_count"] = exp_lines_val

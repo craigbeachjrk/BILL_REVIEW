@@ -502,6 +502,11 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
     while attempts < MAX_ATTEMPTS:
         attempts += 1
         prompt = PROMPT
+        # Add expected_account_number hint if provided from rework metadata
+        if __EXPECTED_ACCOUNT_NUMBER:
+            prompt += (f"\n\n**ACCOUNT NUMBER CORRECTION**: A human reviewer has verified that the correct Account Number for this bill is '{__EXPECTED_ACCOUNT_NUMBER}'. "
+                       f"You MUST use '{__EXPECTED_ACCOUNT_NUMBER}' as the Account Number (digits only) for ALL rows. "
+                       "Do NOT use any other account number found on the bill.")
         # Add expected_lines hint if provided from rework metadata
         if __EXPECTED_LINES and __EXPECTED_LINES > 0:
             prompt += (f"\n\n**CRITICAL REQUIREMENT**: A human reviewer has verified this bill contains EXACTLY {__EXPECTED_LINES} line items. "
@@ -629,6 +634,8 @@ __BILL_FROM_RAW = ""
 __BILL_FROM_HINT = ""
 # Injected: Expected line count hint from rework
 __EXPECTED_LINES = 0
+# Injected: Expected account number hint from rework
+__EXPECTED_ACCOUNT_NUMBER = ""
 
 def _norm_bf(s: str) -> str:
     try:
@@ -812,6 +819,7 @@ def lambda_handler(event, context):
                 # Capture Bill From from sidecar and metadata before deletion
         bill_from = ""
         expected_lines = 0
+        expected_account_number = ""
         try:
             pending_side = key.rsplit('.',1)[0] + '.notes.json'
             print(json.dumps({"message": "Looking for notes.json", "pending_side": pending_side, "bucket": bucket}))
@@ -821,6 +829,7 @@ def lambda_handler(event, context):
             bill_from = str(side.get('Bill From') or side.get('bill_from') or '').strip()
             # Also check for expected_lines in notes.json
             expected_lines = int(side.get('expected_line_count') or side.get('expected_lines') or side.get('min_lines') or 0)
+            expected_account_number = str(side.get('expected_account_number') or '').strip()
             print(json.dumps({"message": "Read notes.json successfully", "expected_lines": expected_lines, "bill_from": bill_from}))
         except Exception as e:
             print(json.dumps({"message": "Failed to read notes.json", "error": str(e), "pending_side": pending_side if 'pending_side' in dir() else "unknown"}))
@@ -835,6 +844,10 @@ def lambda_handler(event, context):
             if not expected_lines:
                 expected_lines = int(rework.get('expected_line_count') or rework.get('expected_lines') or rework.get('min_lines') or 0)
                 print(json.dumps({"message": "Read expected_lines from rework.json", "expected_lines": expected_lines}))
+            if not expected_account_number:
+                expected_account_number = str(rework.get('expected_account_number') or '').strip()
+                if expected_account_number:
+                    print(json.dumps({"message": "Read expected_account_number from rework.json", "expected_account_number": expected_account_number}))
         except Exception as e:
             # rework.json won't exist in Pending, this is expected
             pass
@@ -843,15 +856,20 @@ def lambda_handler(event, context):
             md = {k.lower(): v for k,v in (head.get('Metadata') or {}).items()}
             if not bill_from:
                 bill_from = str(md.get('bill-from') or '').strip()
+            if not expected_account_number:
+                expected_account_number = str(md.get('expected-account-number') or '').strip()
         except Exception:
             pass
         try:
-            global __BILL_FROM_RAW, __BILL_FROM_HINT, __EXPECTED_LINES
+            global __BILL_FROM_RAW, __BILL_FROM_HINT, __EXPECTED_LINES, __EXPECTED_ACCOUNT_NUMBER
             __BILL_FROM_RAW = bill_from
             __BILL_FROM_HINT = _norm_bf(bill_from)
             __EXPECTED_LINES = expected_lines
+            __EXPECTED_ACCOUNT_NUMBER = expected_account_number
             if expected_lines:
                 print(json.dumps({"message": "Expected lines hint found", "expected_lines": expected_lines, "key": key}))
+            if expected_account_number:
+                print(json.dumps({"message": "Expected account number hint found", "expected_account_number": expected_account_number, "key": key}))
         except Exception:
             pass
         # Track source key for deletion AFTER processing completes successfully
