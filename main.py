@@ -83,6 +83,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import google.generativeai as genai
 import base64
 
+# -------- Vacant Electric module --------
+from bill_review_app.vacant_electric.web import ve_router, configure as configure_ve
+from bill_review_app.vacant_electric.web_models import VEBatchStore
+from bill_review_app.vacant_electric.entrata_ar import EntrataARClient
+from bill_review_app.vacant_electric.s3_bills import BillPDFLocator
+from bill_review_app.vacant_electric.lease_clauses import LeaseClauseFinder
+import bill_review_app.vacant_electric.web as _ve_web
+
 # -------- Config --------
 BUCKET = os.getenv("BUCKET", "jrk-analytics-billing")
 ENRICH_PREFIX = os.getenv("ENRICH_PREFIX", "Bill_Parser_4_Enriched_Outputs/")
@@ -479,6 +487,29 @@ app = FastAPI(title="Bill Review", version="1.0")
 
 # Add GZip compression middleware to reduce response sizes (especially for JSON APIs)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# ── Vacant Electric module ──
+_ve_store = VEBatchStore(ddb, 'jrk-ve-batches')
+_ve_ar_client = EntrataARClient(api_key='288f3174-2ec2-48e5-8f31-742ec278e53b')
+_ve_bill_locator = None   # TODO: requires s3_property_mapping data
+_ve_clause_finder = LeaseClauseFinder(s3)
+
+def _ve_snowflake_factory():
+    creds = _get_snowflake_credentials()
+    if not creds:
+        raise RuntimeError("Snowflake credentials not available")
+    return _snowflake_connect(creds)
+
+configure_ve(
+    store=_ve_store,
+    ar_client=_ve_ar_client,
+    bill_locator=_ve_bill_locator,
+    clause_finder=_ve_clause_finder,
+    snowflake_conn_factory=_ve_snowflake_factory,
+    admin_fees={},
+    corrections_csv=None,
+)
+app.include_router(ve_router)
 
 # -------- Performance Monitoring --------
 import threading
@@ -1401,6 +1432,9 @@ def require_user(request: Request) -> str:
         from fastapi import HTTPException
         raise HTTPException(status_code=307, detail="redirect", headers={"Location": "/login"})
     return user
+
+# Override VE module's auth stub with real auth
+_ve_web.require_user = require_user
 
 
 def require_admin(request: Request) -> str:

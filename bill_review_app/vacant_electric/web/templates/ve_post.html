@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VE Posting - {{ batch.month }}/{{ batch.year }}</title>
+<style>
+:root {
+  --bg: #0ea5e9;
+  --bg2: #4338ca;
+  --glass: rgba(255,255,255,.72);
+  --border: rgba(255,255,255,.33);
+  --text: #0f172a;
+  --muted: #64748b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, var(--bg), var(--bg2));
+  min-height: 100vh;
+  color: var(--text);
+  padding: 24px;
+}
+a { color: inherit; text-decoration: none; }
+.header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;
+}
+.header h1 { color: #fff; font-size: 24px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.header-links { display: flex; gap: 8px; }
+.header .nav-link {
+  color: rgba(255,255,255,.85); font-size: 13px; font-weight: 500;
+  padding: 6px 14px; border-radius: 8px; background: rgba(255,255,255,.15); transition: background .2s;
+}
+.header .nav-link:hover { background: rgba(255,255,255,.25); }
+.card {
+  background: var(--glass); backdrop-filter: blur(10px); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  padding: 28px; margin-bottom: 20px;
+}
+.card h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.stat-card {
+  background: #fff; border-radius: 12px; padding: 20px; text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.stat-card .label {
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px;
+}
+.stat-card .value { font-size: 28px; font-weight: 700; }
+.stat-card .value.money::before { content: '$'; }
+
+/* Progress bar */
+.progress-wrap {
+  background: #e5e7eb; border-radius: 12px; height: 24px; overflow: hidden;
+  margin: 16px 0; position: relative;
+}
+.progress-bar {
+  height: 100%; border-radius: 12px; transition: width .5s ease;
+  background: linear-gradient(90deg, #059669, #0ea5e9);
+}
+.progress-bar.has-fail {
+  background: linear-gradient(90deg, #059669 0%, #059669 var(--ok-pct), #dc2626 var(--ok-pct), #dc2626 100%);
+}
+.progress-text {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: var(--text);
+}
+
+/* Buttons */
+button {
+  padding: 10px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  font-family: inherit; cursor: pointer; border: none; transition: opacity .2s;
+}
+button:hover { opacity: .85; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.btn-post {
+  background: linear-gradient(135deg, #059669, #047857); color: #fff;
+  font-size: 16px; padding: 14px 32px;
+}
+.btn-retry { background: #d97706; color: #fff; }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-secondary { background: #e5e7eb; color: var(--text); }
+
+/* Results table */
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; }
+th, td {
+  padding: 8px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; font-size: 13px;
+}
+th {
+  background: #f9fafb; font-weight: 600; color: var(--muted);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+}
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 5px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-success { background: #d1fae5; color: #065f46; }
+.badge-failed { background: #fee2e2; color: #991b1b; }
+.badge-pending { background: #e5e7eb; color: #374151; }
+.badge-skipped { background: #fef3c7; color: #92400e; }
+
+/* Toast */
+.toast {
+  position: fixed; top: 20px; right: 20px; background: #111827;
+  color: #fff; padding: 12px 18px; border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.25); z-index: 9999;
+  opacity: 0; transition: opacity .3s; font-size: 14px;
+}
+.toast.show { opacity: .96; }
+.toast.ok { background: #0f766e; }
+.toast.err { background: #b91c1c; }
+
+.spinner {
+  display: inline-block; width: 18px; height: 18px;
+  border: 2px solid #e5e7eb; border-top: 2px solid #0ea5e9;
+  border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+.estimate {
+  background: #f8fafc; border-radius: 8px; padding: 14px 18px;
+  font-size: 14px; margin: 12px 0; border-left: 4px solid #0ea5e9;
+}
+.estimate strong { color: var(--text); }
+.center { text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Posting: {{ batch.month }}/{{ batch.year }}</h1>
+  <div class="header-links">
+    <a href="/ve" class="nav-link">Dashboard</a>
+    <a href="/ve/review/{{ batch_id }}" class="nav-link">Review</a>
+  </div>
+</div>
+
+<!-- Pre-Post Summary -->
+<div class="card" id="preSummary">
+  <h2>Pre-Post Summary</h2>
+  <div class="grid-3" id="preStats">
+    <div class="stat-card">
+      <div class="label">Lines to Post</div>
+      <div class="value" id="linesToPost">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total Amount</div>
+      <div class="value money" id="totalAmount">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Properties</div>
+      <div class="value" id="propCount">-</div>
+    </div>
+  </div>
+  <div class="estimate" id="estimate"></div>
+  <div class="center" style="margin-top:20px">
+    <button class="btn-post" id="btnPost" onclick="startPosting()">Post to Entrata</button>
+  </div>
+</div>
+
+<!-- Progress -->
+<div class="card" id="progressCard" style="display:none">
+  <h2>Posting Progress</h2>
+  <div class="progress-wrap">
+    <div class="progress-bar" id="progressBar" style="width:0%"></div>
+    <div class="progress-text" id="progressText">0%</div>
+  </div>
+  <div class="grid-4" id="progressStats">
+    <div class="stat-card">
+      <div class="label">Posted</div>
+      <div class="value" id="cntPosted" style="color:#059669">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Failed</div>
+      <div class="value" id="cntFailed" style="color:#dc2626">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Pending</div>
+      <div class="value" id="cntPending" style="color:var(--muted)">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total</div>
+      <div class="value" id="cntTotal">0</div>
+    </div>
+  </div>
+  <div id="postingActions" style="margin-top:16px;text-align:center;display:none">
+    <button class="btn-retry" onclick="retryFailed()">Retry Failed</button>
+    <button class="btn-secondary" onclick="window.location='/ve/review/{{batch_id}}'">Back to Review</button>
+  </div>
+</div>
+
+<!-- Results Table -->
+<div class="card" id="resultsCard" style="display:none">
+  <h2>Posting Results</h2>
+  <div style="max-height:500px;overflow-y:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Property</th>
+          <th>Unit</th>
+          <th>Resident</th>
+          <th>Utility</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Txn ID</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const BATCH_ID = '{{ batch_id }}';
+let pollingInterval = null;
+let totalToPost = 0;
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function fmt$(v) { return parseFloat(v||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+// ── Init: Load batch info ───────────────────────────────────────────────
+
+async function init() {
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID);
+    const batch = await resp.json();
+
+    if (['POSTING','POSTED'].includes(batch.status)) {
+      document.getElementById('preSummary').style.display = 'none';
+      document.getElementById('progressCard').style.display = 'block';
+      startPollingProgress();
+      return;
+    }
+
+    // Load approved lines count
+    const lResp = await fetch('/ve/api/batch/' + BATCH_ID + '/lines?action=APPROVED&limit=1');
+    const lData = await lResp.json();
+
+    // Use batch stats
+    const linesToPost = batch.lines_approved || lData.count || 0;
+    const amount = batch.total_amount || 0;
+    const props = batch.total_properties || 0;
+
+    document.getElementById('linesToPost').textContent = linesToPost;
+    document.getElementById('totalAmount').textContent = fmt$(amount);
+    document.getElementById('propCount').textContent = props;
+    totalToPost = linesToPost;
+
+    const minutes = Math.ceil(linesToPost * 12 / 60);
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    let timeStr = mins + ' minutes';
+    if (hours > 0) timeStr = hours + ' hour' + (hours>1?'s':'') + ' ' + timeStr;
+    document.getElementById('estimate').innerHTML =
+      '<strong>Rate Limit Estimate:</strong> ' + linesToPost + ' lines &times; 12s/line = ~<strong>' + timeStr + '</strong>' +
+      '<br><span style="font-size:12px;color:var(--muted)">Entrata API: 300 requests/hour. Progress is tracked live and survives page refreshes.</span>';
+
+    if (linesToPost === 0) {
+      document.getElementById('btnPost').disabled = true;
+      document.getElementById('btnPost').textContent = 'No Lines to Post';
+      document.getElementById('estimate').innerHTML = '<strong>No approved lines.</strong> Go to <a href="/ve/review/' + BATCH_ID + '" style="color:#0ea5e9">Review</a> and approve lines first.';
+    }
+  } catch (err) {
+    showToast('Error loading batch: ' + err.message, 'err');
+  }
+}
+
+// ── Start Posting ───────────────────────────────────────────────────────
+
+async function startPosting() {
+  const btn = document.getElementById('btnPost');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Starting...';
+
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/post', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to start posting');
+
+    totalToPost = data.lines_to_post;
+    showToast('Posting started: ' + data.lines_to_post + ' lines', 'ok');
+    document.getElementById('preSummary').style.display = 'none';
+    document.getElementById('progressCard').style.display = 'block';
+    startPollingProgress();
+  } catch (err) {
+    showToast('Error: ' + err.message, 'err');
+    btn.disabled = false;
+    btn.textContent = 'Post to Entrata';
+  }
+}
+
+// ── Poll Progress ───────────────────────────────────────────────────────
+
+function startPollingProgress() {
+  pollProgress(); // immediate first check
+  pollingInterval = setInterval(pollProgress, 5000);
+}
+
+async function pollProgress() {
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/post-status');
+    const data = await resp.json();
+    const p = data.progress;
+    const batch = data.batch;
+    const total = data.total || totalToPost || 1;
+
+    const posted = p.SUCCESS || 0;
+    const failed = p.FAILED || 0;
+    const pending = p.PENDING || 0;
+    const done = posted + failed;
+    const pct = Math.round((done / total) * 100);
+
+    document.getElementById('cntPosted').textContent = posted;
+    document.getElementById('cntFailed').textContent = failed;
+    document.getElementById('cntPending').textContent = pending;
+    document.getElementById('cntTotal').textContent = total;
+
+    const bar = document.getElementById('progressBar');
+    bar.style.width = pct + '%';
+    if (failed > 0) {
+      const okPct = Math.round((posted / total) * 100);
+      bar.classList.add('has-fail');
+      bar.style.setProperty('--ok-pct', okPct + '%');
+    }
+    document.getElementById('progressText').textContent = pct + '%';
+
+    // Check if done
+    if (batch.status === 'POSTED' || (pending === 0 && done >= total)) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+      document.getElementById('postingActions').style.display = 'block';
+      showToast('Posting complete! ' + posted + ' posted, ' + failed + ' failed', failed ? 'err' : 'ok');
+      loadResults();
+    }
+  } catch (err) {
+    console.error('Poll error:', err);
+  }
+}
+
+// ── Results Table ───────────────────────────────────────────────────────
+
+async function loadResults() {
+  document.getElementById('resultsCard').style.display = 'block';
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/lines?action=APPROVED&limit=1000');
+    const data = await resp.json();
+    const body = document.getElementById('resultsBody');
+    let html = '';
+    (data.lines || []).forEach(l => {
+      const st = l.posting_status || 'PENDING';
+      const cls = {SUCCESS:'success',FAILED:'failed',PENDING:'pending',SKIPPED:'skipped'}[st]||'pending';
+      html += '<tr>';
+      html += '<td>' + (l.entity_id||'') + '</td>';
+      html += '<td>' + (l.unit_id||'') + '</td>';
+      html += '<td>' + (l.resident_name||'') + '</td>';
+      html += '<td>' + (l.utility||'').replace('Vacant ','') + '</td>';
+      html += '<td style="text-align:right">$' + fmt$(l.total) + '</td>';
+      html += '<td><span class="badge badge-' + cls + '">' + st + '</span></td>';
+      html += '<td style="font-size:11px">' + (l.entrata_txn_id||'') + '</td>';
+      html += '<td style="font-size:11px;color:#dc2626">' + (l.posting_error||'') + '</td>';
+      html += '</tr>';
+    });
+    body.innerHTML = html || '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No results</td></tr>';
+  } catch (err) {
+    console.error('Error loading results:', err);
+  }
+}
+
+async function retryFailed() {
+  showToast('Retry not yet implemented — re-run posting from dashboard', 'err');
+}
+
+init();
+</script>
+</body>
+</html>

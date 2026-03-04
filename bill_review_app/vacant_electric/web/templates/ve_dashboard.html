@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vacant Electric - Bill Review</title>
+<style>
+:root {
+  --bg: #0ea5e9;
+  --bg2: #4338ca;
+  --glass: rgba(255,255,255,.72);
+  --border: rgba(255,255,255,.33);
+  --text: #0f172a;
+  --muted: #64748b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, var(--bg), var(--bg2));
+  min-height: 100vh;
+  color: var(--text);
+  padding: 24px;
+}
+a { color: inherit; text-decoration: none; }
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.header h1 {
+  color: #fff;
+  font-size: 28px;
+  font-weight: 700;
+  text-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.header .nav-link {
+  color: rgba(255,255,255,.85);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.15);
+  transition: background .2s;
+}
+.header .nav-link:hover { background: rgba(255,255,255,.25); }
+.card {
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  padding: 28px;
+  margin-bottom: 20px;
+}
+.card h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.stat-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.stat-card .label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 6px;
+}
+.stat-card .value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+}
+.stat-card .value.money::before { content: '$'; }
+.stat-card .value.pct::after { content: '%'; }
+.run-form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.run-form label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.run-form select, .run-form button {
+  padding: 10px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+}
+.run-form button {
+  background: linear-gradient(135deg, #0ea5e9, #4338ca);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 10px 24px;
+  transition: opacity .2s;
+}
+.run-form button:hover { opacity: .9; }
+.run-form button:disabled { opacity: .5; cursor: not-allowed; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  table-layout: auto;
+}
+th, td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+}
+th {
+  background: #f9fafb;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+tr:hover { background: #f8fafc; }
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-running { background: #fef3c7; color: #92400e; }
+.badge-ready { background: #dbeafe; color: #1e40af; }
+.badge-review { background: #e0e7ff; color: #3730a3; }
+.badge-approved { background: #d1fae5; color: #065f46; }
+.badge-posting { background: #fce7f3; color: #9d174d; }
+.badge-posted { background: #d1fae5; color: #065f46; }
+.badge-failed { background: #fee2e2; color: #991b1b; }
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #0ea5e9;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #111827;
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.25);
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity .3s;
+  font-size: 14px;
+}
+.toast.show { opacity: .96; }
+.toast.ok { background: #0f766e; }
+.toast.err { background: #b91c1c; }
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.clickable { cursor: pointer; }
+.clickable:hover { background: #eff6ff !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Vacant Electric Billback</h1>
+  <a href="/" class="nav-link">Back to Bill Review</a>
+</div>
+
+<!-- Run Pipeline -->
+<div class="card">
+  <h2>Run Pipeline</h2>
+  <form class="run-form" id="runForm" onsubmit="return runPipeline(event)">
+    <div>
+      <label>Month</label>
+      <select name="month" id="selMonth">
+        <option value="1">January</option><option value="2">February</option>
+        <option value="3">March</option><option value="4">April</option>
+        <option value="5">May</option><option value="6">June</option>
+        <option value="7">July</option><option value="8">August</option>
+        <option value="9">September</option><option value="10">October</option>
+        <option value="11">November</option><option value="12">December</option>
+      </select>
+    </div>
+    <div>
+      <label>Year</label>
+      <select name="year" id="selYear">
+        <option value="2025">2025</option>
+        <option value="2026" selected>2026</option>
+        <option value="2027">2027</option>
+      </select>
+    </div>
+    <button type="submit" id="btnRun">Run Pipeline</button>
+  </form>
+</div>
+
+<!-- Active Batch Status -->
+<div class="card" id="activeBatch" style="display:none">
+  <h2>Active Batch: <span id="activeBatchId"></span></h2>
+  <div id="activeBatchStatus"></div>
+  <div class="grid-4" id="summaryStats" style="margin-top:16px; display:none">
+    <div class="stat-card">
+      <div class="label">GL Records</div>
+      <div class="value" id="statLines">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Match Rate</div>
+      <div class="value pct" id="statMatch">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total Billback</div>
+      <div class="value money" id="statAmount">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Properties</div>
+      <div class="value" id="statProps">0</div>
+    </div>
+  </div>
+  <div style="margin-top:16px" id="batchActions"></div>
+</div>
+
+<!-- Batch History -->
+<div class="card">
+  <h2>Batch History</h2>
+  <div id="batchHistory">
+    {% if batches %}
+    <table>
+      <thead>
+        <tr>
+          <th>Batch ID</th>
+          <th>Month</th>
+          <th>Status</th>
+          <th>Lines</th>
+          <th>Amount</th>
+          <th>Properties</th>
+          <th>Created By</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in batches %}
+        <tr class="clickable" onclick="window.location='/ve/review/{{ b.batch_id }}'">
+          <td><strong>{{ b.batch_id }}</strong></td>
+          <td>{{ b.month }}/{{ b.year }}</td>
+          <td><span class="badge badge-{{ b.status|lower }}">{{ b.status }}</span></td>
+          <td>{{ b.total_lines }}</td>
+          <td>${{ '{:,.2f}'.format(b.total_amount) }}</td>
+          <td>{{ b.total_properties }}</td>
+          <td>{{ b.created_by }}</td>
+          <td>{{ b.created_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">No batches yet. Run the pipeline to get started.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const MONTHS = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+let pollingInterval = null;
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function statusBadge(status) {
+  const cls = {
+    RUNNING:'running', READY:'ready', IN_REVIEW:'review',
+    APPROVED:'approved', POSTING:'posting', POSTED:'posted', FAILED:'failed'
+  }[status] || 'ready';
+  return '<span class="badge badge-' + cls + '">' + status + '</span>';
+}
+
+async function runPipeline(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btnRun');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+
+  const fd = new FormData(document.getElementById('runForm'));
+  try {
+    const resp = await fetch('/ve/api/run', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed');
+    showToast('Pipeline started: ' + data.batch_id, 'ok');
+    startPolling(data.batch_id);
+  } catch (err) {
+    showToast('Error: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Pipeline';
+  }
+}
+
+function startPolling(batchId) {
+  if (pollingInterval) clearInterval(pollingInterval);
+
+  const card = document.getElementById('activeBatch');
+  card.style.display = 'block';
+  document.getElementById('activeBatchId').textContent = batchId;
+  document.getElementById('activeBatchStatus').innerHTML = '<span class="spinner"></span> Pipeline running...';
+  document.getElementById('summaryStats').style.display = 'none';
+  document.getElementById('batchActions').innerHTML = '';
+
+  pollingInterval = setInterval(async () => {
+    try {
+      const resp = await fetch('/ve/api/batch/' + batchId);
+      const batch = await resp.json();
+      updateBatchDisplay(batch);
+      if (batch.status !== 'RUNNING') {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
+    } catch (err) {
+      console.error('Polling error:', err);
+    }
+  }, 3000);
+}
+
+function updateBatchDisplay(batch) {
+  document.getElementById('activeBatchStatus').innerHTML =
+    statusBadge(batch.status) + ' &nbsp; ' + MONTHS[batch.month] + ' ' + batch.year;
+
+  if (batch.status === 'FAILED') {
+    document.getElementById('activeBatchStatus').innerHTML +=
+      '<div style="color:#b91c1c;margin-top:8px">' + (batch.error_message || 'Unknown error') + '</div>';
+    return;
+  }
+
+  if (batch.total_lines > 0) {
+    document.getElementById('summaryStats').style.display = 'grid';
+    document.getElementById('statLines').textContent = batch.total_lines.toLocaleString();
+    document.getElementById('statMatch').textContent = batch.match_rate.toFixed(1);
+    document.getElementById('statAmount').textContent = batch.total_amount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+    document.getElementById('statProps').textContent = batch.total_properties;
+  }
+
+  const actions = document.getElementById('batchActions');
+  if (['READY','IN_REVIEW','APPROVED'].includes(batch.status)) {
+    actions.innerHTML = '<a href="/ve/review/' + batch.batch_id + '" class="nav-link" style="background:linear-gradient(135deg,#0ea5e9,#4338ca);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600;display:inline-block">Review Lines</a>';
+  } else if (['POSTING','POSTED'].includes(batch.status)) {
+    actions.innerHTML = '<a href="/ve/post/' + batch.batch_id + '" class="nav-link" style="background:linear-gradient(135deg,#0ea5e9,#4338ca);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600;display:inline-block">View Posting</a>';
+  }
+}
+
+// Auto-select previous month
+(function() {
+  const now = new Date();
+  let m = now.getMonth(); // 0-indexed, so this is previous month
+  let y = now.getFullYear();
+  if (m === 0) { m = 12; y--; }
+  document.getElementById('selMonth').value = m;
+  document.getElementById('selYear').value = y;
+})();
+</script>
+</body>
+</html>

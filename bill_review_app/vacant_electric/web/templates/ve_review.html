@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VE Review - {{ batch.month }}/{{ batch.year }}</title>
+<style>
+:root {
+  --bg: #0ea5e9;
+  --bg2: #4338ca;
+  --glass: rgba(255,255,255,.72);
+  --border: rgba(255,255,255,.33);
+  --text: #0f172a;
+  --muted: #64748b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, var(--bg), var(--bg2));
+  min-height: 100vh;
+  color: var(--text);
+  padding: 20px;
+}
+a { color: inherit; text-decoration: none; }
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.header h1 { color: #fff; font-size: 22px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.header-links { display: flex; gap: 8px; }
+.header .nav-link {
+  color: rgba(255,255,255,.85); font-size: 13px; font-weight: 500;
+  padding: 6px 14px; border-radius: 8px; background: rgba(255,255,255,.15);
+  transition: background .2s;
+}
+.header .nav-link:hover { background: rgba(255,255,255,.25); }
+
+/* Filter bar */
+.filter-bar {
+  background: var(--glass); backdrop-filter: blur(10px); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.filter-bar select, .filter-bar input {
+  padding: 7px 12px; border: 1px solid #e5e7eb; border-radius: 6px;
+  font-size: 13px; font-family: inherit; background: #fff;
+}
+.filter-bar label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+.filter-group { display: flex; flex-direction: column; gap: 2px; }
+
+/* Summary badges */
+.summary-bar {
+  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.summary-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 8px;
+  font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,.85); backdrop-filter: blur(6px);
+}
+.summary-badge .count { font-size: 16px; font-weight: 700; }
+
+/* Action bar */
+.action-bar {
+  background: var(--glass); backdrop-filter: blur(10px); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 10px;
+}
+.action-bar button {
+  padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  font-family: inherit; cursor: pointer; border: none; transition: opacity .2s;
+}
+.action-bar button:hover { opacity: .85; }
+.btn-approve { background: #059669; color: #fff; }
+.btn-flag { background: #d97706; color: #fff; }
+.btn-exclude { background: #dc2626; color: #fff; }
+.btn-secondary { background: #e5e7eb; color: var(--text); }
+.action-bar .sel-count { font-size: 13px; color: var(--muted); margin-left: auto; }
+
+/* Table card */
+.table-card {
+  background: var(--glass); backdrop-filter: blur(10px); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  overflow: hidden;
+}
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th, td {
+  padding: 8px 10px; text-align: left; border-bottom: 1px solid #f1f5f9;
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+th {
+  background: #f9fafb; font-weight: 600; color: var(--muted);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  position: sticky; top: 0; z-index: 2; cursor: pointer; user-select: none;
+}
+th:hover { background: #f1f5f9; }
+th.sorted-asc::after { content: ' \u25B2'; }
+th.sorted-desc::after { content: ' \u25BC'; }
+tr.row { cursor: pointer; transition: background .1s; }
+tr.row:hover { background: #eff6ff; }
+tr.row.selected { background: #dbeafe; }
+tr.row td:first-child { padding-left: 6px; }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 5px;
+  font-size: 10px; font-weight: 600;
+}
+.action-badge { font-size: 10px; font-weight: 600; }
+.action-PENDING { color: var(--muted); }
+.action-APPROVED { color: #059669; }
+.action-FLAGGED { color: #d97706; }
+.action-EXCLUDED { color: #dc2626; }
+td.money { text-align: right; font-variant-numeric: tabular-nums; }
+col.cb { width: 30px; }
+col.prop { width: 60px; }
+col.unit { width: 55px; }
+col.resident { width: 110px; }
+col.status { width: 100px; }
+col.utility { width: 85px; }
+col.amount { width: 70px; }
+col.period { width: 85px; }
+col.action { width: 75px; }
+
+/* Drawer */
+.drawer-mask {
+  position: fixed; inset: 0; background: rgba(0,0,0,.38);
+  backdrop-filter: blur(1px); opacity: 0; pointer-events: none;
+  transition: opacity .2s ease; z-index: 40;
+}
+.drawer-mask.open { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: -520px; width: 520px; max-width: 94vw;
+  height: 100vh; background: #fff; box-shadow: -8px 0 24px rgba(2,6,23,.25);
+  transition: right .25s ease; z-index: 41; display: flex; flex-direction: column;
+}
+.drawer.open { right: 0; }
+.drawer-header {
+  padding: 16px 20px; border-bottom: 1px solid #e5e7eb;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.drawer-header h3 { font-size: 16px; font-weight: 700; }
+.drawer-close {
+  background: none; border: none; font-size: 22px; cursor: pointer;
+  color: var(--muted); padding: 4px 8px; border-radius: 6px;
+}
+.drawer-close:hover { background: #f1f5f9; }
+.drawer-body {
+  flex: 1; overflow-y: auto; padding: 0;
+}
+.sect { border-bottom: 1px solid #f1f5f9; }
+.sect > button.sect-toggle {
+  width: 100%; text-align: left; padding: 12px 20px;
+  background: #fff; border: none; font-weight: 700; font-size: 13px;
+  letter-spacing: .02em; cursor: pointer; display: flex;
+  align-items: center; justify-content: space-between;
+}
+.sect > button.sect-toggle:hover { background: #f9fafb; }
+.sect > button.sect-toggle::after { content: '\25BC'; font-size: 10px; color: var(--muted); }
+.sect.closed > button.sect-toggle::after { content: '\25B6'; }
+.sect .sect-content { padding: 0 20px 14px; }
+.sect.closed .sect-content { display: none; }
+.detail-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
+}
+.detail-grid .dl { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+.detail-grid .dv { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.proration-table { width: 100%; font-size: 12px; }
+.proration-table td { padding: 4px 8px; border: none; }
+.proration-table td:last-child { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.proration-table tr.total td { border-top: 2px solid var(--text); font-weight: 700; }
+.pdf-frame {
+  width: 100%; height: 300px; border: 1px solid #e5e7eb; border-radius: 8px;
+  background: #f9fafb;
+}
+.extraction-card {
+  background: #f8fafc; border-radius: 8px; padding: 12px; font-size: 12px;
+}
+.extraction-card .ek { font-weight: 600; color: var(--muted); }
+.extraction-card .ev { margin-bottom: 6px; }
+.drawer-footer {
+  padding: 12px 20px; border-top: 1px solid #e5e7eb;
+  display: flex; gap: 8px; align-items: center; background: #fff;
+}
+.drawer-footer button {
+  padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  font-family: inherit; cursor: pointer; border: none; transition: opacity .2s;
+}
+.drawer-footer button:hover { opacity: .85; }
+.drawer-footer textarea {
+  flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px;
+  font-size: 12px; font-family: inherit; resize: none; height: 36px;
+}
+
+/* Toast */
+.toast {
+  position: fixed; top: 20px; right: 20px; background: #111827;
+  color: #fff; padding: 12px 18px; border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.25); z-index: 9999;
+  opacity: 0; transition: opacity .3s; font-size: 14px;
+}
+.toast.show { opacity: .96; }
+.toast.ok { background: #0f766e; }
+.toast.err { background: #b91c1c; }
+
+.loading { text-align: center; padding: 40px; color: var(--muted); }
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid #e5e7eb; border-top: 2px solid #0ea5e9;
+  border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.flash { animation: flash-bg .4s ease; }
+@keyframes flash-bg { 0%,100% { background: inherit; } 50% { background: #bbf7d0; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Review: {{ batch.month }}/{{ batch.year }} <span id="batchStatus"></span></h1>
+  <div class="header-links">
+    <a href="/ve" class="nav-link">Dashboard</a>
+    <a href="/ve/post/{{ batch_id }}" class="nav-link">Posting</a>
+  </div>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar">
+  <div class="filter-group">
+    <label>Property</label>
+    <select id="fProperty"><option value="">All</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Status</label>
+    <select id="fStatus">
+      <option value="">All</option>
+      <option value="CURRENT_RESIDENT">Current Resident</option>
+      <option value="NEW_RESIDENT">New Resident</option>
+      <option value="NOTICE_RESIDENT">Notice</option>
+      <option value="PAST_RESIDENT">Past Resident</option>
+      <option value="TRUE_VACANT">True Vacant</option>
+      <option value="BILLING_ISSUE">Billing Issue</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Action</label>
+    <select id="fAction">
+      <option value="">All</option>
+      <option value="PENDING">Pending</option>
+      <option value="APPROVED">Approved</option>
+      <option value="FLAGGED">Flagged</option>
+      <option value="EXCLUDED">Excluded</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Utility</label>
+    <select id="fUtility">
+      <option value="">All</option>
+      <option value="Vacant Electric">Electric</option>
+      <option value="Vacant Gas">Gas</option>
+      <option value="Vacant Water">Water</option>
+      <option value="Vacant Sewer">Sewer</option>
+    </select>
+  </div>
+  <button onclick="loadLines()" style="padding:7px 16px;border-radius:6px;font-size:13px;font-weight:600;background:#0ea5e9;color:#fff;border:none;cursor:pointer">Filter</button>
+</div>
+
+<!-- Summary Badges -->
+<div class="summary-bar" id="summaryBar"></div>
+
+<!-- Batch Action Bar -->
+<div class="action-bar">
+  <label style="font-size:13px;cursor:pointer"><input type="checkbox" id="cbAll" onchange="toggleAll()"> Select All</label>
+  <button class="btn-approve" onclick="batchAction('APPROVED')">Approve Selected</button>
+  <button class="btn-flag" onclick="batchAction('FLAGGED')">Flag Selected</button>
+  <button class="btn-exclude" onclick="batchAction('EXCLUDED')">Exclude Selected</button>
+  <button class="btn-secondary" onclick="approveAll()">Approve All Pending</button>
+  <span class="sel-count" id="selCount">0 selected</span>
+</div>
+
+<!-- Lines Table -->
+<div class="table-card">
+  <table id="linesTable">
+    <colgroup>
+      <col class="cb"><col class="prop"><col class="unit"><col class="resident">
+      <col class="status"><col class="utility"><col class="amount"><col class="period"><col class="action">
+    </colgroup>
+    <thead>
+      <tr>
+        <th></th>
+        <th data-sort="entity_id">Property</th>
+        <th data-sort="unit_id">Unit</th>
+        <th data-sort="resident_name">Resident</th>
+        <th data-sort="review_status">Status</th>
+        <th data-sort="utility">Utility</th>
+        <th data-sort="total">Total</th>
+        <th data-sort="bill_start">Period</th>
+        <th data-sort="reviewer_action">Action</th>
+      </tr>
+    </thead>
+    <tbody id="linesBody">
+      <tr><td colspan="9" class="loading"><span class="spinner"></span> Loading lines...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Detail Drawer -->
+<div class="drawer-mask" id="drawerMask" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-header">
+    <h3 id="drawerTitle">Line Detail</h3>
+    <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+  </div>
+  <div class="drawer-body">
+    <!-- Resident Info -->
+    <div class="sect" id="sectResident">
+      <button class="sect-toggle" onclick="toggleSect('sectResident')">Resident Info</button>
+      <div class="sect-content">
+        <div class="detail-grid" id="residentGrid"></div>
+      </div>
+    </div>
+    <!-- Proration Breakdown -->
+    <div class="sect" id="sectProration">
+      <button class="sect-toggle" onclick="toggleSect('sectProration')">Proration Breakdown</button>
+      <div class="sect-content">
+        <table class="proration-table" id="prorationTable"></table>
+      </div>
+    </div>
+    <!-- Utility Bill PDF -->
+    <div class="sect" id="sectBill">
+      <button class="sect-toggle" onclick="toggleSect('sectBill')">Utility Bill PDF</button>
+      <div class="sect-content" id="billContent">
+        <div style="color:var(--muted);font-size:13px">No bill PDF available</div>
+      </div>
+    </div>
+    <!-- Lease Utility Clause -->
+    <div class="sect" id="sectLease">
+      <button class="sect-toggle" onclick="toggleSect('sectLease')">Lease Utility Clause</button>
+      <div class="sect-content" id="leaseContent">
+        <div style="color:var(--muted);font-size:13px">No lease clause available</div>
+      </div>
+    </div>
+    <!-- Extracted Lease Terms -->
+    <div class="sect closed" id="sectExtraction">
+      <button class="sect-toggle" onclick="toggleSect('sectExtraction')">Extracted Lease Terms</button>
+      <div class="sect-content" id="extractionContent"></div>
+    </div>
+  </div>
+  <div class="drawer-footer">
+    <textarea id="drawerNotes" placeholder="Notes..."></textarea>
+    <button class="btn-approve" onclick="drawerAction('APPROVED')">Approve</button>
+    <button class="btn-flag" onclick="drawerAction('FLAGGED')">Flag</button>
+    <button class="btn-exclude" onclick="drawerAction('EXCLUDED')">Exclude</button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const BATCH_ID = '{{ batch_id }}';
+const STATUS_COLORS = {{ status_colors | safe }};
+let allLines = [];
+let selectedIds = new Set();
+let currentLineId = null;
+let sortField = 'entity_id';
+let sortDir = 'asc';
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function fmt$(v) { return '$' + parseFloat(v||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+function statusBadgeHtml(status) {
+  const c = STATUS_COLORS[status] || {bg:'#e5e7eb',text:'#374151'};
+  return '<span class="badge" style="background:'+c.bg+';color:'+c.text+'">'+status.replace('_',' ')+'</span>';
+}
+
+function actionBadge(action) {
+  return '<span class="action-badge action-'+action+'">'+(action||'PENDING')+'</span>';
+}
+
+// ── Data Loading ────────────────────────────────────────────────────────
+
+async function loadLines() {
+  const body = document.getElementById('linesBody');
+  body.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span> Loading...</td></tr>';
+
+  const params = new URLSearchParams();
+  const p = document.getElementById('fProperty').value;
+  const s = document.getElementById('fStatus').value;
+  const a = document.getElementById('fAction').value;
+  if (p) params.set('property', p);
+  if (s) params.set('status', s);
+  if (a) params.set('action', a);
+  params.set('limit', '1000');
+
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/lines?' + params);
+    const data = await resp.json();
+    allLines = data.lines || [];
+
+    // Client-side utility filter
+    const uFilter = document.getElementById('fUtility').value;
+    if (uFilter) allLines = allLines.filter(l => l.utility === uFilter);
+
+    populatePropertyFilter();
+    updateSummary();
+    renderTable();
+  } catch (err) {
+    body.innerHTML = '<tr><td colspan="9" class="loading" style="color:#b91c1c">Error loading lines</td></tr>';
+    showToast('Error: ' + err.message, 'err');
+  }
+}
+
+function populatePropertyFilter() {
+  const sel = document.getElementById('fProperty');
+  const current = sel.value;
+  const props = [...new Set(allLines.map(l => l.entity_id).filter(Boolean))].sort();
+  // Keep first option
+  sel.innerHTML = '<option value="">All (' + allLines.length + ')</option>';
+  props.forEach(p => {
+    const ct = allLines.filter(l => l.entity_id === p).length;
+    sel.innerHTML += '<option value="' + p + '"' + (p===current?' selected':'') + '>' + p + ' (' + ct + ')</option>';
+  });
+}
+
+function updateSummary() {
+  const bar = document.getElementById('summaryBar');
+  const counts = {};
+  allLines.forEach(l => {
+    const a = l.reviewer_action || 'PENDING';
+    counts[a] = (counts[a]||0) + 1;
+  });
+  const colors = { PENDING: '#94a3b8', APPROVED: '#059669', FLAGGED: '#d97706', EXCLUDED: '#dc2626' };
+  let html = '';
+  for (const [action, count] of Object.entries(counts)) {
+    html += '<div class="summary-badge"><span class="count" style="color:' + (colors[action]||'#333') + '">' + count + '</span> ' + action + '</div>';
+  }
+  bar.innerHTML = html;
+}
+
+// ── Table Rendering ─────────────────────────────────────────────────────
+
+function renderTable() {
+  const sorted = [...allLines].sort((a, b) => {
+    let va = a[sortField], vb = b[sortField];
+    if (sortField === 'total' || sortField === 'dramount') { va = parseFloat(va)||0; vb = parseFloat(vb)||0; }
+    else { va = String(va||'').toLowerCase(); vb = String(vb||'').toLowerCase(); }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const body = document.getElementById('linesBody');
+  let html = '';
+  sorted.forEach(l => {
+    const sel = selectedIds.has(l.line_id) ? ' selected' : '';
+    html += '<tr class="row' + sel + '" data-id="' + l.line_id + '">';
+    html += '<td><input type="checkbox" ' + (selectedIds.has(l.line_id)?'checked':'') + ' onclick="event.stopPropagation();toggleSelect(\'' + l.line_id + '\',this.checked)"></td>';
+    html += '<td title="' + (l.property_name||'') + '">' + (l.entity_id||'') + '</td>';
+    html += '<td>' + (l.unit_id||'') + '</td>';
+    html += '<td title="' + (l.resident_name||'') + '">' + (l.resident_name||'<em style=color:var(--muted)>vacant</em>') + '</td>';
+    html += '<td>' + statusBadgeHtml(l.review_status) + '</td>';
+    html += '<td>' + (l.utility||'').replace('Vacant ','') + '</td>';
+    html += '<td class="money">' + fmt$(l.total) + '</td>';
+    html += '<td>' + (l.bill_start||'') + '</td>';
+    html += '<td>' + actionBadge(l.reviewer_action) + '</td>';
+    html += '</tr>';
+  });
+  body.innerHTML = html || '<tr><td colspan="9" class="loading">No lines match filters</td></tr>';
+
+  // Row click → open drawer
+  body.querySelectorAll('tr.row').forEach(tr => {
+    tr.addEventListener('click', () => openDrawer(tr.dataset.id));
+  });
+
+  // Header sort handlers
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.className = '';
+    if (th.dataset.sort === sortField) th.className = 'sorted-' + sortDir;
+    th.onclick = () => {
+      if (sortField === th.dataset.sort) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      else { sortField = th.dataset.sort; sortDir = 'asc'; }
+      renderTable();
+    };
+  });
+
+  updateSelCount();
+}
+
+// ── Selection ───────────────────────────────────────────────────────────
+
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateSelCount();
+  const row = document.querySelector('tr[data-id="'+id+'"]');
+  if (row) row.classList.toggle('selected', checked);
+}
+
+function toggleAll() {
+  const checked = document.getElementById('cbAll').checked;
+  if (checked) allLines.forEach(l => selectedIds.add(l.line_id));
+  else selectedIds.clear();
+  renderTable();
+}
+
+function updateSelCount() {
+  document.getElementById('selCount').textContent = selectedIds.size + ' selected';
+}
+
+// ── Batch Actions ───────────────────────────────────────────────────────
+
+async function batchAction(action) {
+  if (selectedIds.size === 0) { showToast('No lines selected', 'err'); return; }
+  const ids = [...selectedIds];
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      const fd = new FormData();
+      fd.append('action', action);
+      const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/line/' + id + '/review', { method: 'POST', body: fd });
+      if (resp.ok) {
+        ok++;
+        const line = allLines.find(l => l.line_id === id);
+        if (line) line.reviewer_action = action;
+      } else fail++;
+    } catch { fail++; }
+  }
+  selectedIds.clear();
+  document.getElementById('cbAll').checked = false;
+  renderTable();
+  updateSummary();
+  showToast(ok + ' lines ' + action.toLowerCase() + (fail ? ', ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
+}
+
+async function approveAll() {
+  if (!confirm('Approve all pending lines?')) return;
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/approve', { method: 'POST' });
+    const data = await resp.json();
+    showToast('Approved ' + data.approved + ' lines', 'ok');
+    loadLines();
+  } catch (err) {
+    showToast('Error: ' + err.message, 'err');
+  }
+}
+
+// ── Drawer ──────────────────────────────────────────────────────────────
+
+function openDrawer(lineId) {
+  currentLineId = lineId;
+  const line = allLines.find(l => l.line_id === lineId);
+  if (!line) return;
+
+  document.getElementById('drawerMask').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawerTitle').textContent = (line.entity_id||'') + ' - ' + (line.unit_id||'') + ' - ' + (line.resident_name||'Vacant');
+  document.getElementById('drawerNotes').value = line.reviewer_notes || '';
+
+  // Resident Info
+  const rg = document.getElementById('residentGrid');
+  rg.innerHTML = `
+    <div class="dl">Name</div><div class="dv">${line.resident_name||'N/A'}</div>
+    <div class="dl">Lease ID</div><div class="dv">${line.resi_id||'N/A'}</div>
+    <div class="dl">Status</div><div class="dv">${statusBadgeHtml(line.review_status)}</div>
+    <div class="dl">Resi Status</div><div class="dv">${line.resi_status||'N/A'}</div>
+    <div class="dl">Move In</div><div class="dv">${line.move_in_date||'N/A'}</div>
+    <div class="dl">Move Out</div><div class="dv">${line.move_out_date||'N/A'}</div>
+  `;
+
+  // Proration
+  const pt = document.getElementById('prorationTable');
+  pt.innerHTML = `
+    <tr><td>GL Amount</td><td>${fmt$(line.dramount)}</td></tr>
+    <tr><td>Bill Period</td><td>${line.bill_start} - ${line.bill_end}</td></tr>
+    <tr><td>Bill Days</td><td>${line.bill_days}</td></tr>
+    <tr><td>Overlap</td><td>${line.overlap_start} - ${line.overlap_end}</td></tr>
+    <tr><td>Overlap Days</td><td>${line.overlap_days}</td></tr>
+    <tr><td>Prorated Amount</td><td>${fmt$(line.prorated_billback)}</td></tr>
+    <tr><td>Admin Fee</td><td>${fmt$(line.admin_charge)}</td></tr>
+    <tr class="total"><td>Total Billback</td><td>${fmt$(line.total)}</td></tr>
+  `;
+
+  // Bill PDF
+  loadBillPdf(lineId, line);
+
+  // Lease clause
+  loadLeaseClause(lineId, line);
+}
+
+async function loadBillPdf(lineId, line) {
+  const el = document.getElementById('billContent');
+  if (line.bill_pdf_url) {
+    el.innerHTML = '<iframe class="pdf-frame" src="' + line.bill_pdf_url + '"></iframe>';
+    return;
+  }
+  el.innerHTML = '<div style="color:var(--muted);font-size:13px"><span class="spinner"></span> Looking for bill...</div>';
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/line/' + lineId + '/bill-pdf');
+    const data = await resp.json();
+    if (data.url) {
+      el.innerHTML = '<iframe class="pdf-frame" src="' + data.url + '"></iframe>';
+      line.bill_pdf_url = data.url;
+    } else {
+      el.innerHTML = '<div style="color:var(--muted);font-size:13px">No bill PDF available for this line</div>';
+    }
+  } catch {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px">Error loading bill PDF</div>';
+  }
+}
+
+async function loadLeaseClause(lineId, line) {
+  const lEl = document.getElementById('leaseContent');
+  const eEl = document.getElementById('extractionContent');
+
+  if (line.lease_page_url) {
+    lEl.innerHTML = '<iframe class="pdf-frame" src="' + line.lease_page_url + '"></iframe>';
+  } else {
+    lEl.innerHTML = '<div style="color:var(--muted);font-size:13px"><span class="spinner"></span> Looking for lease clause...</div>';
+  }
+
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/line/' + lineId + '/lease-page');
+    const data = await resp.json();
+    if (data.url) {
+      lEl.innerHTML = '<iframe class="pdf-frame" src="' + data.url + '"></iframe>';
+      line.lease_page_url = data.url;
+    } else if (!line.lease_page_url) {
+      lEl.innerHTML = '<div style="color:var(--muted);font-size:13px">No lease utility clause found</div>';
+    }
+    if (data.extraction) {
+      const ext = data.extraction;
+      let html = '<div class="extraction-card">';
+      if (ext.billing_method) html += '<div class="ek">Billing Method</div><div class="ev">' + ext.billing_method + '</div>';
+      if (ext.rubs_type) html += '<div class="ek">RUBS Type</div><div class="ev">' + ext.rubs_type + '</div>';
+      if (ext.utility_types && ext.utility_types.length) html += '<div class="ek">Utilities</div><div class="ev">' + ext.utility_types.join(', ') + '</div>';
+      if (ext.monthly_cap) html += '<div class="ek">Monthly Cap</div><div class="ev">$' + ext.monthly_cap + '</div>';
+      if (ext.admin_fee) html += '<div class="ek">Admin Fee</div><div class="ev">$' + ext.admin_fee + '</div>';
+      if (ext.billing_company) html += '<div class="ek">Billing Company</div><div class="ev">' + ext.billing_company + '</div>';
+      html += '</div>';
+      eEl.innerHTML = html;
+      document.getElementById('sectExtraction').classList.remove('closed');
+    } else {
+      eEl.innerHTML = '<div style="color:var(--muted);font-size:13px">No extracted terms available</div>';
+    }
+  } catch {
+    if (!line.lease_page_url) lEl.innerHTML = '<div style="color:var(--muted);font-size:13px">Error loading lease clause</div>';
+    eEl.innerHTML = '';
+  }
+}
+
+function closeDrawer() {
+  document.getElementById('drawerMask').classList.remove('open');
+  document.getElementById('drawer').classList.remove('open');
+  currentLineId = null;
+}
+
+function toggleSect(id) {
+  document.getElementById(id).classList.toggle('closed');
+}
+
+async function drawerAction(action) {
+  if (!currentLineId) return;
+  const notes = document.getElementById('drawerNotes').value;
+  const fd = new FormData();
+  fd.append('action', action);
+  fd.append('notes', notes);
+  try {
+    const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/line/' + currentLineId + '/review', { method: 'POST', body: fd });
+    if (!resp.ok) throw new Error('Failed');
+    const line = allLines.find(l => l.line_id === currentLineId);
+    if (line) { line.reviewer_action = action; line.reviewer_notes = notes; }
+    renderTable();
+    updateSummary();
+    showToast('Line ' + action.toLowerCase(), 'ok');
+
+    // Flash the row
+    const row = document.querySelector('tr[data-id="'+currentLineId+'"]');
+    if (row) { row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 500); }
+
+    // Auto-advance to next line
+    const idx = allLines.findIndex(l => l.line_id === currentLineId);
+    if (idx >= 0 && idx < allLines.length - 1) {
+      openDrawer(allLines[idx + 1].line_id);
+    } else {
+      closeDrawer();
+    }
+  } catch (err) {
+    showToast('Error: ' + err.message, 'err');
+  }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (!currentLineId) return;
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if (e.key === 'a' || e.key === 'A') { e.preventDefault(); drawerAction('APPROVED'); }
+  if (e.key === 'f' || e.key === 'F') { e.preventDefault(); drawerAction('FLAGGED'); }
+  if (e.key === 'x' || e.key === 'X') { e.preventDefault(); drawerAction('EXCLUDED'); }
+  if (e.key === 'Escape') closeDrawer();
+});
+
+// Init
+loadLines();
+</script>
+</body>
+</html>
