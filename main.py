@@ -23049,11 +23049,11 @@ def api_split_bill(date: str = Form(...), pdf_id: str = Form(...), user: str = D
         if not target_rows:
             return JSONResponse({"error": "No rows found for pdf_id"}, status_code=404)
 
-        # Group rows by account number
+        # Group rows by account number (use same fallback logic as multi-account detection)
         from collections import defaultdict
         rows_by_account: Dict[str, List[Dict]] = defaultdict(list)
         for r in target_rows:
-            acct = str(r.get("Account Number", "")) or "(unknown)"
+            acct = str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "") or "(unknown)"
             rows_by_account[acct].append(r)
 
         if len(rows_by_account) < 2:
@@ -23068,15 +23068,19 @@ def api_split_bill(date: str = Form(...), pdf_id: str = Form(...), user: str = D
             safe_acct = "".join(ch if ch.isalnum() else "_" for ch in acct)
             new_key = f"{base_key}_ACCT_{safe_acct}.jsonl"
 
-            # Prepare rows for new file (remove internal fields)
+            # Prepare rows for new file (remove internal fields, clean account numbers)
             output_lines = []
             for r in acct_rows:
                 # Create clean copy without internal fields
                 clean_row = {k: v for k, v in r.items() if not k.startswith("__")}
+                # Normalize account numbers (strip dashes/spaces) to match the standard pipeline
+                for acct_field in ("Account Number", "AccountNumber", "Line Item Account Number"):
+                    if acct_field in clean_row and clean_row[acct_field]:
+                        clean_row[acct_field] = _clean_account_number(clean_row[acct_field])
                 output_lines.append(json.dumps(clean_row, ensure_ascii=False))
 
-            # Write new file
-            content = "\n".join(output_lines)
+            # Write new file (trailing newline matches _write_jsonl convention)
+            content = "\n".join(output_lines) + "\n"
             s3.put_object(
                 Bucket=BUCKET,
                 Key=new_key,
