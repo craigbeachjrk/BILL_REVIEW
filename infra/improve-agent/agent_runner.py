@@ -245,8 +245,10 @@ def create_branch(report: dict) -> str:
 def run_claude(prompt: str, anthropic_key: str) -> dict:
     """Run Claude Code CLI and return parsed JSON output."""
     env = {"ANTHROPIC_API_KEY": anthropic_key}
+    model = os.environ.get("CLAUDE_MODEL", "opus")
     result = run_cmd(
-        ["claude", "-p", prompt, "--dangerously-skip-permissions", "--output-format", "json"],
+        ["claude", "-p", prompt, "--dangerously-skip-permissions",
+         "--output-format", "json", "--model", model],
         cwd=CLONE_DIR,
         env=env,
         check=False,
@@ -436,10 +438,11 @@ def main():
         has_changes = commit_and_push(branch, report)
 
         if not has_changes:
+            no_change_summary = agent_summary or "Claude Code ran but produced no file changes."
             update_status(REPORT_ID, "Agent No Changes", extra={
-                "agent_summary": "Claude Code ran but produced no file changes.",
+                "agent_summary": no_change_summary,
             })
-            send_result_email(report, "", "No changes were made by the agent.", False)
+            send_result_email(report, "", no_change_summary, False)
             return
 
         # 9. Create PR
