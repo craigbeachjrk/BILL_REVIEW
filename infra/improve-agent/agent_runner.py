@@ -245,7 +245,7 @@ def create_branch(report: dict) -> str:
 def run_claude(prompt: str, anthropic_key: str) -> dict:
     """Run Claude Code CLI and return parsed JSON output."""
     env = {"ANTHROPIC_API_KEY": anthropic_key}
-    model = os.environ.get("CLAUDE_MODEL", "opus")
+    model = os.environ.get("CLAUDE_MODEL", "sonnet")
     result = run_cmd(
         ["claude", "-p", prompt, "--dangerously-skip-permissions",
          "--output-format", "json", "--model", model],
@@ -253,13 +253,17 @@ def run_claude(prompt: str, anthropic_key: str) -> dict:
         env=env,
         check=False,
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"Claude Code exited with rc={result.returncode}: {result.stderr[:500]}")
-    # Parse JSON output
+    # Try to parse JSON even on non-zero exit (Claude may return valid
+    # JSON with is_error=true, e.g. "Credit balance is too low")
+    output = {}
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {"result": result.stdout[:5000]}
+        output = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    if result.returncode != 0:
+        error_detail = output.get("result", result.stderr[:500]) if output else result.stderr[:500]
+        raise RuntimeError(f"Claude Code exited with rc={result.returncode}: {error_detail}")
+    return output or {"result": result.stdout[:5000]}
 
 
 def commit_and_push(branch: str, report: dict) -> bool:
