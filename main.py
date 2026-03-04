@@ -24,21 +24,30 @@ def _entrata_post_succeeded(resp_text: str) -> tuple[bool, str]:
             if any(k in status_msg for k in ["duplicate", "already exists", "already posted", "invoice exists"]):
                 return False, "duplicate"
             # Treat any explicit error status as failure
-            if status in ("error", "fail", "failed"):
+            if status in ("error", "fail", "failed", "rejected", "denied", "invalid"):
                 return False, status
-            # Heuristic success
-            if status in ("ok", "success"):
+            # Heuristic success — only advance the invoice when we can confirm success
+            if status in ("ok", "success", "created", "accepted", "processed"):
                 return True, status
-            # If no obvious signals, fall back to keyword scan
+            # Status field exists but is unrecognized — check message for positive confirmation
+            if status and any(k in msg for k in ["success", "imported", "created", "accepted"]):
+                return True, "ok"
+            # Status field exists but is unrecognized — cannot confirm success
+            if status:
+                return False, f"unrecognized_status:{status}"
+            # No status field — fall back to keyword scan
         # Keyword scan on text
         low = t.lower()
-        if any(k in low for k in ["duplicate", "already exists", "already posted", "error", "failed", "failure"]):
+        if any(k in low for k in ["duplicate", "already exists", "already posted", "error", "failed", "failure", "rejected", "denied"]):
             # Prefer specific duplicate reason if present
             if "duplicate" in low or "already" in low:
                 return False, "duplicate"
             return False, "error"
-        # Default to success if none of the error markers found
-        return True, "ok"
+        # Check for positive success indicators in text
+        if any(k in low for k in ["success", "imported successfully", "invoice created", "invoice accepted"]):
+            return True, "ok"
+        # Cannot confirm success — default to failure to prevent invoices advancing on ambiguous responses
+        return False, "unknown_response"
     except Exception:
         return False, "parse_error"
 
@@ -2595,8 +2604,17 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
                     "invalid_property": "The property ID is not valid in Entrata.",
                     "invalid_gl": "The GL account is not valid in Entrata.",
                     "http_error": "Entrata did not respond in time. Check Entrata for this invoice before retrying.",
+                    "unknown_response": "Entrata returned an unrecognized response. Check Entrata to confirm if the invoice was posted before retrying.",
+                    "rejected": "Entrata rejected this invoice. Check vendor, property, and GL account settings.",
+                    "denied": "Entrata denied this invoice. Check vendor, property, and GL account settings.",
+                    "invalid": "Entrata flagged this invoice as invalid. Check vendor, property, and GL account settings.",
                 }
-                hint = error_hints.get(reason, "Check the invoice details and try again.")
+                # unrecognized_status:xyz — map to a readable hint
+                hint = error_hints.get(reason) or (
+                    "Entrata returned an unrecognized status. Check Entrata to confirm if the invoice was posted before retrying."
+                    if reason and reason.startswith("unrecognized_status:")
+                    else "Check the invoice details and try again."
+                )
                 err_entry: dict = {"key": key, "error": f"Entrata rejected invoice: {reason}", "code": "post_failed", "hint": hint, "response": (text[:500] if isinstance(text, str) else "")}
                 # If duplicate, flag as repostable with current suffix so frontend can escalate
                 if reason == "duplicate":
@@ -23289,8 +23307,11 @@ def api_rework(
         except Exception:
             exp_lines_val = None
 
-        # Resolve expected account number: prefer header draft override, fall back to source row
-        expected_account_number = str(header_draft.get("fields", {}).get("Account Number", "")).strip()
+        # Resolve expected account number: prefer form-submitted value (user may have corrected it),
+        # then header draft override, then fall back to source row
+        expected_account_number = str(account_number or "").strip()
+        if not expected_account_number:
+            expected_account_number = str(header_draft.get("fields", {}).get("Account Number", "")).strip()
         if not expected_account_number:
             expected_account_number = str(first.get("Account Number", "") or "").strip()
 
