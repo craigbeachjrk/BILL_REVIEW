@@ -78,8 +78,7 @@
     <div>
       <button id="saveBtn" class="btn" title="Save Account Status">Save All</button>
       <a class="btn secondary" href="/config">Config Menu</a>
-      <a class="btn secondary" href="/">Home</a>    </div>
-  <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <a class="btn secondary" href="/">Home</a>    </div>  <button class="btn secondary" id="improveBtn">IMPROVE</button>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
   <div id="improveToast" class="improve-toast"></div>
@@ -471,6 +470,8 @@
         _ssKeys = [];
         _ssUploading = 0;
         _tempReportId = '';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit';
         const bugRadio = typeGroup.querySelector('input[value=bug]');
         if (bugRadio) { bugRadio.checked = true; updateTypeStyles(); }
       }

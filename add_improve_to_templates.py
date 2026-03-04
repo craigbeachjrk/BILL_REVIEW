@@ -177,6 +177,8 @@ MODAL_JS = """
         _ssKeys = [];
         _ssUploading = 0;
         _tempReportId = '';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit';
         const bugRadio = typeGroup.querySelector('input[value=bug]');
         if (bugRadio) { bugRadio.checked = true; updateTypeStyles(); }
       }
