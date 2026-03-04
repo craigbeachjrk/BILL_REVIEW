@@ -55,7 +55,7 @@ You are an expert utility-bill parser. Output ONLY a JSON array of objects. Each
 - bill_to_name_2: Secondary name or c/o
 - vendor_name: Utility company name (e.g., "Southern California Edison", "PG&E")
 - invoice_number: Bill/invoice reference number
-- account_number: Customer account (digits only)
+- account_number: Customer account number (extract exactly as printed; preserve letters and digits, strip only leading/trailing whitespace)
 - line_item_account: Sub-account if different from main account
 - service_address: Street address for service
 - service_city: City

@@ -23274,6 +23274,12 @@ def api_rework(
                 or str(r0.get("Vendor Name", ""))
                 or str(r0.get("EnrichedVendorName", ""))
             )
+        # Resolve account number: prefer form field, then header draft, then row data
+        acct_val = str(account_number).strip() if account_number else ""
+        if not acct_val:
+            acct_val = str(header_draft.get("fields", {}).get("Account Number", "")).strip()
+        if not acct_val:
+            acct_val = str(first.get("Account Number", "")).strip()
         # Normalize expected_lines to int if provided
         exp_lines_val = None
         try:
@@ -23293,6 +23299,8 @@ def api_rework(
             "dest_key": dest_key,
             "notes": notes or "",
             "Bill From": bill_from_val,
+            "bill_from": bill_from_val,
+            "account_number": acct_val,
         }
         if exp_lines_val is not None:
             # include multiple synonymous keys for downstream compatibility

@@ -250,7 +250,7 @@ Rules and standardizations:
 - Meter Number: extract the service meter identifier if present, else leave blank.
 - Meter Size: extract the meter size (e.g., 5/8", 1", etc.) if present, else leave blank.
 - House Or Vacant: ONLY return "House" only for now
-- Account Number: remove any non-digit characters from this (spaces & punctuation etc.)
+- Account Number: extract exactly as printed on the bill (preserve letters and digits; only strip leading/trailing whitespace)
 - Consumption Amount: Round the consumption to two decimal places if greater than 10 units consumption
 - Special Instructions: cap this at 50 characters
 
@@ -493,7 +493,7 @@ def _normalize_reply(text: str) -> str:
 
 
 def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str):
-    global __EXPECTED_LINES
+    global __EXPECTED_LINES, __ACCOUNT_NUMBER_HINT
     attempts = 0
     prev_reply = ""
     prev_content_errors = []  # Track content validation errors for retry feedback
@@ -502,6 +502,10 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
     while attempts < MAX_ATTEMPTS:
         attempts += 1
         prompt = PROMPT
+        # Add account_number hint if provided from rework metadata (user-corrected value)
+        if __ACCOUNT_NUMBER_HINT:
+            prompt += (f"\n\n**CRITICAL**: A human reviewer has identified that the correct Account Number for this bill is '{__ACCOUNT_NUMBER_HINT}'. "
+                       f"You MUST use '{__ACCOUNT_NUMBER_HINT}' as the Account Number (column 5) on EVERY row. Do NOT extract a different account number from the bill.")
         # Add expected_lines hint if provided from rework metadata
         if __EXPECTED_LINES and __EXPECTED_LINES > 0:
             prompt += (f"\n\n**CRITICAL REQUIREMENT**: A human reviewer has verified this bill contains EXACTLY {__EXPECTED_LINES} line items. "
@@ -515,7 +519,7 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
                        "2. Bill To Name Second Line (customer name line 2)\n"
                        "3. Vendor Name (utility company name)\n"
                        "4. Invoice Number\n"
-                       "5. Account Number (digits only)\n"
+                       "5. Account Number (extract exactly as printed on the bill)\n"
                        "6. Line Item Account Number\n"
                        "7. Service Address (street address)\n"
                        "8. Service City\n"
@@ -629,6 +633,8 @@ __BILL_FROM_RAW = ""
 __BILL_FROM_HINT = ""
 # Injected: Expected line count hint from rework
 __EXPECTED_LINES = 0
+# Injected: Account number hint from rework (correct value known by user)
+__ACCOUNT_NUMBER_HINT = ""
 
 def _norm_bf(s: str) -> str:
     try:
@@ -824,7 +830,8 @@ def lambda_handler(event, context):
             print(json.dumps({"message": "Read notes.json successfully", "expected_lines": expected_lines, "bill_from": bill_from}))
         except Exception as e:
             print(json.dumps({"message": "Failed to read notes.json", "error": str(e), "pending_side": pending_side if 'pending_side' in dir() else "unknown"}))
-        # Also try to read .rework.json for expected_line_count hint
+        # Also try to read .rework.json for expected_line_count and account_number hints
+        account_number_hint = ""
         try:
             rework_side = key.rsplit('.',1)[0] + '.rework.json'
             rework_obj = s3.get_object(Bucket=bucket, Key=rework_side)
@@ -835,6 +842,9 @@ def lambda_handler(event, context):
             if not expected_lines:
                 expected_lines = int(rework.get('expected_line_count') or rework.get('expected_lines') or rework.get('min_lines') or 0)
                 print(json.dumps({"message": "Read expected_lines from rework.json", "expected_lines": expected_lines}))
+            account_number_hint = str(rework.get('account_number') or '').strip()
+            if account_number_hint:
+                print(json.dumps({"message": "Read account_number hint from rework.json", "account_number": account_number_hint}))
         except Exception as e:
             # rework.json won't exist in Pending, this is expected
             pass
@@ -846,12 +856,15 @@ def lambda_handler(event, context):
         except Exception:
             pass
         try:
-            global __BILL_FROM_RAW, __BILL_FROM_HINT, __EXPECTED_LINES
+            global __BILL_FROM_RAW, __BILL_FROM_HINT, __EXPECTED_LINES, __ACCOUNT_NUMBER_HINT
             __BILL_FROM_RAW = bill_from
             __BILL_FROM_HINT = _norm_bf(bill_from)
             __EXPECTED_LINES = expected_lines
+            __ACCOUNT_NUMBER_HINT = account_number_hint
             if expected_lines:
                 print(json.dumps({"message": "Expected lines hint found", "expected_lines": expected_lines, "key": key}))
+            if account_number_hint:
+                print(json.dumps({"message": "Account number hint set", "account_number": account_number_hint, "key": key}))
         except Exception:
             pass
         # Track source key for deletion AFTER processing completes successfully
