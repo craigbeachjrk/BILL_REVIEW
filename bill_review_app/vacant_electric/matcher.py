@@ -36,7 +36,8 @@ def aggregate_gl_to_invoice(df: pd.DataFrame) -> pd.DataFrame:
         glDetailId=('glDetailId', 'first'),
         ApprovedYN=('ApprovedYN', 'first'),
         cramount=('cramount', 'sum'),
-        Unit_String=('Unit String', 'first')
+        Unit_String=('Unit String', 'first'),
+        key_matched=('key_matched', 'first')
     ).reset_index()
     agg.rename(columns={
         'Bill_Start': 'Bill Start',
