@@ -12,7 +12,7 @@ if (Test-Path $TEMP_DIR) { Remove-Item $TEMP_DIR -Recurse -Force }
 New-Item -ItemType Directory -Path $TEMP_DIR | Out-Null
 
 # ONLY include these specific directories (runtime essentials + tests for CI/CD)
-$includeDirs = @('data', 'templates', 'static', 'tests')
+$includeDirs = @('data', 'templates', 'static', 'tests', 'bill_review_app')
 foreach ($dir in $includeDirs) {
     $dirPath = Join-Path $SRC $dir
     if (Test-Path $dirPath) {
