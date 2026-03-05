@@ -320,6 +320,18 @@ async def api_list_batches(user: str = Depends(require_user)):
     return JSONResponse({'batches': [asdict(b) for b in batches]})
 
 
+@ve_router.delete('/api/batch/{batch_id}')
+async def api_delete_batch(batch_id: str, user: str = Depends(require_user)):
+    """Delete a batch and all its records."""
+    store = _get_store()
+    batch = store.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "Batch not found")
+    deleted = store.delete_batch(batch_id)
+    logger.info(f"User {user} deleted batch {batch_id} ({deleted} records)")
+    return JSONResponse({'ok': True, 'batch_id': batch_id, 'deleted': deleted})
+
+
 @ve_router.get('/api/batch/{batch_id}/line/{line_id}/bill-pdf')
 async def api_bill_pdf(batch_id: str, line_id: str, user: str = Depends(require_user)):
     """Get presigned URL for a line's bill PDF."""

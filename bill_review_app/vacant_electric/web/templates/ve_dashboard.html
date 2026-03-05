@@ -265,6 +265,7 @@ tr:hover { background: #f8fafc; }
           <th>Properties</th>
           <th>Created By</th>
           <th>Date</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -278,6 +279,7 @@ tr:hover { background: #f8fafc; }
           <td>{{ b.total_properties }}</td>
           <td>{{ b.created_by }}</td>
           <td>{{ b.created_at[:10] }}</td>
+          <td><button class="badge badge-failed" style="cursor:pointer;border:none" onclick="event.stopPropagation();deleteBatch('{{ b.batch_id }}')">Delete</button></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -378,6 +380,19 @@ function updateBatchDisplay(batch) {
     actions.innerHTML = '<a href="/ve/review/' + batch.batch_id + '" class="nav-link" style="background:linear-gradient(135deg,#0ea5e9,#4338ca);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600;display:inline-block">Review Lines</a>';
   } else if (['POSTING','POSTED'].includes(batch.status)) {
     actions.innerHTML = '<a href="/ve/post/' + batch.batch_id + '" class="nav-link" style="background:linear-gradient(135deg,#0ea5e9,#4338ca);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600;display:inline-block">View Posting</a>';
+  }
+}
+
+async function deleteBatch(batchId) {
+  if (!confirm('Delete batch ' + batchId + '? This cannot be undone.')) return;
+  try {
+    const resp = await fetch('/ve/api/batch/' + batchId, { method: 'DELETE' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed');
+    showToast('Deleted batch ' + batchId + ' (' + data.deleted + ' records)', 'ok');
+    setTimeout(() => location.reload(), 500);
+  } catch (err) {
+    showToast('Error: ' + err.message, 'err');
   }
 }
 

@@ -251,6 +251,32 @@ class VEBatchStore:
         batches.sort(key=lambda b: b.created_at, reverse=True)
         return batches[:limit]
 
+    def delete_batch(self, batch_id: str) -> int:
+        """Delete a batch and all its lines/posting records."""
+        pk = f"BATCH#{batch_id}"
+        deleted = 0
+        last_key = None
+        while True:
+            kwargs = dict(
+                TableName=self.table,
+                KeyConditionExpression='pk = :pk',
+                ExpressionAttributeValues={':pk': {'S': pk}},
+                ProjectionExpression='pk, sk',
+            )
+            if last_key:
+                kwargs['ExclusiveStartKey'] = last_key
+            resp = self.ddb.query(**kwargs)
+            items = resp.get('Items', [])
+            for i in range(0, len(items), 25):
+                chunk = items[i:i + 25]
+                requests = [{'DeleteRequest': {'Key': {'pk': it['pk'], 'sk': it['sk']}}} for it in chunk]
+                self.ddb.batch_write_item(RequestItems={self.table: requests})
+                deleted += len(chunk)
+            last_key = resp.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        return deleted
+
     # ── Line CRUD ────────────────────────────────────────────────────────
 
     def put_line(self, line: VELineReview):
