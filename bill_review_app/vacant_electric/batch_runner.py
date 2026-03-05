@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # S3 paths for config data
 _BILLING_BUCKET = 'jrk-analytics-billing'
-_DIM_PROPERTY_KEY = 'Bill_Parser_Enrichment/exports/dim_property/latest.json.gz'
+_DIM_PROPERTY_PREFIX = 'Bill_Parser_Enrichment/exports/dim_property/'
 _S3_PROPERTY_MAPPING_KEY = 've-config/S3_PROPERTY_MAPPING.json'
 
 # Shared thread pool for background pipeline runs
@@ -44,10 +44,30 @@ def _load_property_mapping(s3_client, bucket: str = _BILLING_BUCKET) -> Dict[str
     Returns dict like {'CHA': '1296675', 'OAK': '1234567', ...}.
     """
     try:
-        resp = s3_client.get_object(Bucket=bucket, Key=_DIM_PROPERTY_KEY)
+        # Find the latest partition (e.g. dt=2025-09-18/data.json.gz)
+        list_resp = s3_client.list_objects_v2(
+            Bucket=bucket, Prefix=_DIM_PROPERTY_PREFIX, MaxKeys=100
+        )
+        keys = sorted(
+            [o['Key'] for o in list_resp.get('Contents', []) if o['Key'].endswith('.json.gz')],
+            reverse=True
+        )
+        if not keys:
+            logger.warning("No dim_property files found under %s", _DIM_PROPERTY_PREFIX)
+            return {}
+        dim_key = keys[0]
+        logger.info(f"Using dim_property file: {dim_key}")
+        resp = s3_client.get_object(Bucket=bucket, Key=dim_key)
         raw = resp['Body'].read()
         text = gzip.decompress(raw).decode('utf-8', errors='ignore')
-        records = json.loads(text)
+        # Support both JSON array and JSONL (one JSON object per line)
+        text = text.strip()
+        if text.startswith('['):
+            records = json.loads(text)
+        elif text.startswith('{'):
+            records = [json.loads(line) for line in text.split('\n') if line.strip()]
+        else:
+            records = json.loads(text)
         if isinstance(records, dict):
             records = records.get('records', records.get('data', []))
         if not isinstance(records, list):
