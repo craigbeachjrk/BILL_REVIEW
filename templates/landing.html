@@ -220,64 +220,6 @@
       setTimeout(() => t.classList.remove('show'), 2500);
     }
 
-    const modal = document.getElementById('improveModal');
-    const improveBtn = document.getElementById('improveBtn');
-    const cancelBtn = document.getElementById('cancelReport');
-    const submitBtn = document.getElementById('submitReport');
-    const titleInput = document.getElementById('reportTitle');
-    const descInput = document.getElementById('reportDesc');
-
-    improveBtn.addEventListener('click', () => {
-      modal.classList.add('show');
-      titleInput.focus();
-    });
-
-    cancelBtn.addEventListener('click', () => {
-      modal.classList.remove('show');
-      titleInput.value = '';
-      descInput.value = '';
-    });
-
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        modal.classList.remove('show');
-        titleInput.value = '';
-        descInput.value = '';
-      }
-    });
-
-    submitBtn.addEventListener('click', async () => {
-      const title = titleInput.value.trim();
-      const description = descInput.value.trim();
-
-      if (!title || !description) {
-        showToast('Please fill in both title and description', 'err');
-        return;
-      }
-
-      try {
-        const response = await fetch('/api/debug/report', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            title: title,
-            description: description,
-            page_url: window.location.href
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to submit report');
-        }
-
-        showToast('Report submitted successfully', 'ok');
-        modal.classList.remove('show');
-        titleInput.value = '';
-        descInput.value = '';
-      } catch (e) {
-        showToast('Error submitting report', 'err');
-      }
-    });  
     // ===IMPROVE-JS-START===
     (function(){
       // ---------- helpers ----------
