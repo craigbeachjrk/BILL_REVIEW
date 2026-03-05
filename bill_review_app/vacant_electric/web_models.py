@@ -239,15 +239,19 @@ class VEBatchStore:
 
     def list_batches(self, limit: int = 20) -> List[VEBatch]:
         """List recent batches (scan for META records, sorted by created_at desc)."""
-        resp = self.ddb.scan(
-            TableName=self.table,
-            FilterExpression='sk = :meta',
-            ExpressionAttributeValues={':meta': {'S': 'META'}},
-            Limit=limit * 5,  # over-fetch since scan doesn't guarantee order
-        )
         batches = []
-        for item in resp.get('Items', []):
-            batches.append(_from_ddb_item(item, VEBatch))
+        scan_args = {
+            'TableName': self.table,
+            'FilterExpression': 'sk = :meta',
+            'ExpressionAttributeValues': {':meta': {'S': 'META'}},
+        }
+        while True:
+            resp = self.ddb.scan(**scan_args)
+            for item in resp.get('Items', []):
+                batches.append(_from_ddb_item(item, VEBatch))
+            if 'LastEvaluatedKey' not in resp or len(batches) >= limit:
+                break
+            scan_args['ExclusiveStartKey'] = resp['LastEvaluatedKey']
         batches.sort(key=lambda b: b.created_at, reverse=True)
         return batches[:limit]
 
