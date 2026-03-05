@@ -68,6 +68,22 @@ WHERE LEASE_STATUS IN ('Current', 'Past', 'Notice')
 """
 
 
+def ap_invoice_query() -> str:
+    """
+    Distinct (lookup_code, vendor_name, account_number) from AP invoices.
+    Used to link properties to S3 utility PDF UUIDs via BillPDFLocator.
+    """
+    return """
+SELECT DISTINCT
+    LOOKUP_CODE,
+    VENDOR_NAME,
+    ACCOUNT_NUMBER
+FROM RAW.ENTRATA.AP_INVOICE_LIVE
+WHERE LOOKUP_CODE IS NOT NULL
+  AND VENDOR_NAME IS NOT NULL
+"""
+
+
 def total_expense_query(post_month_abbr: str) -> str:
     """
     Total VE expense by property for billback % calculation.

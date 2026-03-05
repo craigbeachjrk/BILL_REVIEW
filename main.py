@@ -508,6 +508,7 @@ configure_ve(
     snowflake_conn_factory=_ve_snowflake_factory,
     admin_fees={},
     corrections_csv=None,
+    s3_client=s3,
 )
 app.include_router(ve_router)
 

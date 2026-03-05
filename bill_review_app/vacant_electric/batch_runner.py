@@ -5,12 +5,13 @@ Runs VEPipeline in a background thread, classifies all lines (including past res
 and sub-threshold rows for reviewer visibility), enriches with bill PDFs and lease
 clauses, and writes everything to DynamoDB.
 """
+import gzip
 import json
 import logging
 import re
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict, List, Callable
 
 import pandas as pd
 
@@ -19,6 +20,7 @@ from .pipeline import VEPipeline
 from .classifier import classify_detail_df, classify_unmatched_df, get_status_summary, get_suggested_action
 from .s3_bills import BillPDFLocator
 from .lease_clauses import LeaseClauseFinder
+from .queries import ap_invoice_query
 from .web_models import (
     VEBatch, VELineReview, VEBatchStore,
     BATCH_RUNNING, BATCH_READY, BATCH_FAILED,
@@ -27,8 +29,77 @@ from .web_models import (
 
 logger = logging.getLogger(__name__)
 
+# S3 paths for config data
+_BILLING_BUCKET = 'jrk-analytics-billing'
+_DIM_PROPERTY_KEY = 'Bill_Parser_Enrichment/exports/dim_property/latest.json.gz'
+_S3_PROPERTY_MAPPING_KEY = 've-config/S3_PROPERTY_MAPPING.json'
+
 # Shared thread pool for background pipeline runs
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='ve-batch')
+
+
+def _load_property_mapping(s3_client, bucket: str = _BILLING_BUCKET) -> Dict[str, str]:
+    """
+    Load lookup_code -> entrata_property_id mapping from S3 dim_property file.
+    Returns dict like {'CHA': '1296675', 'OAK': '1234567', ...}.
+    """
+    try:
+        resp = s3_client.get_object(Bucket=bucket, Key=_DIM_PROPERTY_KEY)
+        raw = resp['Body'].read()
+        text = gzip.decompress(raw).decode('utf-8', errors='ignore')
+        records = json.loads(text)
+        if isinstance(records, dict):
+            records = records.get('records', records.get('data', []))
+        if not isinstance(records, list):
+            logger.warning("dim_property: unexpected format, got %s", type(records))
+            return {}
+
+        mapping = {}
+        for r in records:
+            lookup = (
+                r.get('lookup_code') or r.get('lookupCode')
+                or r.get('LOOKUP_CODE') or r.get('LookupCode') or ''
+            ).strip()
+            prop_id = str(
+                r.get('id') or r.get('propertyId') or r.get('PROPERTY_ID')
+                or r.get('property_id') or r.get('PROPERTYID') or ''
+            ).strip()
+            if lookup and prop_id:
+                mapping[lookup] = prop_id
+        logger.info(f"Property mapping loaded: {len(mapping)} properties")
+        return mapping
+    except Exception as e:
+        logger.warning(f"Failed to load property mapping: {e}")
+        return {}
+
+
+def _load_s3_property_mapping(s3_client, bucket: str = _BILLING_BUCKET) -> List[Dict]:
+    """Load S3_PROPERTY_MAPPING.json (UUID->vendor->account structure for BillPDFLocator)."""
+    try:
+        resp = s3_client.get_object(Bucket=bucket, Key=_S3_PROPERTY_MAPPING_KEY)
+        data = json.loads(resp['Body'].read().decode('utf-8'))
+        if isinstance(data, list):
+            logger.info(f"S3 property mapping loaded: {len(data)} entries")
+            return data
+        logger.warning("S3 property mapping: unexpected format")
+        return []
+    except Exception as e:
+        logger.warning(f"Failed to load S3 property mapping: {e}")
+        return []
+
+
+def _load_ap_invoice_data(snowflake_conn) -> List[tuple]:
+    """Run AP invoice query to get (lookup_code, vendor_name, account_number) tuples."""
+    try:
+        cur = snowflake_conn.cursor()
+        cur.execute(ap_invoice_query())
+        rows = cur.fetchall()
+        cur.close()
+        logger.info(f"AP invoice data loaded: {len(rows)} rows")
+        return [(r[0], r[1], r[2] or '') for r in rows]
+    except Exception as e:
+        logger.warning(f"Failed to load AP invoice data: {e}")
+        return []
 
 
 def run_batch(
@@ -42,6 +113,7 @@ def run_batch(
     bill_locator: Optional[BillPDFLocator] = None,
     clause_finder: Optional[LeaseClauseFinder] = None,
     on_progress: Optional[Callable] = None,
+    s3_client=None,
 ) -> str:
     """
     Launch a pipeline batch run in a background thread.
@@ -57,6 +129,7 @@ def run_batch(
         bill_locator: Optional BillPDFLocator for bill PDF enrichment
         clause_finder: Optional LeaseClauseFinder for lease clause enrichment
         on_progress: Optional callback(batch_id, message) for progress updates
+        s3_client: boto3 S3 client for loading dim_property + S3 property mapping
 
     Returns:
         batch_id string (pipeline runs asynchronously)
@@ -77,6 +150,7 @@ def run_batch(
         batch_id, month, year, snowflake_conn, store,
         admin_fees, corrections_csv_path,
         bill_locator, clause_finder, on_progress,
+        s3_client,
     )
 
     return batch_id
@@ -93,9 +167,32 @@ def _run_batch_worker(
     bill_locator: Optional[BillPDFLocator],
     clause_finder: Optional[LeaseClauseFinder],
     on_progress: Optional[Callable],
+    s3_client=None,
 ):
     """Background worker that runs the full pipeline and persists results."""
     try:
+        # ── Dynamic setup: property mapping, lease clause finder, bill PDF locator ──
+        if s3_client:
+            _progress(on_progress, batch_id, "Loading property mapping...")
+            prop_mapping = _load_property_mapping(s3_client)
+
+            # Wire property mapping into LeaseClauseFinder
+            if clause_finder and prop_mapping:
+                clause_finder.set_property_mapping(prop_mapping)
+
+            # Build BillPDFLocator dynamically if not already provided
+            if not bill_locator or not bill_locator._indexed:
+                _progress(on_progress, batch_id, "Loading S3 property mapping for bill PDFs...")
+                s3_prop_map = _load_s3_property_mapping(s3_client)
+                if s3_prop_map:
+                    bill_locator = BillPDFLocator(s3_client, s3_prop_map)
+                    _progress(on_progress, batch_id, "Loading AP invoice data...")
+                    ap_rows = _load_ap_invoice_data(snowflake_conn)
+                    if ap_rows:
+                        bill_locator.link_properties_from_ap(ap_rows)
+                        _progress(on_progress, batch_id, "Indexing bill PDFs...")
+                        bill_locator.index_pdfs()
+
         _progress(on_progress, batch_id, "Running VE pipeline...")
 
         config = VEConfig(
@@ -317,14 +414,24 @@ def _enrich_lease_clauses(lines: list, finder: LeaseClauseFinder):
                 line.lease_page_key = info['pages'][0].pdf_s3_key or ''
             if info['extractions']:
                 ext = info['extractions'][0]
-                line.lease_extraction = json.dumps({
+                ext_data = {
                     'billing_method': ext.billing_method,
                     'rubs_type': ext.rubs_type,
                     'utility_types': ext.utility_types,
                     'monthly_cap': ext.monthly_cap,
                     'admin_fee': ext.admin_fee,
                     'billing_company': ext.billing_company,
-                }, default=str)
+                }
+                # Include per-utility detail from v2 raw_extraction if available
+                if ext.raw_extraction:
+                    raw_ext = ext.raw_extraction.get('extraction', {})
+                    utilities = raw_ext.get('utilities')
+                    if utilities:
+                        ext_data['utilities'] = utilities
+                    raw_text = ext.raw_text
+                    if raw_text:
+                        ext_data['special_provisions'] = raw_text
+                line.lease_extraction = json.dumps(ext_data, default=str)
 
     logger.info(f"Lease clauses found: {found}/{len(lines)}")
 

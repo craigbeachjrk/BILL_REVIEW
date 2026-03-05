@@ -45,6 +45,7 @@ _bill_locator: Optional[BillPDFLocator] = None
 _snowflake_conn_factory = None
 _admin_fees = {}
 _corrections_csv = None
+_s3_client = None
 
 
 def configure(
@@ -55,13 +56,14 @@ def configure(
     snowflake_conn_factory=None,
     admin_fees: dict = None,
     corrections_csv: str = None,
+    s3_client=None,
 ):
     """
     Configure the VE web module with required dependencies.
     Call this from Bill Review's startup before including the router.
     """
     global _store, _ar_client, _bill_locator, _clause_finder
-    global _snowflake_conn_factory, _admin_fees, _corrections_csv
+    global _snowflake_conn_factory, _admin_fees, _corrections_csv, _s3_client
     _store = store
     _ar_client = ar_client
     _bill_locator = bill_locator
@@ -69,6 +71,7 @@ def configure(
     _snowflake_conn_factory = snowflake_conn_factory
     _admin_fees = admin_fees or {}
     _corrections_csv = corrections_csv
+    _s3_client = s3_client
 
 
 def _get_store() -> VEBatchStore:
@@ -166,6 +169,7 @@ async def api_run_pipeline(
         corrections_csv_path=_corrections_csv,
         bill_locator=_bill_locator,
         clause_finder=_clause_finder,
+        s3_client=_s3_client,
     )
 
     return JSONResponse({'batch_id': batch_id, 'status': BATCH_RUNNING})
