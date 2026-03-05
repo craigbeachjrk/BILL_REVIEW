@@ -211,6 +211,25 @@ def _run_batch_worker(
         # We want to use pipeline's matched_df which is pre-finalization for full visibility
         detail_df = pipeline.final_df if pipeline.final_df is not None else result.detail_df
 
+        # ── Diagnostic logging (helps diagnose $0 / BILLING_ISSUE issues) ──
+        unmatched_df = result.unmatched_df
+        if detail_df is not None and not detail_df.empty:
+            logger.info(f"[{batch_id}] Matched detail_df: {len(detail_df)} rows")
+            if 'Total' in detail_df.columns:
+                logger.info(f"[{batch_id}]   Total range: ${detail_df['Total'].min():.2f} - ${detail_df['Total'].max():.2f}")
+            if 'dramount' in detail_df.columns:
+                logger.info(f"[{batch_id}]   dramount range: ${detail_df['dramount'].min():.2f} - ${detail_df['dramount'].max():.2f}")
+            logger.info(f"[{batch_id}]   Columns: {list(detail_df.columns)}")
+        else:
+            logger.warning(f"[{batch_id}] detail_df is EMPTY — all lines are unmatched")
+
+        if unmatched_df is not None and not unmatched_df.empty:
+            logger.info(f"[{batch_id}] Unmatched: {len(unmatched_df)} rows")
+            if 'dramount' in unmatched_df.columns:
+                logger.info(f"[{batch_id}]   dramount range: ${unmatched_df['dramount'].min():.2f} - ${unmatched_df['dramount'].max():.2f}")
+        else:
+            logger.info(f"[{batch_id}] No unmatched lines")
+
         # Build lines from detail + unmatched
         lines = []
 
@@ -224,7 +243,6 @@ def _run_batch_worker(
                 lines.append(line)
 
         # Process unmatched lines
-        unmatched_df = result.unmatched_df
         if unmatched_df is not None and not unmatched_df.empty:
             classified_unmatched = classify_unmatched_df(unmatched_df)
             _progress(on_progress, batch_id, f"Classified {len(classified_unmatched)} unmatched lines")

@@ -115,11 +115,14 @@ tr.row td:first-child { padding-left: 6px; }
 .action-EXCLUDED { color: #dc2626; }
 td.money { text-align: right; font-variant-numeric: tabular-nums; }
 col.cb { width: 30px; }
-col.prop { width: 60px; }
+col.code { width: 50px; }
+col.prop { width: 120px; }
 col.unit { width: 55px; }
-col.resident { width: 110px; }
+col.resident { width: 100px; }
+col.movein { width: 78px; }
+col.moveout { width: 78px; }
 col.status { width: 100px; }
-col.utility { width: 85px; }
+col.utility { width: 75px; }
 col.amount { width: 70px; }
 col.period { width: 85px; }
 col.action { width: 75px; }
@@ -284,15 +287,19 @@ col.action { width: 75px; }
 <div class="table-card">
   <table id="linesTable">
     <colgroup>
-      <col class="cb"><col class="prop"><col class="unit"><col class="resident">
+      <col class="cb"><col class="code"><col class="prop"><col class="unit"><col class="resident">
+      <col class="movein"><col class="moveout">
       <col class="status"><col class="utility"><col class="amount"><col class="period"><col class="action">
     </colgroup>
     <thead>
       <tr>
         <th></th>
-        <th data-sort="entity_id">Property</th>
+        <th data-sort="entity_id">Code</th>
+        <th data-sort="property_name">Property</th>
         <th data-sort="unit_id">Unit</th>
         <th data-sort="resident_name">Resident</th>
+        <th data-sort="move_in_date">Move In</th>
+        <th data-sort="move_out_date">Move Out</th>
         <th data-sort="review_status">Status</th>
         <th data-sort="utility">Utility</th>
         <th data-sort="total">Total</th>
@@ -301,7 +308,7 @@ col.action { width: 75px; }
       </tr>
     </thead>
     <tbody id="linesBody">
-      <tr><td colspan="9" class="loading"><span class="spinner"></span> Loading lines...</td></tr>
+      <tr><td colspan="12" class="loading"><span class="spinner"></span> Loading lines...</td></tr>
     </tbody>
   </table>
 </div>
@@ -367,6 +374,8 @@ let currentLineId = null;
 let sortField = 'entity_id';
 let sortDir = 'asc';
 
+function lookupCode(id) { return (id||'').replace(/^\d+/, ''); }
+
 function showToast(msg, type) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -389,7 +398,7 @@ function actionBadge(action) {
 
 async function loadLines() {
   const body = document.getElementById('linesBody');
-  body.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span> Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="12" class="loading"><span class="spinner"></span> Loading...</td></tr>';
 
   const params = new URLSearchParams();
   const p = document.getElementById('fProperty').value;
@@ -413,7 +422,7 @@ async function loadLines() {
     updateSummary();
     renderTable();
   } catch (err) {
-    body.innerHTML = '<tr><td colspan="9" class="loading" style="color:#b91c1c">Error loading lines</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="loading" style="color:#b91c1c">Error loading lines</td></tr>';
     showToast('Error: ' + err.message, 'err');
   }
 }
@@ -426,7 +435,9 @@ function populatePropertyFilter() {
   sel.innerHTML = '<option value="">All (' + allLines.length + ')</option>';
   props.forEach(p => {
     const ct = allLines.filter(l => l.entity_id === p).length;
-    sel.innerHTML += '<option value="' + p + '"' + (p===current?' selected':'') + '>' + p + ' (' + ct + ')</option>';
+    const pName = (allLines.find(l => l.entity_id === p) || {}).property_name || '';
+    const label = lookupCode(p) + (pName ? ' - ' + pName : '') + ' (' + ct + ')';
+    sel.innerHTML += '<option value="' + p + '"' + (p===current?' selected':'') + '>' + label + '</option>';
   });
 }
 
@@ -463,9 +474,12 @@ function renderTable() {
     const sel = selectedIds.has(l.line_id) ? ' selected' : '';
     html += '<tr class="row' + sel + '" data-id="' + l.line_id + '">';
     html += '<td><input type="checkbox" ' + (selectedIds.has(l.line_id)?'checked':'') + ' onclick="event.stopPropagation();toggleSelect(\'' + l.line_id + '\',this.checked)"></td>';
-    html += '<td title="' + (l.property_name||'') + '">' + (l.entity_id||'') + '</td>';
+    html += '<td title="' + (l.entity_id||'') + '">' + lookupCode(l.entity_id) + '</td>';
+    html += '<td title="' + (l.entity_id||'') + '">' + (l.property_name||'') + '</td>';
     html += '<td>' + (l.unit_id||'') + '</td>';
     html += '<td title="' + (l.resident_name||'') + '">' + (l.resident_name||'<em style=color:var(--muted)>vacant</em>') + '</td>';
+    html += '<td>' + (l.move_in_date||'') + '</td>';
+    html += '<td>' + (l.move_out_date||'') + '</td>';
     html += '<td>' + statusBadgeHtml(l.review_status) + '</td>';
     html += '<td>' + (l.utility||'').replace('Vacant ','') + '</td>';
     html += '<td class="money">' + fmt$(l.total) + '</td>';
@@ -473,7 +487,7 @@ function renderTable() {
     html += '<td>' + actionBadge(l.reviewer_action) + '</td>';
     html += '</tr>';
   });
-  body.innerHTML = html || '<tr><td colspan="9" class="loading">No lines match filters</td></tr>';
+  body.innerHTML = html || '<tr><td colspan="12" class="loading">No lines match filters</td></tr>';
 
   // Row click → open drawer
   body.querySelectorAll('tr.row').forEach(tr => {
@@ -560,7 +574,7 @@ function openDrawer(lineId) {
 
   document.getElementById('drawerMask').classList.add('open');
   document.getElementById('drawer').classList.add('open');
-  document.getElementById('drawerTitle').textContent = (line.entity_id||'') + ' - ' + (line.unit_id||'') + ' - ' + (line.resident_name||'Vacant');
+  document.getElementById('drawerTitle').textContent = lookupCode(line.entity_id) + ' \u2014 ' + (line.property_name||'') + ' \u2014 Unit ' + (line.unit_id||'');
   document.getElementById('drawerNotes').value = line.reviewer_notes || '';
 
   // Resident Info
