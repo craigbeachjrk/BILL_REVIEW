@@ -398,7 +398,7 @@ async function loadLines() {
   if (p) params.set('property', p);
   if (s) params.set('status', s);
   if (a) params.set('action', a);
-  params.set('limit', '1000');
+  params.set('limit', '5000');
 
   try {
     const resp = await fetch('/ve/api/batch/' + BATCH_ID + '/lines?' + params);

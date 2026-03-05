@@ -189,7 +189,7 @@ async def api_get_lines(
     property: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     action: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(500, ge=1, le=5000),
     user: str = Depends(require_user),
 ):
     """Get paginated lines for a batch with optional filters."""

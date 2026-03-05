@@ -351,7 +351,6 @@ class VEBatchStore:
             'TableName': self.table,
             'KeyConditionExpression': key_condition,
             'ExpressionAttributeValues': expr_values,
-            'Limit': limit,
         }
         if filter_parts:
             query_args['FilterExpression'] = ' AND '.join(filter_parts)
@@ -359,11 +358,20 @@ class VEBatchStore:
         if last_key:
             query_args['ExclusiveStartKey'] = last_key
 
-        resp = self.ddb.query(**query_args)
-        lines = [_from_ddb_item(item, VELineReview) for item in resp.get('Items', [])]
+        # Auto-paginate to collect up to `limit` items
+        lines = []
+        while len(lines) < limit:
+            resp = self.ddb.query(**query_args)
+            for item in resp.get('Items', []):
+                lines.append(_from_ddb_item(item, VELineReview))
+                if len(lines) >= limit:
+                    break
+            if 'LastEvaluatedKey' not in resp:
+                break
+            query_args['ExclusiveStartKey'] = resp['LastEvaluatedKey']
 
         result = {'lines': lines}
-        if 'LastEvaluatedKey' in resp:
+        if 'LastEvaluatedKey' in resp and len(lines) >= limit:
             result['last_key'] = resp['LastEvaluatedKey']
         return result
 
