@@ -10762,14 +10762,10 @@ def _get_directed_plan_lock(user: str) -> threading.Lock:
         return _DIRECTED_PLAN_LOCKS[user]
 
 @app.post("/api/directed/generate")
-def api_directed_generate(request: Request, user: str = Depends(require_user)):
+async def api_directed_generate(request: Request, user: str = Depends(require_user)):
     """Generate today's directed work plan for the current user."""
     try:
-        import asyncio
-        try:
-            body = asyncio.get_event_loop().run_until_complete(request.json())
-        except Exception:
-            body = {}
+        body = await request.json()
         mode = body.get("mode", "my_bills")
         target_ap = body.get("targetAp", "")
         filter_property = body.get("filterProperty", "")

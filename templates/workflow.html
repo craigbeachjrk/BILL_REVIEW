@@ -300,7 +300,7 @@
             <option value="my_bills">My Bills (by priority)</option>
             <option value="team_member">Team Member's Bills</option>
           </select>
-          <select id="dir_targetAp" style="display:none;padding:6px 10px;border-radius:8px;border:2px solid #f59e0b;background:rgba(255,255,255,.92);color:#0f172a;font-size:13px;font-family:inherit;cursor:pointer;min-width:160px;font-weight:600">
+          <select id="dir_targetAp" onchange="localStorage.setItem('workflow_targetAp',this.value)" style="display:none;padding:6px 10px;border-radius:8px;border:2px solid #f59e0b;background:rgba(255,255,255,.92);color:#0f172a;font-size:13px;font-family:inherit;cursor:pointer;min-width:160px;font-weight:600">
             <option value="">Select AP...</option>
           </select>
           <select id="dir_filterProperty" style="display:none;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.85);color:#0f172a;font-size:13px;font-family:inherit;cursor:pointer;min-width:140px">
@@ -737,10 +737,35 @@ async function initGlobalApFilter() {
       sel.appendChild(opt);
     }
 
+    // Restore persisted AP filter
+    const savedAp = localStorage.getItem('workflow_apFilter') || '';
+    if (savedAp && [...sel.options].some(o => o.value === savedAp)) {
+      sel.value = savedAp;
+      window.currentApFilter = savedAp;
+      onGlobalApFilterChange();
+    }
+
     sel.addEventListener('change', () => {
       window.currentApFilter = sel.value;
+      localStorage.setItem('workflow_apFilter', sel.value);
       onGlobalApFilterChange();
     });
+
+    // Restore plan mode + target AP from localStorage
+    const savedMode = localStorage.getItem('workflow_planMode') || '';
+    if (savedMode && savedMode !== document.getElementById('dir_planMode').value) {
+      document.getElementById('dir_planMode').value = savedMode;
+      dir_onModeChange();
+    }
+    if (savedMode === 'team_member') {
+      const savedTarget = localStorage.getItem('workflow_targetAp') || '';
+      if (savedTarget) {
+        const apSel2 = document.getElementById('dir_targetAp');
+        if ([...apSel2.options].some(o => o.value === savedTarget)) {
+          apSel2.value = savedTarget;
+        }
+      }
+    }
   } catch (e) {
     console.error('Failed to load AP mapping:', e);
   }
@@ -920,7 +945,14 @@ function dir_onModeChange() {
   document.getElementById('dir_targetAp').style.display = show ? '' : 'none';
   document.getElementById('dir_filterProperty').style.display = show ? '' : 'none';
   document.getElementById('dir_filterVendor').style.display = show ? '' : 'none';
+  localStorage.setItem('workflow_planMode', mode);
   if (show) dir_populateModeSelectors();
+
+  // Clear stale noEmailMatch display when switching modes
+  if (show && dir_plan && dir_plan.noEmailMatch) {
+    dir_plan = null;
+    dir_showEmpty();
+  }
 }
 
 function dir_populateModeSelectors() {
