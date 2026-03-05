@@ -44,6 +44,9 @@ def aggregate_gl_to_invoice(df: pd.DataFrame) -> pd.DataFrame:
         'Bill_End': 'Bill End',
         'Unit_String': 'Unit String'
     }, inplace=True)
+    # Snowflake TRY_TO_NUMBER returns Decimal; cast to float for arithmetic
+    agg['dramount'] = agg['dramount'].astype(float)
+    agg['cramount'] = agg['cramount'].astype(float)
     print(f"  Aggregated GL line items by invoice: {pre_count} -> {len(agg)} records")
     print(f"  ({pre_count - len(agg)} GL line items collapsed into invoice-level rows)")
     return agg
@@ -99,7 +102,7 @@ def calculate_proration(df: pd.DataFrame) -> pd.DataFrame:
             overlap_days = row['Overlap Days']
             bill_start = pd.to_datetime(row['Bill Start'], errors='coerce')
             bill_end = pd.to_datetime(row['Bill End'], errors='coerce')
-            dramount = row['dramount']
+            dramount = float(row['dramount'])
             if pd.isna(overlap_days) or pd.isna(bill_start) or pd.isna(bill_end) or pd.isna(dramount):
                 prorated_list.append(0)
                 continue
