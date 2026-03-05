@@ -73,7 +73,9 @@ class VEPipeline:
             cur = conn.cursor()
             try:
                 cur.execute(query)
-                return cur.fetch_pandas_all()
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+                return pd.DataFrame(rows, columns=cols)
             finally:
                 cur.close()
 
