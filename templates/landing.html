@@ -70,8 +70,10 @@
 <body>
   <header class="top">
     <div><a href="/" style="color:#fff;text-decoration:none;font-weight:600">Bill Review @ JRK</a></div>
-      <div class="logout" style="display:flex;align-items:center;gap:10px">        <form method="post" action="/logout"><button class="btn" type="submit">Logout</button></form>
-    </div>  <button class="btn secondary" id="improveBtn">IMPROVE</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn secondary" id="improveBtn">IMPROVE</button>
+        <form method="post" action="/logout"><button class="btn secondary" type="submit">Logout</button></form>
+      </div>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
   <div id="improveToast" class="improve-toast"></div>
