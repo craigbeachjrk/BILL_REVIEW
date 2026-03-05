@@ -374,7 +374,8 @@ let currentLineId = null;
 let sortField = 'entity_id';
 let sortDir = 'asc';
 
-function lookupCode(id) { return (id||'').replace(/^\d+/, ''); }
+function lookupCode(id) { return id || ''; }
+function cleanVal(v) { return (!v || v === 'NaT' || v === 'nan' || v === 'None') ? '' : v; }
 
 function showToast(msg, type) {
   const t = document.getElementById('toast');
@@ -478,8 +479,8 @@ function renderTable() {
     html += '<td title="' + (l.entity_id||'') + '">' + (l.property_name||'') + '</td>';
     html += '<td>' + (l.unit_id||'') + '</td>';
     html += '<td title="' + (l.resident_name||'') + '">' + (l.resident_name||'<em style=color:var(--muted)>vacant</em>') + '</td>';
-    html += '<td>' + (l.move_in_date||'') + '</td>';
-    html += '<td>' + (l.move_out_date||'') + '</td>';
+    html += '<td>' + cleanVal(l.move_in_date) + '</td>';
+    html += '<td>' + cleanVal(l.move_out_date) + '</td>';
     html += '<td>' + statusBadgeHtml(l.review_status) + '</td>';
     html += '<td>' + (l.utility||'').replace('Vacant ','') + '</td>';
     html += '<td class="money">' + fmt$(l.total) + '</td>';
@@ -581,11 +582,11 @@ function openDrawer(lineId) {
   const rg = document.getElementById('residentGrid');
   rg.innerHTML = `
     <div class="dl">Name</div><div class="dv">${line.resident_name||'N/A'}</div>
-    <div class="dl">Lease ID</div><div class="dv">${line.resi_id||'N/A'}</div>
+    <div class="dl">Lease ID</div><div class="dv">${cleanVal(line.lease_id)||cleanVal(line.resi_id)||'N/A'}</div>
     <div class="dl">Status</div><div class="dv">${statusBadgeHtml(line.review_status)}</div>
-    <div class="dl">Resi Status</div><div class="dv">${line.resi_status||'N/A'}</div>
-    <div class="dl">Move In</div><div class="dv">${line.move_in_date||'N/A'}</div>
-    <div class="dl">Move Out</div><div class="dv">${line.move_out_date||'N/A'}</div>
+    <div class="dl">Lease Status</div><div class="dv">${cleanVal(line.resi_status)||'N/A'}</div>
+    <div class="dl">Move In</div><div class="dv">${cleanVal(line.move_in_date)||'N/A'}</div>
+    <div class="dl">Move Out</div><div class="dv">${cleanVal(line.move_out_date)||''}</div>
   `;
 
   // Proration

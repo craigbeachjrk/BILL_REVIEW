@@ -116,7 +116,7 @@ class VEPipeline:
 
         # CEH exclusion
         self.main_df = self.main_df[
-            ~((self.main_df['Property'] == '01CEH') &
+            ~((self.main_df['entityid'] == 'CEH') &
               (self.main_df['description'].str.contains('200C@M14')))
         ]
 
@@ -176,7 +176,7 @@ class VEPipeline:
         unitid_failures = []
         for index, row in self.main_df.iterrows():
             try:
-                if row['entityid'] == "01RBV":
+                if row['entityid'] == "RBV":
                     unit_id = RBV(row['description'])
                 else:
                     unit_id = APT(row['entityid'], row['Unit String'])

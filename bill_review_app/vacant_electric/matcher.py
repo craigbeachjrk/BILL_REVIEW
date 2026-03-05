@@ -159,11 +159,10 @@ def finalize_detail(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     Returns:
         (final_df, errors_df)
     """
-    from .config import CHARGE_CODE_MAP, LEASE_STATUS_MAP
+    from .config import CHARGE_CODE_MAP
 
     df = df.copy()
     df['Code'] = df['Utility'].map(CHARGE_CODE_MAP)
-    df['entrata_lease_status'] = df['ResiStatus'].map(LEASE_STATUS_MAP)
 
     # Separate errors
     df['error'] = df['description'].apply(lambda d: "!" in str(d))
@@ -204,7 +203,7 @@ def aggregate_charges(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     agg = df.groupby(
-        ['Property', 'entityid', 'Bldg ID', 'Unit ID', 'Code', 'entrata_lease_status', 'memo',
+        ['Property', 'entityid', 'Bldg ID', 'Unit ID', 'Code', 'memo',
          'ResiId', 'Name', 'MoveInDate', 'MoveOutDate', 'ResiStatus',
          'Utility', 'Bill Start', 'Bill End', 'Bill Days', 'Overlap Start', 'Overlap End', 'Overlap Days'],
         dropna=False
@@ -224,8 +223,8 @@ def aggregate_charges(df: pd.DataFrame) -> pd.DataFrame:
 
     agg = agg[agg['Total'] > MIN_BILLBACK_THRESHOLD]
 
-    past_removed = (agg['ResiStatus'] == 'P').sum()
-    agg = agg[agg['ResiStatus'] != 'P']
+    past_removed = (agg['ResiStatus'] == 'Past').sum()
+    agg = agg[agg['ResiStatus'] != 'Past']
 
     print(f"\n  Aggregated: {len(df)} detail rows -> {pre_filter} charge lines")
     print(f"  Removed: {net_negative} net-zero/negative, {net_small} under ${MIN_BILLBACK_THRESHOLD}, {past_removed} past residents -> {len(agg)} final rows")

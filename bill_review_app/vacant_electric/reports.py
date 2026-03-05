@@ -21,7 +21,7 @@ def generate_entrata_csv(agg_df: pd.DataFrame, post_date: str, post_month: str) 
     csv['building name'] = agg_df['Bldg ID']
     csv['unit number'] = agg_df['Unit ID']
     csv['space number'] = np.nan
-    csv['lease status type'] = agg_df['entrata_lease_status']
+    csv['lease status type'] = agg_df['ResiStatus']
     csv['name first'] = np.nan
     csv['name last'] = np.nan
     csv['lease start date'] = np.nan

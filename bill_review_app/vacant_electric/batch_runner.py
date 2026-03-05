@@ -306,17 +306,31 @@ def _run_batch_worker(
 def _row_to_line(row: pd.Series, batch_id: str) -> VELineReview:
     """Convert a classified detail DataFrame row to a VELineReview."""
     def _safe_str(val, default=''):
-        if pd.isna(val) if isinstance(val, (float, type(None))) else False:
-            return default
-        return str(val) if val is not None else default
+        try:
+            if val is None or pd.isna(val):
+                return default
+        except (ValueError, TypeError):
+            pass
+        s = str(val)
+        # Strip ".0" from numeric strings (e.g. lease IDs stored as floats)
+        if s.endswith('.0') and s[:-2].isdigit():
+            return s[:-2]
+        return s
 
     def _safe_date(val):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return ''
         try:
-            return pd.to_datetime(val).strftime('%m/%d/%Y')
+            if val is None or pd.isna(val):
+                return ''
+        except (ValueError, TypeError):
+            pass
+        try:
+            dt = pd.to_datetime(val)
+            if pd.isna(dt):
+                return ''
+            return dt.strftime('%m/%d/%Y')
         except Exception:
-            return _safe_str(val)
+            s = str(val)
+            return '' if s in ('NaT', 'nan', 'None', 'NaN') else s
 
     def _safe_float(val, default=0.0):
         try:
@@ -367,9 +381,15 @@ def _row_to_line(row: pd.Series, batch_id: str) -> VELineReview:
 def _unmatched_row_to_line(row: pd.Series, batch_id: str) -> VELineReview:
     """Convert an unmatched DataFrame row to a VELineReview."""
     def _safe_str(val, default=''):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return default
-        return str(val)
+        try:
+            if val is None or pd.isna(val):
+                return default
+        except (ValueError, TypeError):
+            pass
+        s = str(val)
+        if s.endswith('.0') and s[:-2].isdigit():
+            return s[:-2]
+        return s
 
     def _safe_float(val, default=0.0):
         try:

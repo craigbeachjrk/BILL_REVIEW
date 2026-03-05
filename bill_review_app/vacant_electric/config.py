@@ -26,15 +26,8 @@ CHARGE_CODE_MAP = {
     'Vacant Gas':      'GASRE - Util Non-Compli GAS',
 }
 
-# Entrata lease status abbreviation -> full name
-LEASE_STATUS_MAP = {
-    'C': 'Current',
-    'P': 'Past',
-    'N': 'Notice',
-}
-
 # Lease dedup priority (lower = preferred)
-STATUS_PRIORITY = {'C': 0, 'N': 1, 'P': 2}
+STATUS_PRIORITY = {'Current': 0, 'Notice': 1, 'Past': 2}
 
 # Minimum billback threshold - rows at or below this are filtered out
 MIN_BILLBACK_THRESHOLD = 5.00

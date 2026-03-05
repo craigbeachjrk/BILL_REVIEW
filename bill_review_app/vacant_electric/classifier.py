@@ -76,15 +76,15 @@ def classify_line(row: pd.Series) -> str:
         return STATUS_ISSUE
 
     # Past resident
-    if resi_status == 'P':
+    if resi_status == 'Past':
         return STATUS_PAST
 
     # Notice resident
-    if resi_status == 'N':
+    if resi_status == 'Notice':
         return STATUS_NOTICE
 
     # Current resident — check if new (partial overlap from move-in)
-    if resi_status == 'C':
+    if resi_status == 'Current':
         move_in = row.get('MoveInDate')
         bill_start = row.get('Bill Start')
         if pd.notna(move_in) and pd.notna(bill_start):
