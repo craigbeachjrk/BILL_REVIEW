@@ -67,6 +67,7 @@ import gzip
 from io import BytesIO
 from zoneinfo import ZoneInfo
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # -------- Config --------
@@ -313,6 +314,194 @@ def require_user(request: Request) -> str:
         from fastapi import HTTPException
         raise HTTPException(status_code=307, detail="redirect", headers={"Location": "/login"})
     return user
+
+# -------- UBI Unassigned Cache --------
+_UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float, "sort": str, "computing": bool}
+_UBI_UNASSIGNED_LOCK = threading.Lock()
+_UBI_UNASSIGNED_TTL = 300  # 5 minutes
+
+
+def _compute_ubi_unassigned(days_back: int = 90, sort_by: str = "property_asc") -> list:
+    """Compute unassigned bills from S3 Stage 7, excluding assigned/archived from DDB."""
+    from datetime import datetime, timedelta
+
+    start_time = datetime.now()
+
+    # Get all assigned line items from DynamoDB (with pagination)
+    assigned_hashes = set()
+    try:
+        response = ddb.scan(TableName="jrk-bill-ubi-assignments")
+        for item in response.get("Items", []):
+            line_hash = item.get("line_hash", {}).get("S", "")
+            if line_hash:
+                assigned_hashes.add(line_hash)
+        while "LastEvaluatedKey" in response:
+            response = ddb.scan(
+                TableName="jrk-bill-ubi-assignments",
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            for item in response.get("Items", []):
+                line_hash = item.get("line_hash", {}).get("S", "")
+                if line_hash:
+                    assigned_hashes.add(line_hash)
+        print(f"[UBI CACHE] Found {len(assigned_hashes)} already-assigned line items")
+    except Exception as e:
+        print(f"[UBI CACHE] Error loading assigned items: {e}")
+
+    # Get all archived line items (with pagination)
+    archived_hashes = set()
+    try:
+        response = ddb.scan(TableName="jrk-bill-ubi-archived")
+        for item in response.get("Items", []):
+            line_hash = item.get("line_hash", {}).get("S", "")
+            if line_hash:
+                archived_hashes.add(line_hash)
+        while "LastEvaluatedKey" in response:
+            response = ddb.scan(
+                TableName="jrk-bill-ubi-archived",
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            for item in response.get("Items", []):
+                line_hash = item.get("line_hash", {}).get("S", "")
+                if line_hash:
+                    archived_hashes.add(line_hash)
+        print(f"[UBI CACHE] Found {len(archived_hashes)} archived line items")
+    except Exception as e:
+        print(f"[UBI CACHE] Error loading archived items: {e}")
+
+    # Build date-partitioned prefixes
+    prefixes_to_scan = []
+    today = datetime.now()
+    for i in range(days_back):
+        d = today - timedelta(days=i)
+        prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+        prefixes_to_scan.append(prefix)
+
+    print(f"[UBI CACHE] Scanning {len(prefixes_to_scan)} date partitions")
+
+    # Collect all S3 keys
+    all_keys = []
+    for prefix in prefixes_to_scan:
+        try:
+            paginator = s3.get_paginator('list_objects_v2')
+            s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
+            for s3_page in s3_pages:
+                for obj in s3_page.get('Contents', []):
+                    key = obj['Key']
+                    if key.endswith('.jsonl'):
+                        all_keys.append(key)
+        except Exception:
+            continue
+
+    print(f"[UBI CACHE] Found {len(all_keys)} JSONL files to process")
+
+    def safe_parse_charge(charge_val):
+        if charge_val is None:
+            return 0.0
+        charge_str = str(charge_val).replace("$", "").replace(",", "").strip()
+        if not charge_str:
+            return 0.0
+        if "/" in charge_str or "-" in charge_str:
+            if re.match(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$', charge_str):
+                return 0.0
+        try:
+            return float(charge_str)
+        except (ValueError, TypeError):
+            return 0.0
+
+    EXCLUDE_FIELDS = {'__pdf_b64__', '__pdf_filename__', 'EnrichedProperty'}
+
+    def process_file(key):
+        try:
+            obj_data = s3.get_object(Bucket=BUCKET, Key=key)
+            txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
+            lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+            if not lines:
+                return None
+            try:
+                first_rec = json.loads(lines[0])
+            except json.JSONDecodeError:
+                return None
+            bill_info = {
+                "s3_key": key,
+                "vendor": first_rec.get("Vendor Name", ""),
+                "account": first_rec.get("Account Number", ""),
+                "pdf_id": first_rec.get("pdf_id", ""),
+                "invoice_no": first_rec.get("Invoice Number", ""),
+                "total_amount": 0.0,
+                "line_count": 0,
+                "unassigned_lines": []
+            }
+            for line in lines:
+                try:
+                    rec = json.loads(line)
+                    line_hash = _compute_stable_line_hash(rec)
+                    if line_hash in assigned_hashes or line_hash in archived_hashes:
+                        continue
+                    charge = safe_parse_charge(rec.get("Line Item Charge", "0"))
+                    sanitized_rec = {}
+                    for k, v in rec.items():
+                        if k in EXCLUDE_FIELDS:
+                            continue
+                        if isinstance(v, str):
+                            sanitized_rec[k] = v.replace('\x00', '').replace('\ufffd', '')
+                        else:
+                            sanitized_rec[k] = v
+                    bill_info["unassigned_lines"].append({
+                        "line_hash": line_hash,
+                        "line_data": sanitized_rec,
+                        "charge": charge
+                    })
+                    bill_info["total_amount"] += charge
+                    bill_info["line_count"] += 1
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    continue
+            if bill_info["unassigned_lines"]:
+                return bill_info
+            return None
+        except Exception as e:
+            print(f"[UBI CACHE] Error processing {key}: {e}")
+            return None
+
+    unassigned_bills = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(process_file, key): key for key in all_keys}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                unassigned_bills.append(result)
+
+    # Default sort by total amount descending
+    unassigned_bills.sort(key=lambda x: x["total_amount"], reverse=True)
+
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print(f"[UBI CACHE] Computed {len(unassigned_bills)} unassigned bills in {elapsed:.1f}s")
+    return unassigned_bills
+
+
+def _get_ubi_unassigned_cached(days_back: int = 90, force_refresh: bool = False) -> list:
+    """Get unassigned bills from cache or compute fresh."""
+    global _UBI_UNASSIGNED_CACHE
+    now = time.time()
+    cached = _UBI_UNASSIGNED_CACHE
+    if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
+        return cached["data"]
+    # Compute fresh (under lock to prevent thundering herd)
+    with _UBI_UNASSIGNED_LOCK:
+        # Double-check after acquiring lock
+        cached = _UBI_UNASSIGNED_CACHE
+        if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
+            return cached["data"]
+        data = _compute_ubi_unassigned(days_back)
+        _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time()}
+        return data
+
+
+def _invalidate_ubi_cache():
+    """Invalidate UBI unassigned cache (call after assign/archive/unassign)."""
+    global _UBI_UNASSIGNED_CACHE
+    _UBI_UNASSIGNED_CACHE = {}
+
 
 # -------- Helpers --------
 
@@ -1921,201 +2110,59 @@ def api_billback_ubi_unassigned(
     user: str = Depends(require_user),
     page: int = 1,
     page_size: int = 50,
-    days_back: int = 90
+    days_back: int = 90,
+    refresh: int = 0,
+    sort: str = "property_asc",
+    property_filter: str = "",
+    vendor_filter: str = "",
+    gl_filter: str = "",
 ):
-    """Load line items from Stage 7 that haven't been assigned to UBI periods.
+    """Load unassigned line items from Stage 7 with server-side caching.
 
-    Pagination and date filtering to handle large datasets:
-    - page: Page number (1-indexed)
-    - page_size: Number of bills per page (default 50)
-    - days_back: Only look at files from the last N days (default 90)
+    First request computes and caches all bills (~5 min TTL).
+    Subsequent pages served instantly from cache.
+    Pass refresh=1 to force recomputation.
     """
     try:
-        import hashlib
-        from datetime import datetime, timedelta
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        start_time = time.time()
+        all_bills = _get_ubi_unassigned_cached(days_back, force_refresh=bool(refresh))
 
-        start_time = datetime.now()
+        # Apply server-side filters
+        filtered = all_bills
+        if property_filter:
+            filtered = [b for b in filtered if any(
+                (l.get("line_data", {}).get("EnrichedPropertyName", "") == property_filter or
+                 l.get("line_data", {}).get("Property Name", "") == property_filter)
+                for l in b.get("unassigned_lines", [])[:1]
+            )]
+        if vendor_filter:
+            filtered = [b for b in filtered if b.get("vendor", "") == vendor_filter]
+        if gl_filter:
+            filtered = [b for b in filtered if any(
+                l.get("line_data", {}).get("GL Account", "") == gl_filter
+                for l in b.get("unassigned_lines", [])[:1]
+            )]
 
-        # Get all assigned line items from DynamoDB (with pagination!)
-        assigned_hashes = set()
-        try:
-            response = ddb.scan(TableName="jrk-bill-ubi-assignments")
-            for item in response.get("Items", []):
-                line_hash = item.get("line_hash", {}).get("S", "")
-                if line_hash:
-                    assigned_hashes.add(line_hash)
-            # CRITICAL: Paginate through all results
-            while "LastEvaluatedKey" in response:
-                response = ddb.scan(
-                    TableName="jrk-bill-ubi-assignments",
-                    ExclusiveStartKey=response["LastEvaluatedKey"]
-                )
-                for item in response.get("Items", []):
-                    line_hash = item.get("line_hash", {}).get("S", "")
-                    if line_hash:
-                        assigned_hashes.add(line_hash)
-            print(f"[UBI UNASSIGNED] Found {len(assigned_hashes)} already-assigned line items")
-        except Exception as ddb_error:
-            print(f"[UBI UNASSIGNED] Error loading assigned items: {ddb_error}")
+        # Sort
+        if sort == "amount_desc":
+            filtered.sort(key=lambda x: x["total_amount"], reverse=True)
+        elif sort == "amount_asc":
+            filtered.sort(key=lambda x: x["total_amount"])
+        elif sort == "property_asc":
+            filtered.sort(key=lambda x: (
+                (x.get("unassigned_lines", [{}])[0].get("line_data", {}).get("EnrichedPropertyName", "") or
+                 x.get("unassigned_lines", [{}])[0].get("line_data", {}).get("Property Name", "")),
+                x.get("vendor", "")
+            ))
 
-        # Get all archived line items (with pagination!)
-        archived_hashes = set()
-        try:
-            response = ddb.scan(TableName="jrk-bill-ubi-archived")
-            for item in response.get("Items", []):
-                line_hash = item.get("line_hash", {}).get("S", "")
-                if line_hash:
-                    archived_hashes.add(line_hash)
-            # CRITICAL: Paginate through all results
-            while "LastEvaluatedKey" in response:
-                response = ddb.scan(
-                    TableName="jrk-bill-ubi-archived",
-                    ExclusiveStartKey=response["LastEvaluatedKey"]
-                )
-                for item in response.get("Items", []):
-                    line_hash = item.get("line_hash", {}).get("S", "")
-                    if line_hash:
-                        archived_hashes.add(line_hash)
-            print(f"[UBI UNASSIGNED] Found {len(archived_hashes)} archived line items")
-        except Exception as arch_error:
-            print(f"[UBI UNASSIGNED] Error loading archived line items: {arch_error}")
-
-        # Build date-partitioned prefixes for the last N days to avoid scanning everything
-        prefixes_to_scan = []
-        today = datetime.now()
-        for i in range(days_back):
-            d = today - timedelta(days=i)
-            prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append(prefix)
-
-        print(f"[UBI UNASSIGNED] Scanning {len(prefixes_to_scan)} date partitions (last {days_back} days)")
-
-        # Collect all S3 keys first
-        all_keys = []
-        for prefix in prefixes_to_scan:
-            try:
-                paginator = s3.get_paginator('list_objects_v2')
-                s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
-                for s3_page in s3_pages:
-                    for obj in s3_page.get('Contents', []):
-                        key = obj['Key']
-                        if key.endswith('.jsonl'):
-                            all_keys.append(key)
-            except Exception:
-                continue
-
-        print(f"[UBI UNASSIGNED] Found {len(all_keys)} JSONL files to process")
-
-        # Helper function to safely parse charge values
-        def safe_parse_charge(charge_val):
-            """Safely parse a charge value, handling dates and invalid data."""
-            if charge_val is None:
-                return 0.0
-            charge_str = str(charge_val).replace("$", "").replace(",", "").strip()
-            if not charge_str:
-                return 0.0
-            # Skip if it looks like a date (contains /)
-            if "/" in charge_str or "-" in charge_str:
-                # Try to detect date-like patterns
-                import re
-                if re.match(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$', charge_str):
-                    return 0.0
-            try:
-                return float(charge_str)
-            except (ValueError, TypeError):
-                return 0.0
-
-        # Process a single S3 file
-        def process_file(key):
-            try:
-                obj_data = s3.get_object(Bucket=BUCKET, Key=key)
-                txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
-                lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
-
-                if not lines:
-                    return None
-
-                try:
-                    first_rec = json.loads(lines[0])
-                except json.JSONDecodeError as e:
-                    print(f"[UBI UNASSIGNED] Skipping corrupted file {key}: {e}")
-                    return None
-
-                bill_info = {
-                    "s3_key": key,
-                    "vendor": first_rec.get("Vendor Name", ""),
-                    "account": first_rec.get("Account Number", ""),
-                    "pdf_id": first_rec.get("pdf_id", ""),
-                    "invoice_no": first_rec.get("Invoice Number", ""),
-                    "total_amount": 0.0,
-                    "line_count": 0,
-                    "unassigned_lines": []
-                }
-
-                for line in lines:
-                    try:
-                        rec = json.loads(line)
-                        line_hash = _compute_stable_line_hash(rec)
-
-                        if line_hash in assigned_hashes or line_hash in archived_hashes:
-                            continue
-
-                        charge = safe_parse_charge(rec.get("Line Item Charge", "0"))
-
-                        # Sanitize line_data to ensure it's JSON-serializable
-                        # and exclude large fields that bloat the response
-                        EXCLUDE_FIELDS = {'__pdf_b64__', '__pdf_filename__', 'EnrichedProperty'}
-                        sanitized_rec = {}
-                        for k, v in rec.items():
-                            if k in EXCLUDE_FIELDS:
-                                continue  # Skip large embedded fields
-                            if isinstance(v, str):
-                                # Remove any null bytes or other problematic characters
-                                sanitized_rec[k] = v.replace('\x00', '').replace('\ufffd', '')
-                            else:
-                                sanitized_rec[k] = v
-
-                        bill_info["unassigned_lines"].append({
-                            "line_hash": line_hash,
-                            "line_data": sanitized_rec,
-                            "charge": charge
-                        })
-                        bill_info["total_amount"] += charge
-                        bill_info["line_count"] += 1
-                    except (json.JSONDecodeError, ValueError, TypeError):
-                        continue
-
-                if bill_info["unassigned_lines"]:
-                    return bill_info
-                return None
-            except Exception as e:
-                print(f"[UBI UNASSIGNED] Error processing {key}: {e}")
-                return None
-
-        # Process files concurrently with ThreadPoolExecutor
-        unassigned_bills = []
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(process_file, key): key for key in all_keys}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    unassigned_bills.append(result)
-
-        # Sort by total amount descending
-        unassigned_bills.sort(key=lambda x: x["total_amount"], reverse=True)
-
-        # Calculate pagination
-        total_bills = len(unassigned_bills)
-        total_pages = (total_bills + page_size - 1) // page_size if total_bills > 0 else 1
+        # Paginate
+        total_bills = len(filtered)
+        total_pages = max(1, (total_bills + page_size - 1) // page_size)
         start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
+        paginated_bills = filtered[start_idx:start_idx + page_size]
 
-        # Get the requested page
-        paginated_bills = unassigned_bills[start_idx:end_idx]
-
-        elapsed = (datetime.now() - start_time).total_seconds()
-        print(f"[UBI UNASSIGNED] Returning page {page}/{total_pages} ({len(paginated_bills)} of {total_bills} bills) in {elapsed:.1f}s")
+        elapsed = time.time() - start_time
+        print(f"[UBI UNASSIGNED] Page {page}/{total_pages} ({len(paginated_bills)}/{total_bills} bills) in {elapsed:.2f}s")
 
         return {
             "bills": paginated_bills,
@@ -2124,7 +2171,7 @@ def api_billback_ubi_unassigned(
             "page_size": page_size,
             "total_pages": total_pages,
             "has_more": page < total_pages,
-            "processing_time_seconds": round(elapsed, 1)
+            "processing_time_seconds": round(elapsed, 2)
         }
 
     except Exception as e:
@@ -2214,6 +2261,7 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
                 continue
 
         print(f"[UBI ASSIGN] COMPLETED: Saved {saved_count}/{len(line_hashes)} assignments to period {ubi_period}")
+        _invalidate_ubi_cache()
         return {"ok": True, "assigned": saved_count, "ubi_period": ubi_period}
 
     except Exception as e:
@@ -2392,6 +2440,7 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
                 continue
 
         print(f"[UBI UNASSIGN] Deleted {deleted_count}/{len(assignment_ids)} assignments")
+        _invalidate_ubi_cache()
         return {"ok": True, "unassigned": deleted_count}
 
     except Exception as e:
@@ -2442,6 +2491,7 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
                 continue
 
         print(f"[UBI REASSIGN] Updated {updated_count}/{len(assignment_ids)} assignments to period {new_period}")
+        _invalidate_ubi_cache()
         return {"ok": True, "reassigned": updated_count, "new_period": new_period}
 
     except Exception as e:
@@ -2490,6 +2540,7 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
                 continue
 
         print(f"[UBI ARCHIVE] Archived {archived_count} line items")
+        _invalidate_ubi_cache()
         return {"ok": True, "archived": archived_count}
 
     except Exception as e:
