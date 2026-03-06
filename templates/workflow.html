@@ -253,6 +253,34 @@
     .dir-task-body{flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0}
     .dir-task-body:hover{opacity:.85}
 
+    /* Stage progression */
+    .dir-stage-progress{display:inline-flex;align-items:center;gap:2px;margin-right:8px;font-size:10px}
+    .stage-pip{padding:2px 6px;border-radius:4px;font-weight:600}
+    .stage-done{background:#dcfce7;color:#166534}
+    .stage-current{background:#dbeafe;color:#1e40af;border:1px solid #60a5fa}
+    .stage-future{background:#f1f5f9;color:#94a3b8}
+    .stage-arrow{color:#cbd5e1;font-size:9px}
+
+    /* History banner */
+    .dir-history-banner{background:rgba(255,255,255,.85);backdrop-filter:blur(10px);border-radius:10px;padding:8px 16px;margin:8px 0;font-size:12px;display:flex;align-items:center}
+    .banner-summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .banner-avg{font-weight:600;color:#0f172a}
+    .banner-day{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
+    .day-green{background:#dcfce7;color:#166534}
+    .day-yellow{background:#fef3c7;color:#92400e}
+    .day-red{background:#fee2e2;color:#991b1b}
+    .banner-carry{font-size:10px;color:#7c3aed;font-weight:600;margin-left:8px}
+
+    /* History drawer summary */
+    .dir-history-summary{display:flex;gap:16px;padding:12px 0;margin-bottom:16px;border-bottom:2px solid #e5e7eb;flex-wrap:wrap}
+    .hs-stat{text-align:center;min-width:60px}
+    .hs-value{display:block;font-size:20px;font-weight:700;color:#0f172a}
+    .hs-label{font-size:10px;color:#64748b;text-transform:uppercase}
+
+    /* Skip/carryover badges */
+    .dir-badge.skip-history{background:#fee2e2;color:#991b1b}
+    .dir-badge.carryover{background:#ede9fe;color:#7c3aed;font-size:12px}
+
     /* Skip reason modal */
     .dir-skip-modal .modal-box{max-width:420px}
     .dir-skip-modal .modal-box h3{margin:0 0 8px 0;font-size:16px;color:#0f172a}
@@ -288,7 +316,7 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="directed">Daily Work Plan</button>
       <button class="tab-btn" data-tab="tracker">Completion Tracker</button>
-      <button class="tab-btn" data-tab="lateBills">Late Bills (Table)</button>
+      <button class="tab-btn" data-tab="lateBills">Aging Accounts</button>
     </div>
 
     <!-- DAILY WORK PLAN TAB (Directed) -->
@@ -453,7 +481,7 @@
         <div class="toolbar-left">
           <input type="text" class="search-box" id="searchBox" placeholder="Search property, vendor, account, AP rep..." />
           <label style="color:#fff;font-size:12px;display:flex;align-items:center;gap:4px">
-            <input type="checkbox" id="filterHasNote" /> Has Notes
+            <input type="checkbox" id="filterHasNote" /> No Note
           </label>
           <span id="lastUpdated" style="color:rgba(255,255,255,0.7);font-size:11px;margin-left:8px"></span>
         </div>
@@ -1016,10 +1044,33 @@ function dir_render() {
   }
   if (!dir_plan.tasks || !dir_plan.tasks.length) { dir_showEmpty(); return; }
   document.getElementById('dir_planDate').textContent = dir_plan.planDate || '';
+  dir_renderHistoryBanner();
   dir_renderStats();
   dir_renderTasks();
   const pending = dir_plan.tasks.filter(t => t.status === 'pending');
   document.getElementById('dir_eodButton').style.display = pending.length > 0 ? 'inline-block' : 'none';
+}
+
+function dir_renderHistoryBanner() {
+  let existing = document.getElementById('dir_historyBanner');
+  if (existing) existing.remove();
+  const hs = dir_plan.historySummary;
+  if (!hs || !hs.last7days || !hs.last7days.length) return;
+  const days = hs.last7days.sort((a, b) => a.date > b.date ? 1 : -1);
+  const carryCount = (dir_plan.tasks || []).filter(t => t.carriedOver).length;
+  let html = `<div id="dir_historyBanner" class="dir-history-banner">
+    <div class="banner-summary">
+      <span class="banner-avg">Last 7 days avg: <strong>${hs.avgCompletion}%</strong></span>`;
+  for (const d of days) {
+    const cls = d.pct >= 80 ? 'day-green' : d.pct >= 50 ? 'day-yellow' : 'day-red';
+    html += `<span class="banner-day ${cls}" title="${d.date}: ${d.completed}/${d.planned}">${d.pct}%</span>`;
+  }
+  if (carryCount > 0) {
+    html += `<span class="banner-carry">&#x21bb; ${carryCount} carried over</span>`;
+  }
+  html += '</div></div>';
+  const ribbon = document.getElementById('dir_statsRibbon');
+  if (ribbon) ribbon.insertAdjacentHTML('afterend', html);
 }
 
 function dir_renderStats() {
@@ -1122,14 +1173,7 @@ function dir_renderGroupedTasks(tasks, groupBy) {
     let groupActions = '';
     if (pendingInGroup > 0) {
       groupActions = '<div class="dir-group-actions" onclick="event.stopPropagation()">';
-      if (hasCollection) {
-        groupActions += `<button class="btn small success" onclick="dir_bulkComplete('${gid}','imported')">All Scraper</button>`;
-        groupActions += `<button class="btn small" onclick="dir_bulkComplete('${gid}','logged_portal')">All Utility Website</button>`;
-        groupActions += `<button class="btn small secondary" onclick="dir_bulkComplete('${gid}','checked_mail')">All Mail</button>`;
-      }
-      if (hasProcessing) {
-        groupActions += `<button class="btn small success" onclick="dir_bulkComplete('${gid}','processed')">All Done</button>`;
-      }
+      groupActions += `<button class="btn small success" onclick="dir_bulkAdvance('${gid}')">Advance All</button>`;
       groupActions += '</div>';
     }
     const statusText = completedInGroup > 0
@@ -1199,28 +1243,44 @@ function dir_renderTaskRow(t) {
     ? `<span class="dir-overdue">${t.daysOverdue}d overdue</span>`
     : '';
 
-  // Action buttons — always visible (no Start button required)
+  // Stage-based sequential progression: Gathered → Reviewed → Posted → Paid
+  const STAGE_LABELS = {gather: 'Gathered', review: 'Reviewed', post: 'Posted', paid: 'Paid'};
+  const STAGE_ORDER = ['gather', 'review', 'post', 'paid'];
+  const stage = t.stage || 'gather';
+  const stageIdx = STAGE_ORDER.indexOf(stage);
+
+  // Stage progress indicator
+  let stageProgressHtml = '<span class="dir-stage-progress">';
+  for (let i = 0; i < STAGE_ORDER.length; i++) {
+    const done = (t.stageHistory || []).some(h => h.stage === STAGE_ORDER[i]);
+    const current = i === stageIdx && t.status === 'pending';
+    const cls = done ? 'stage-done' : current ? 'stage-current' : 'stage-future';
+    stageProgressHtml += `<span class="stage-pip ${cls}" title="${STAGE_LABELS[STAGE_ORDER[i]]}">${STAGE_LABELS[STAGE_ORDER[i]]}</span>`;
+    if (i < STAGE_ORDER.length - 1) stageProgressHtml += '<span class="stage-arrow">→</span>';
+  }
+  stageProgressHtml += '</span>';
+
+  // Prior skip badge
+  let skipBadge = (t.priorSkipCount > 0)
+    ? `<span class="dir-badge skip-history" title="Skipped ${t.priorSkipCount}x in prior plans">Skipped ${t.priorSkipCount}x</span>`
+    : '';
+  let carryBadge = t.carriedOver
+    ? `<span class="dir-badge carryover" title="Carried over from ${t.carryoverFrom || 'previous day'}">&#x21bb;</span>`
+    : '';
+
+  // Action buttons — sequential stage unlock
   let actionsHtml = '';
   if (t.status === 'pending') {
-    if (t.taskType === 'collection') {
-      actionsHtml = `
-        <button class="btn small success" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','imported')">Scraper</button>
-        <button class="btn small" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','logged_portal')">Utility Website</button>
-        <button class="btn small secondary" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','checked_mail')">Mail</button>
-        <button class="btn small" style="background:#94a3b8" onclick="event.stopPropagation();dir_openSkipModal('${t.taskId}')">Skip</button>`;
-    } else {
-      const link = t.subType === 'review' ? `/invoices?pdf_id=${t.pdfId || ''}` :
-                   t.subType === 'post' ? `/post` : `/billback`;
-      actionsHtml = `
-        <a class="btn small" href="${link}" target="_blank" onclick="event.stopPropagation()">Open</a>
-        <button class="btn small success" onclick="event.stopPropagation();dir_completeTask('${t.taskId}','processed')">Done</button>
-        <button class="btn small" style="background:#94a3b8" onclick="event.stopPropagation();dir_openSkipModal('${t.taskId}')">Skip</button>`;
-    }
+    const stageLabel = STAGE_LABELS[stage] || stage;
+    actionsHtml = `
+      ${stageProgressHtml}
+      <button class="btn small success" onclick="event.stopPropagation();dir_advanceTask('${t.taskId}')">${stageLabel}</button>
+      <button class="btn small" style="background:#94a3b8" onclick="event.stopPropagation();dir_openSkipModal('${t.taskId}')">Skip</button>`;
   } else if (t.status === 'completed') {
-    actionsHtml = `<span style="color:#059669;font-size:11px">&#10003; ${t.completedAction || 'done'}</span>`;
+    actionsHtml = `${stageProgressHtml}<span style="color:#059669;font-size:11px;font-weight:600">&#10003; Complete</span>`;
   } else if (t.status === 'incomplete') {
     const label = dir_reasonCodes.find(c => c.code === t.incompleteReason)?.label || t.incompleteReason || 'skipped';
-    actionsHtml = `<span style="color:#b91c1c;font-size:11px">${escapeHtml(label)}</span>`;
+    actionsHtml = `${stageProgressHtml}<span style="color:#b91c1c;font-size:11px">${escapeHtml(label)}</span>`;
   }
 
   const houseLabel = t.isHouse
@@ -1239,6 +1299,7 @@ function dir_renderTaskRow(t) {
       ${overdueHtml}
       ${sourceHtml}
       ${blockedHtml}
+      ${skipBadge}${carryBadge}
       ${lastRecv}${nextExp}
     </div>
     <div class="dir-task-actions">${actionsHtml}</div>
@@ -1246,20 +1307,32 @@ function dir_renderTaskRow(t) {
 }
 
 /* --- Directed Task Actions --- */
-async function dir_completeTask(taskId, action) {
+async function dir_advanceTask(taskId) {
   try {
     const resp = await fetch('/api/directed/complete', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ taskId, action, durationSec: 0 })
+      body: JSON.stringify({ taskId, action: 'advance', durationSec: 0 })
     });
     const data = await resp.json();
     if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
     const task = dir_plan.tasks.find(t => t.taskId === taskId);
-    if (task) { task.status = 'completed'; task.completedAction = action; task.completedAt = new Date().toISOString(); }
+    if (task) {
+      task.stage = data.stage || task.stage;
+      task.status = data.status || task.status;
+      task.stageHistory = data.stageHistory || task.stageHistory || [];
+      if (task.status === 'completed') {
+        task.completedAt = new Date().toISOString();
+      }
+    }
     dir_plan.stats.completedCount = dir_plan.tasks.filter(t => t.status === 'completed').length;
     dir_render();
-    showToast('Task completed', 'ok');
+    const STAGE_LABELS = {gather: 'Gathered', review: 'Reviewed', post: 'Posted', paid: 'Paid'};
+    if (data.status === 'completed') {
+      showToast('Task complete!', 'ok');
+    } else {
+      showToast('Stage complete → ' + (STAGE_LABELS[data.stage] || data.stage), 'ok');
+    }
   } catch (e) { showToast('Error: ' + e.message, 'err'); }
 }
 
@@ -1308,41 +1381,34 @@ async function dir_confirmSkip() {
   } catch (e) { showToast('Error: ' + e.message, 'err'); }
 }
 
-/* --- Bulk complete --- */
-async function dir_bulkComplete(gid, action) {
+/* --- Bulk advance --- */
+async function dir_bulkAdvance(gid) {
   if (!dir_plan || !dir_plan.tasks) return;
-  // Find all pending tasks in this group
   const groupEl = document.getElementById('dir_group_' + gid);
   if (!groupEl) return;
   const taskIds = [];
   groupEl.querySelectorAll('.dir-task-row[data-task-id]').forEach(row => {
     const tid = row.getAttribute('data-task-id');
     const task = dir_plan.tasks.find(t => t.taskId === tid);
-    if (task && task.status === 'pending') {
-      // For collection actions, only include collection tasks; for processing, only processing
-      if ((action === 'processed' && task.taskType === 'processing') ||
-          (action !== 'processed' && task.taskType === 'collection')) {
-        taskIds.push(tid);
-      }
-    }
+    if (task && task.status === 'pending') taskIds.push(tid);
   });
   if (!taskIds.length) { showToast('No pending tasks in this group', 'err'); return; }
   try {
     const resp = await fetch('/api/directed/bulk-complete', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ taskIds, action })
+      body: JSON.stringify({ taskIds, action: 'advance' })
     });
     const data = await resp.json();
     if (!data.ok) { showToast('Error: ' + (data.error || 'Unknown'), 'err'); return; }
-    // Update local state
-    for (const tid of taskIds) {
-      const task = dir_plan.tasks.find(t => t.taskId === tid);
-      if (task) { task.status = 'completed'; task.completedAction = action; task.completedAt = new Date().toISOString(); }
-    }
-    dir_plan.stats.completedCount = dir_plan.tasks.filter(t => t.status === 'completed').length;
+    // Reload plan from server to get accurate stage state after bulk advance
+    const planResp = await fetch('/api/directed/plan');
+    const planData = await planResp.json();
+    if (planData.plan) { dir_plan = planData.plan; }
     dir_render();
-    showToast(`${data.completedCount} tasks completed`, 'ok');
+    const msg = (data.advancedCount || 0) > 0 ? `${data.advancedCount} advanced` : '';
+    const msg2 = (data.completedCount || 0) > 0 ? `${data.completedCount} completed` : '';
+    showToast([msg, msg2].filter(Boolean).join(', ') || 'Tasks updated', 'ok');
   } catch (e) { showToast('Error: ' + e.message, 'err'); }
 }
 
@@ -1501,23 +1567,57 @@ async function dir_openHistory() {
   document.getElementById('dir_historyDrawer').classList.add('open');
   document.getElementById('dir_historyBody').innerHTML = '<div class="loading">Loading...</div>';
   try {
-    const resp = await fetch('/api/directed/history?days=7');
+    const resp = await fetch('/api/directed/history?days=30');
     const data = await resp.json();
     const history = data.history || [];
     if (!history.length) {
       document.getElementById('dir_historyBody').innerHTML = '<p style="color:#64748b">No history yet.</p>';
       return;
     }
-    let html = '';
+
+    // Overall summary
+    let totalPlanned = 0, totalCompleted = 0, totalIncomplete = 0;
+    for (const day of history) {
+      totalPlanned += day.totalPlanned || 0;
+      totalCompleted += day.totalCompleted || 0;
+      totalIncomplete += day.totalIncomplete || (day.incompletes || []).length;
+    }
+    const overallPct = totalPlanned > 0 ? Math.round(totalCompleted / totalPlanned * 100) : 0;
+
+    let html = `<div class="dir-history-summary">
+      <div class="hs-stat"><span class="hs-value">${history.length}</span><span class="hs-label">Days</span></div>
+      <div class="hs-stat"><span class="hs-value">${totalPlanned}</span><span class="hs-label">Planned</span></div>
+      <div class="hs-stat"><span class="hs-value" style="color:#059669">${totalCompleted}</span><span class="hs-label">Completed</span></div>
+      <div class="hs-stat"><span class="hs-value" style="color:#b91c1c">${totalIncomplete}</span><span class="hs-label">Skipped</span></div>
+      <div class="hs-stat"><span class="hs-value">${overallPct}%</span><span class="hs-label">Avg Rate</span></div>
+    </div>`;
+
+    // Per-day breakdown
     for (const day of history) {
       const completed = day.totalCompleted || 0;
       const total = day.totalPlanned || 0;
+      const incCount = (day.incompletes || []).length;
       const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+      const barColor = pct >= 80 ? '#059669' : pct >= 50 ? '#f59e0b' : '#ef4444';
       html += `<div class="dir-history-day">
-        <div class="day-header"><span>${day.planDate}</span><span>${completed}/${total} (${pct}%)</span></div>
+        <div class="day-header">
+          <span style="font-weight:700">${day.planDate}</span>
+          <span>${completed}/${total} completed (${pct}%)</span>
+        </div>
+        <div style="height:4px;background:#e5e7eb;border-radius:2px;margin:4px 0">
+          <div style="height:100%;width:${pct}%;background:${barColor};border-radius:2px"></div>
+        </div>
         <div class="day-body">`;
+      if (day.completions && day.completions.length) {
+        html += `<div style="margin-top:4px"><strong style="font-size:11px;color:#059669">Completed (${day.completions.length}):</strong>`;
+        for (const c of day.completions.slice(0, 5)) {
+          html += `<div class="complete-item" style="font-size:11px;color:#334155;padding:2px 0">${escapeHtml(c.action || '')} - ${escapeHtml(c.taskType || '')}</div>`;
+        }
+        if (day.completions.length > 5) html += `<div style="font-size:10px;color:#94a3b8">+${day.completions.length - 5} more</div>`;
+        html += '</div>';
+      }
       if (day.incompletes && day.incompletes.length) {
-        html += '<div style="margin-top:4px"><strong style="font-size:11px;color:#b91c1c">Incomplete:</strong>';
+        html += `<div style="margin-top:4px"><strong style="font-size:11px;color:#b91c1c">Skipped (${incCount}):</strong>`;
         for (const inc of day.incompletes) {
           const label = dir_reasonCodes.find(c => c.code === inc.reasonCode)?.label || inc.reasonCode;
           html += `<div class="incomplete-item">${escapeHtml(inc.accountKey || '')} - ${escapeHtml(label)}${inc.notes ? ': ' + escapeHtml(inc.notes) : ''}</div>`;
@@ -1896,7 +1996,7 @@ function applyTableFilters() {
   const search = document.getElementById('searchBox').value.toLowerCase();
   filteredData = allData.filter(r => {
     if (filterState.status && r.status !== filterState.status) return false;
-    if (filterState.hasNote && !r.hasNote) return false;
+    if (filterState.hasNote && r.hasNote) return false;
     if (search) {
       const hay = (r.propertyName + ' ' + r.vendorName + ' ' + r.accountNumber + ' ' + r.apName).toLowerCase();
       if (!hay.includes(search)) return false;
@@ -2117,6 +2217,7 @@ async function triggerRecalculate() {
   document.getElementById('tableRecalcBtn').disabled = true;
   document.getElementById('tableRecalcBtn').textContent = 'Recalculating...';
   showToast('Recalculation started...', 'ok');
+  const oldComputedAt = document.getElementById('lastUpdated').textContent;
   try {
     await fetch('/api/workflow/recalculate', {method:'POST'});
     let attempts = 0;
@@ -2125,15 +2226,18 @@ async function triggerRecalculate() {
       try {
         const resp = await fetch('/api/workflow');
         const data = await resp.json();
-        if (data.computedAt || attempts > 30) {
+        const isNew = data.computedAt && ('Updated: ' + data.computedAt) !== oldComputedAt;
+        if (isNew || attempts > 30) {
           clearInterval(poll);
           document.getElementById('tableRecalcBtn').disabled = false;
           document.getElementById('tableRecalcBtn').textContent = 'Recalculate';
-          if (data.computedAt) {
+          if (isNew) {
             showToast('Recalculation complete!', 'ok');
             allData = data.rows || [];
             applyTableFilters();
             document.getElementById('lastUpdated').textContent = 'Updated: ' + data.computedAt;
+          } else {
+            showToast('Recalculation timed out — try Refresh', 'err');
           }
         }
       } catch (e) { /* keep polling */ }

@@ -10107,21 +10107,20 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                     status_label = "ON_TRACK"
                 days_overdue = 0
             else:
-                # Cycle ended — expect bill within ~15 days after period end
-                # (time for utility company to generate + deliver the bill).
-                # This gives a realistic window instead of using the full
-                # daysBetweenBills as grace, which pushed everything to VERY_LATE.
-                expected_arrival = cycle_end_date + dt.timedelta(days=15)
-                days_overdue = (today - expected_arrival).days
-                if days_overdue <= 0:
+                # Cycle ended — count days since cycle end
+                days_overdue = (today - cycle_end_date).days
+                if days_overdue >= 15:
+                    status_label = "VERY_LATE"
+                elif days_overdue >= 8:
+                    status_label = "LATE"
+                elif days_overdue >= 1:
+                    status_label = "SLIGHTLY_LATE"
+                elif days_overdue >= -7:
                     status_label = "DUE_SOON"
                     days_overdue = 0
-                elif days_overdue <= 7:
-                    status_label = "SLIGHTLY_LATE"
-                elif days_overdue <= 14:
-                    status_label = "LATE"
                 else:
-                    status_label = "VERY_LATE"
+                    status_label = "ON_TRACK"
+                    days_overdue = 0
 
             property_data[pid]["items"].append({
                 "vendor_name": vendor_name,
@@ -10807,12 +10806,41 @@ def api_directed_complete(request: Request, user: str = Depends(require_user)):
                 return JSONResponse({"error": "No plan found"}, status_code=404)
 
             found = False
+            became_complete = False
+            STAGE_ORDER = ["gather", "review", "post", "paid"]
             for task in plan.get("tasks", []):
                 if task.get("taskId") == task_id:
-                    task["status"] = "completed"
-                    task["completedAt"] = dt.datetime.utcnow().isoformat() + "Z"
-                    task["completedAction"] = action
                     found = True
+                    current_stage = task.get("stage", "")
+                    if current_stage in STAGE_ORDER:
+                        idx = STAGE_ORDER.index(current_stage)
+                        if idx < len(STAGE_ORDER) - 1:
+                            # Advance to next stage
+                            task["stage"] = STAGE_ORDER[idx + 1]
+                            task["stageHistory"] = task.get("stageHistory", [])
+                            task["stageHistory"].append({
+                                "stage": current_stage,
+                                "completedAt": dt.datetime.utcnow().isoformat() + "Z",
+                                "action": action,
+                            })
+                        else:
+                            # At paid (final stage) — mark task complete
+                            task["status"] = "completed"
+                            task["completedAt"] = dt.datetime.utcnow().isoformat() + "Z"
+                            task["completedAction"] = action
+                            task["stageHistory"] = task.get("stageHistory", [])
+                            task["stageHistory"].append({
+                                "stage": current_stage,
+                                "completedAt": task["completedAt"],
+                                "action": action,
+                            })
+                            became_complete = True
+                    else:
+                        # Legacy task without stage — mark complete directly
+                        task["status"] = "completed"
+                        task["completedAt"] = dt.datetime.utcnow().isoformat() + "Z"
+                        task["completedAction"] = action
+                        became_complete = True
                     break
 
             if not found:
@@ -10823,21 +10851,23 @@ def api_directed_complete(request: Request, user: str = Depends(require_user)):
             plan["stats"]["completedCount"] = completed
             _s3_put_directed_plan(user, plan)
 
-            # Log completion (inside lock to prevent read-modify-write race on log)
-            today = dt.date.today()
-            log = _get_directed_log(user, today)
-            log["completions"].append({
-                "taskId": task_id,
-                "action": action,
-                "taskType": next((t["taskType"] for t in plan["tasks"] if t["taskId"] == task_id), ""),
-                "durationSec": duration_sec,
-                "ts": dt.datetime.utcnow().isoformat() + "Z",
-            })
-            log["totalCompleted"] = len(log["completions"])
-            log["totalPlanned"] = plan["stats"]["totalTasks"]
-            _put_directed_log(user, today, log)
+            # Log completion to DDB only when task becomes fully complete
+            if became_complete:
+                today = dt.date.today()
+                log = _get_directed_log(user, today)
+                log["completions"].append({
+                    "taskId": task_id,
+                    "action": action,
+                    "taskType": next((t["taskType"] for t in plan["tasks"] if t["taskId"] == task_id), ""),
+                    "durationSec": duration_sec,
+                    "ts": dt.datetime.utcnow().isoformat() + "Z",
+                })
+                log["totalCompleted"] = len(log["completions"])
+                log["totalPlanned"] = plan["stats"]["totalTasks"]
+                _put_directed_log(user, today, log)
 
-        return {"ok": True, "completedCount": completed}
+        task_info = next((t for t in plan["tasks"] if t["taskId"] == task_id), {})
+        return {"ok": True, "completedCount": completed, "stage": task_info.get("stage", ""), "status": task_info.get("status", ""), "stageHistory": task_info.get("stageHistory", [])}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "completing task")}, status_code=500)
 
@@ -10872,6 +10902,21 @@ def api_directed_incomplete(request: Request, user: str = Depends(require_user))
             incomplete = sum(1 for t in plan["tasks"] if t["status"] == "incomplete")
             plan["stats"]["incompleteCount"] = incomplete
             _s3_put_directed_plan(user, plan)
+
+            # Log incomplete to DDB (inside lock to prevent race)
+            today = dt.date.today()
+            log = _get_directed_log(user, today)
+            log["incompletes"].append({
+                "taskId": task_id,
+                "reasonCode": reason_code,
+                "notes": notes,
+                "taskType": next((t["taskType"] for t in plan["tasks"] if t["taskId"] == task_id), ""),
+                "accountKey": next((t["accountKey"] for t in plan["tasks"] if t["taskId"] == task_id), ""),
+                "ts": dt.datetime.utcnow().isoformat() + "Z",
+            })
+            log["totalPlanned"] = plan["stats"]["totalTasks"]
+            log["totalIncomplete"] = sum(1 for t in plan["tasks"] if t["status"] == "incomplete")
+            _put_directed_log(user, today, log)
 
         return {"ok": True, "incompleteCount": incomplete}
     except Exception as e:
@@ -11029,35 +11074,57 @@ def api_directed_bulk_complete(request: Request, user: str = Depends(require_use
                 return JSONResponse({"error": "No plan found"}, status_code=404)
 
             task_id_set = set(task_ids)
+            advanced_count = 0
             completed_count = 0
             now_iso = dt.datetime.utcnow().isoformat() + "Z"
+            STAGE_ORDER = ["gather", "review", "post", "paid"]
+            newly_completed_ids = []
             for task in plan.get("tasks", []):
                 if task["taskId"] in task_id_set and task["status"] == "pending":
-                    task["status"] = "completed"
-                    task["completedAt"] = now_iso
-                    task["completedAction"] = action
-                    completed_count += 1
+                    current_stage = task.get("stage", "")
+                    if current_stage in STAGE_ORDER:
+                        idx = STAGE_ORDER.index(current_stage)
+                        if idx < len(STAGE_ORDER) - 1:
+                            task["stage"] = STAGE_ORDER[idx + 1]
+                            task["stageHistory"] = task.get("stageHistory", [])
+                            task["stageHistory"].append({"stage": current_stage, "completedAt": now_iso, "action": action})
+                            advanced_count += 1
+                        else:
+                            task["status"] = "completed"
+                            task["completedAt"] = now_iso
+                            task["completedAction"] = action
+                            task["stageHistory"] = task.get("stageHistory", [])
+                            task["stageHistory"].append({"stage": current_stage, "completedAt": now_iso, "action": action})
+                            completed_count += 1
+                            newly_completed_ids.append(task["taskId"])
+                    else:
+                        task["status"] = "completed"
+                        task["completedAt"] = now_iso
+                        task["completedAction"] = action
+                        completed_count += 1
+                        newly_completed_ids.append(task["taskId"])
 
             plan["stats"]["completedCount"] = sum(1 for t in plan["tasks"] if t["status"] == "completed")
             _s3_put_directed_plan(user, plan)
 
-            # Log completions
-            today = dt.date.today()
-            log = _get_directed_log(user, today)
-            for task in plan.get("tasks", []):
-                if task["taskId"] in task_id_set and task["status"] == "completed":
-                    log["completions"].append({
-                        "taskId": task["taskId"],
-                        "action": action,
-                        "taskType": task.get("taskType", ""),
-                        "durationSec": 0,
-                        "ts": now_iso,
-                    })
-            log["totalCompleted"] = len(log["completions"])
-            log["totalPlanned"] = plan["stats"]["totalTasks"]
-            _put_directed_log(user, today, log)
+            # Log only fully completed tasks
+            if newly_completed_ids:
+                today = dt.date.today()
+                log = _get_directed_log(user, today)
+                for task in plan.get("tasks", []):
+                    if task["taskId"] in newly_completed_ids:
+                        log["completions"].append({
+                            "taskId": task["taskId"],
+                            "action": action,
+                            "taskType": task.get("taskType", ""),
+                            "durationSec": 0,
+                            "ts": now_iso,
+                        })
+                log["totalCompleted"] = len(log["completions"])
+                log["totalPlanned"] = plan["stats"]["totalTasks"]
+                _put_directed_log(user, today, log)
 
-        return {"ok": True, "completedCount": completed_count}
+        return {"ok": True, "completedCount": completed_count, "advancedCount": advanced_count}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "bulk complete")}, status_code=500)
 
@@ -13322,6 +13389,24 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
     accounts = _get_accounts_to_track()
     user_rate = _compute_user_rate(user)
 
+    # Carryover: load previous plan and carry forward unfinished tasks
+    prev_plan = _s3_get_directed_plan(user)
+    carryover_tasks: list[dict] = []
+    carryover_keys: set[str] = set()
+    if prev_plan and prev_plan.get("tasks"):
+        for t in prev_plan["tasks"]:
+            # Carry over tasks that are still pending or were skipped (not completed/paid)
+            if t.get("status") in ("pending", "incomplete"):
+                t["carriedOver"] = True
+                t["carryoverFrom"] = prev_plan.get("planDate", "")
+                # Reset skipped tasks to pending so they can be reworked
+                if t.get("status") == "incomplete":
+                    t["status"] = "pending"
+                    t["incompleteReason"] = None
+                    t["incompleteNotes"] = None
+                carryover_tasks.append(t)
+                carryover_keys.add(t.get("accountKey", ""))
+
     # Load AP mapping for mode filtering
     ap_mapping_list = _ddb_get_config("ap-mapping") or []
     ap_property_map: dict[str, set[str]] = {}  # apName -> set of propertyIds
@@ -13532,6 +13617,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
             },
             "blockedByNote": blocked_by_note,
             "status": "pending",
+            "stage": "gather",
             "completedAt": None,
             "completedAction": None,
             "incompleteReason": None,
@@ -13637,6 +13723,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
             "estimatedMinutes": 0,
             "source": {"scraperAvailable": False, "scraperPdfCount": 0, "bitwardenAvailable": None, "resolution": "pipeline"},
             "status": "pending",
+            "stage": "review" if bill["subType"] == "review" else "post",
             "completedAt": None,
             "completedAction": None,
             "incompleteReason": None,
@@ -13687,6 +13774,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
                 "estimatedMinutes": 0,
                 "source": {"scraperAvailable": False, "scraperPdfCount": 0, "bitwardenAvailable": None, "resolution": "pipeline"},
                 "status": "pending",
+                "stage": "review" if sub_type == "review" else "post",
                 "completedAt": None,
                 "completedAction": None,
                 "incompleteReason": None,
@@ -13702,6 +13790,18 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
                 "lastBillKeyDate": wf_row.get("lastBillKeyDate", ""),
             }
             all_tasks.append(task)
+
+    # Merge carryover tasks: carried-over tasks take priority, skip duplicates
+    merged_tasks: list[dict] = []
+    new_task_keys: set[str] = set()
+    for t in carryover_tasks:
+        merged_tasks.append(t)
+        new_task_keys.add(t.get("accountKey", ""))
+    for t in all_tasks:
+        if t.get("accountKey", "") not in new_task_keys:
+            merged_tasks.append(t)
+            new_task_keys.add(t.get("accountKey", ""))
+    all_tasks = merged_tasks
 
     # Step 6: Two-tier sort — house first (by provider), then vacant (by property batch)
     house_tasks = [t for t in all_tasks if t["isHouse"]]
@@ -13730,6 +13830,43 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
     collection_count = sum(1 for t in plan_tasks if t["taskType"] == "collection")
     processing_count = len(plan_tasks) - collection_count
 
+    # Build history summary for UI banner
+    history_summary = {"last7days": [], "avgCompletion": 0, "repeatSkips": {}}
+    try:
+        date_list = [today - dt.timedelta(days=i) for i in range(1, 8)]
+        keys = [{"PK": {"S": "DIRECTED_LOG"}, "SK": {"S": f"{d.isoformat()}#{user}"}} for d in date_list]
+        resp = ddb.batch_get_item(RequestItems={CONFIG_TABLE: {"Keys": keys}})
+        total_planned = 0
+        total_completed = 0
+        skip_counts: dict[str, int] = {}  # accountKey -> skip count
+        for item in resp.get("Responses", {}).get(CONFIG_TABLE, []):
+            if item.get("data"):
+                log_data = json.loads(item["data"]["S"])
+                day_planned = log_data.get("totalPlanned", 0)
+                day_completed = log_data.get("totalCompleted", 0)
+                pct = round(day_completed / day_planned * 100) if day_planned else 0
+                history_summary["last7days"].append({
+                    "date": log_data.get("planDate", ""),
+                    "planned": day_planned,
+                    "completed": day_completed,
+                    "pct": pct,
+                })
+                total_planned += day_planned
+                total_completed += day_completed
+                for inc in log_data.get("incompletes", []):
+                    ak = inc.get("accountKey", "")
+                    if ak:
+                        skip_counts[ak] = skip_counts.get(ak, 0) + 1
+        history_summary["avgCompletion"] = round(total_completed / total_planned * 100) if total_planned else 0
+        history_summary["repeatSkips"] = skip_counts
+    except Exception as e:
+        print(f"[DIRECTED] Error loading history summary: {e}")
+
+    # Annotate tasks with prior skip history
+    for task in plan_tasks:
+        ak = task.get("accountKey", "")
+        task["priorSkipCount"] = history_summary["repeatSkips"].get(ak, 0)
+
     plan = {
         "user": user,
         "planDate": today.isoformat(),
@@ -13737,6 +13874,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
         "userRate": user_rate,
         "mode": mode,
         "targetAp": target_ap if mode == "team_member" else "",
+        "historySummary": history_summary,
         "tasks": plan_tasks,
         "stats": {
             "totalTasks": len(plan_tasks),
