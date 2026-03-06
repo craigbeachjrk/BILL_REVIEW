@@ -823,11 +823,10 @@ _EXCLUSION_HASH_CACHE = {
 }
 
 # -------- UBI Unassigned Bills Cache --------
-# Cache the full unassigned bills list to avoid re-scanning S3 on every page request
+# Background-computed cache: rebuilds every 4 hours, never blocks requests
 import threading as _threading
-_UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float}
-_UBI_UNASSIGNED_LOCK = _threading.Lock()
-_UBI_UNASSIGNED_TTL = 300  # 5 minutes
+_UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float, "computing": bool}
+_UBI_UNASSIGNED_TTL = 14400  # 4 hours
 
 # -------- PRINT CHECKS Posted Invoices Cache --------
 # Cache posted invoices to avoid scanning S3 on every request
@@ -1209,6 +1208,18 @@ async def startup_prewarm_caches():
             print(f"[STARTUP] Accounts-to-track warm failed: {e}")
         print("[STARTUP] POST helper caches ready")
     threading.Thread(target=prewarm_post_helpers, daemon=True, name="post-helper-prewarm").start()
+
+    # UBI unassigned cache: build on startup, then rebuild every 4 hours
+    def ubi_cache_loop():
+        import time as _t
+        _t.sleep(10)  # Let other caches warm first
+        print("[STARTUP] Kicking off initial UBI unassigned cache build...")
+        _ubi_cache_rebuild_async()
+        while True:
+            _t.sleep(_UBI_UNASSIGNED_TTL)
+            print("[UBI CACHE] Periodic rebuild triggered")
+            _ubi_cache_rebuild_async()
+    threading.Thread(target=ubi_cache_loop, daemon=True, name="ubi-cache-loop").start()
 
     # Background refresh thread for invoice history cache (every 2 hours)
     def _invoice_history_refresh_loop():
@@ -5233,30 +5244,52 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
     return unassigned_bills
 
 
-def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False) -> list:
-    """Get unassigned bills from cache or compute fresh (5 min TTL, lock-protected)."""
+def _ubi_cache_rebuild_async(days_back: int = 60):
+    """Rebuild UBI unassigned cache in a background thread. Never blocks requests."""
     global _UBI_UNASSIGNED_CACHE
-    now = time.time()
+    if _UBI_UNASSIGNED_CACHE.get("computing"):
+        print("[UBI CACHE] Background rebuild already in progress, skipping")
+        return
+    _UBI_UNASSIGNED_CACHE["computing"] = True
+    def _do_rebuild():
+        global _UBI_UNASSIGNED_CACHE
+        try:
+            data = _compute_ubi_unassigned_bills(days_back)
+            _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time(), "computing": False}
+            print(f"[UBI CACHE] Background rebuild complete: {len(data)} bills")
+        except Exception as e:
+            print(f"[UBI CACHE] Background rebuild failed: {e}")
+            _UBI_UNASSIGNED_CACHE["computing"] = False
+    t = _threading.Thread(target=_do_rebuild, daemon=True)
+    t.start()
+
+
+def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False) -> list:
+    """Return cached bills instantly. If stale or empty, trigger async rebuild."""
     cached = _UBI_UNASSIGNED_CACHE
-    if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
-        print(f"[UBI CACHE] Returning {len(cached['data'])} bills from cache (age {now - cached['ts']:.0f}s)")
+    now = time.time()
+    has_data = cached.get("data") is not None
+    is_fresh = has_data and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL)
+
+    if force_refresh or not is_fresh:
+        _ubi_cache_rebuild_async(days_back)
+
+    if has_data:
+        age = now - cached.get("ts", 0)
+        print(f"[UBI CACHE] Returning {len(cached['data'])} bills (age {age:.0f}s, computing={cached.get('computing', False)})")
         return cached["data"]
-    with _UBI_UNASSIGNED_LOCK:
-        # Double-check after acquiring lock
-        cached = _UBI_UNASSIGNED_CACHE
-        if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
-            return cached["data"]
-        print(f"[UBI CACHE] Computing fresh (force={force_refresh})...")
-        data = _compute_ubi_unassigned_bills(days_back)
-        _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time()}
-        return data
+
+    # No data yet — return empty, rebuild is in progress
+    print("[UBI CACHE] No data yet, rebuild in progress")
+    return []
 
 
 def _invalidate_ubi_unassigned_cache():
-    """Invalidate UBI unassigned cache (call after assign/archive/unassign)."""
+    """Invalidate cache and trigger async rebuild."""
     global _UBI_UNASSIGNED_CACHE
     _UBI_UNASSIGNED_CACHE = {}
-    print("[UBI CACHE] Invalidated")
+    print("[UBI CACHE] Invalidated, triggering async rebuild")
+    _ubi_cache_rebuild_async()
 
 
 @app.get("/api/billback/ubi/unassigned")
@@ -5345,6 +5378,7 @@ def api_billback_ubi_unassigned(
         elapsed = time.time() - start_time
         print(f"[UBI UNASSIGNED] Page {page}/{total_pages} ({len(paginated_bills)}/{total_bills} bills) in {elapsed:.2f}s")
 
+        is_computing = _UBI_UNASSIGNED_CACHE.get("computing", False)
         return {
             "bills": paginated_bills,
             "total_bills": total_bills,
@@ -5352,7 +5386,8 @@ def api_billback_ubi_unassigned(
             "page_size": page_size,
             "total_pages": total_pages,
             "has_more": page < total_pages,
-            "processing_time_seconds": round(elapsed, 2)
+            "processing_time_seconds": round(elapsed, 2),
+            "cache_building": is_computing,
         }
 
     except Exception as e:

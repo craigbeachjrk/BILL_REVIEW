@@ -2236,6 +2236,8 @@
         let hasMore = true;
         let totalPages = 1;
         let initialTotalBills = 0;  // Capture from first page only (avoids race condition display issues)
+        let cacheRetries = 0;
+        const MAX_CACHE_RETRIES = 18;  // 18 x 10s = 3 min max wait
 
         while (hasMore) {
           // Show progress - use initial total to avoid confusing count mismatches from concurrent changes
@@ -2250,6 +2252,18 @@
           if (!response.ok) throw new Error('Failed to load unassigned bills');
 
           const data = await response.json();
+
+          // If cache is still building, show message and auto-retry
+          if (data.cache_building && data.total_bills === 0 && page === 1) {
+            cacheRetries++;
+            if (cacheRetries > MAX_CACHE_RETRIES) {
+              throw new Error('Cache build timed out. Try again later.');
+            }
+            loading.innerHTML = `<span class="spinner"></span> Cache is building in the background (attempt ${cacheRetries}/${MAX_CACHE_RETRIES}). Retrying in 10s...`;
+            await new Promise(r => setTimeout(r, 10000));
+            continue;  // Retry same page
+          }
+
           const bills = data.bills || [];
           ubiUnassignedBills = ubiUnassignedBills.concat(bills);
           hasMore = data.has_more || false;
