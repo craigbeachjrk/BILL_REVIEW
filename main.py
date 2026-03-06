@@ -822,6 +822,13 @@ _EXCLUSION_HASH_CACHE = {
     "ttl_seconds": 300  # 5 minutes
 }
 
+# -------- UBI Unassigned Bills Cache --------
+# Cache the full unassigned bills list to avoid re-scanning S3 on every page request
+import threading as _threading
+_UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float}
+_UBI_UNASSIGNED_LOCK = _threading.Lock()
+_UBI_UNASSIGNED_TTL = 300  # 5 minutes
+
 # -------- PRINT CHECKS Posted Invoices Cache --------
 # Cache posted invoices to avoid scanning S3 on every request
 _PRINT_CHECKS_CACHE = {
@@ -1128,6 +1135,7 @@ def invalidate_exclusion_cache():
     """Clear the exclusion hash cache (call after assignments)."""
     _EXCLUSION_HASH_CACHE["last_refresh"] = None
     _EXCLUSION_HASH_CACHE["hashes"] = set()
+    _invalidate_ubi_unassigned_cache()
     print("[UBI EXCLUSION CACHE] Cache invalidated")
 
 def _vendor_pair_refresh_loop():
@@ -4943,361 +4951,358 @@ def api_billback_ubi_filter_options(
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
+def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
+    """Compute all unassigned bills from Stage 7 with UBI suggestions.
+
+    This is the expensive operation: DDB scans + S3 file reads.
+    Result is cached by _get_ubi_unassigned_cached().
+    """
+    import hashlib
+    from datetime import datetime, timedelta
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    start_time = datetime.now()
+
+    # Load UBI accounts - only show bills for accounts marked is_ubi=true AND is_tracked=true
+    accounts_to_track = _get_accounts_to_track()
+    ubi_account_keys = set()
+    for acct in accounts_to_track:
+        if acct.get("is_ubi") == True and acct.get("is_tracked", True):
+            prop_id = str(acct.get("propertyId", "")).strip()
+            vendor_id = str(acct.get("vendorId", "")).strip()
+            acct_num = str(acct.get("accountNumber", "")).strip()
+            if prop_id and acct_num:
+                ubi_account_keys.add(f"{prop_id}|{vendor_id}|{acct_num}")
+                ubi_account_keys.add(f"{prop_id}||{acct_num}")
+    print(f"[UBI CACHE] Found {len(ubi_account_keys)} UBI account keys")
+
+    # Use cached exclusion hashes (refreshed every 5 minutes)
+    excluded_hashes = _get_cached_exclusion_hashes(days_back)
+    print(f"[UBI CACHE] Using {len(excluded_hashes)} cached exclusion hashes")
+
+    # Get last UBI periods from Stage 8 (scans actual assigned bills)
+    last_ubi_periods = _get_last_ubi_periods_from_stage8()
+    print(f"[UBI CACHE] Got {len(last_ubi_periods)} accounts with UBI history from Stage 8")
+
+    # Build date-partitioned prefixes
+    prefixes_to_scan = []
+    today = datetime.now()
+    for i in range(days_back):
+        d = today - timedelta(days=i)
+        prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+        prefixes_to_scan.append(prefix)
+
+    print(f"[UBI CACHE] Scanning {len(prefixes_to_scan)} date partitions (last {days_back} days)")
+
+    # Collect all S3 keys first
+    all_keys = []
+    for prefix in prefixes_to_scan:
+        try:
+            paginator = s3.get_paginator('list_objects_v2')
+            s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
+            for s3_page in s3_pages:
+                for obj in s3_page.get('Contents', []):
+                    key = obj['Key']
+                    if key.endswith('.jsonl'):
+                        all_keys.append(key)
+        except Exception:
+            continue
+
+    print(f"[UBI CACHE] Found {len(all_keys)} JSONL files to process")
+
+    def safe_parse_charge(charge_val):
+        if charge_val is None:
+            return 0.0
+        charge_str = str(charge_val).replace("$", "").replace(",", "").strip()
+        if not charge_str:
+            return 0.0
+        if "/" in charge_str or "-" in charge_str:
+            if re.match(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$', charge_str):
+                return 0.0
+        try:
+            return float(charge_str)
+        except (ValueError, TypeError):
+            return 0.0
+
+    ESSENTIAL_FIELDS = {
+        'EnrichedPropertyName', 'EnrichedPropertyID', 'Property Name',
+        'EnrichedVendorName', 'EnrichedVendorID', 'Vendor Name',
+        'Account Number', 'Bill Period Start', 'Bill Period End',
+        'EnrichedGLAccountNumber', 'EnrichedGLAccountName', 'GL Account Number',
+        'Line Item Description', 'Line Item Charge', 'Charge Code',
+        'source_input_key', 'PDF_LINK', 'Invoice Number',
+        'Service Address', 'Meter Number', 'Consumption Amount', 'Unit of Measure',
+        'Current Amount', 'Amount Overridden', 'Charge Code Source',
+    }
+
+    def process_file(key):
+        try:
+            obj_data = s3.get_object(Bucket=BUCKET, Key=key)
+            txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
+            lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+
+            if not lines:
+                return None
+
+            try:
+                first_rec = json.loads(lines[0])
+            except json.JSONDecodeError as e:
+                print(f"[UBI CACHE] Skipping corrupted file {key}: {e}")
+                return None
+
+            computed_pdf_id = pdf_id_from_key(key)
+            date_match = re.search(r'yyyy=(\d{4})/mm=(\d{2})/dd=(\d{2})', key)
+            review_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else ""
+
+            posted_at_str = first_rec.get("PostedAt", "") or first_rec.get("SubmittedAt", "")
+            posted_at_ts = 0
+            submitter = first_rec.get("Submitter", "") or first_rec.get("SubmittedBy", "")
+            if posted_at_str:
+                try:
+                    posted_at_dt = datetime.fromisoformat(posted_at_str.replace('Z', '+00:00'))
+                    posted_at_ts = posted_at_dt.timestamp()
+                except Exception:
+                    pass
+            if not posted_at_str:
+                s3_last_mod = obj_data.get('LastModified')
+                if s3_last_mod:
+                    posted_at_str = s3_last_mod.strftime("%Y-%m-%dT%H:%M:%S")
+                    posted_at_ts = s3_last_mod.timestamp()
+
+            property_id = first_rec.get("EnrichedPropertyID", "")
+            vendor_id = first_rec.get("EnrichedVendorID", "")
+            account_number = str(first_rec.get("Account Number", "")).strip()
+            account_key = f"{property_id}|{vendor_id}|{account_number}"
+            account_key_no_vendor = f"{property_id}||{account_number}"
+
+            is_ubi_account = account_key in ubi_account_keys or account_key_no_vendor in ubi_account_keys
+
+            history = last_ubi_periods.get(account_key) if is_ubi_account else None
+            suggested_period = None
+            last_ubi_period = None
+            last_service_month_str = None
+            last_service_dates = None
+
+            if history and is_ubi_account:
+                last_service_month = history.get("last_service_month")
+                last_ubi_period = history.get("last_ubi_period")
+                last_service_start = history.get("last_service_start", "")
+                last_service_end = history.get("last_service_end", "")
+
+                if last_service_month:
+                    last_service_month_str = f"{last_service_month[1]:02d}/{last_service_month[0]}"
+                    if last_service_start and last_service_end:
+                        last_service_dates = f"{last_service_start} - {last_service_end}"
+                    elif last_service_start:
+                        last_service_dates = last_service_start
+
+                    bill_service_start = first_rec.get("Bill Period Start", "")
+                    bill_service_month = _parse_service_period_to_month(bill_service_start)
+
+                    if bill_service_month and last_ubi_period:
+                        last_year, last_month = last_service_month
+                        bill_year, bill_month = bill_service_month
+
+                        if last_month == 12:
+                            expected_year, expected_month = last_year + 1, 1
+                        else:
+                            expected_year, expected_month = last_year, last_month + 1
+
+                        if bill_year == expected_year and bill_month == expected_month:
+                            suggested_period = _get_next_ubi_period(last_ubi_period)
+                        elif (bill_year, bill_month) > (last_year, last_month):
+                            suggested_period = _get_next_ubi_period(last_ubi_period)
+                    elif last_ubi_period:
+                        suggested_period = _get_next_ubi_period(last_ubi_period)
+
+            # Duplicate detection & prior period suggestion
+            duplicate_warning = None
+            prior_period_suggestion = None
+            bill_svc_start_raw = first_rec.get("Bill Period Start", "")
+            bill_svc_end_raw = first_rec.get("Bill Period End", "")
+
+            if history and is_ubi_account and bill_svc_start_raw:
+                all_assignments = history.get("all_assignments", [])
+                bill_start_dt = _parse_date_any(bill_svc_start_raw)
+                bill_end_dt = _parse_date_any(bill_svc_end_raw)
+
+                if bill_start_dt and all_assignments:
+                    for asgn in all_assignments:
+                        asgn_start = _parse_date_any(asgn.get("service_start", ""))
+                        asgn_end = _parse_date_any(asgn.get("service_end", ""))
+                        if asgn_start:
+                            start_diff = abs((bill_start_dt - asgn_start).days)
+                            if bill_end_dt and asgn_end:
+                                end_diff = abs((bill_end_dt - asgn_end).days)
+                            else:
+                                end_diff = 999
+                            if start_diff <= 5 and end_diff <= 5:
+                                duplicate_warning = asgn.get("ubi_period", "")
+                                break
+
+                    if not suggested_period and not duplicate_warning:
+                        bill_svc_month = _parse_service_period_to_month(bill_svc_start_raw)
+                        if bill_svc_month:
+                            bill_y, bill_m = bill_svc_month
+                            for asgn in all_assignments:
+                                asgn_month = asgn.get("service_month")
+                                if not asgn_month:
+                                    continue
+                                asgn_y, asgn_m = asgn_month
+                                if asgn_m == 1:
+                                    prev_y, prev_m = asgn_y - 1, 12
+                                else:
+                                    prev_y, prev_m = asgn_y, asgn_m - 1
+                                if bill_y == prev_y and bill_m == prev_m:
+                                    prior_ubi = _get_prev_ubi_period(asgn.get("ubi_period", ""))
+                                    if prior_ubi:
+                                        prior_period_suggestion = prior_ubi
+                                        suggested_period = prior_ubi
+                                        break
+
+            bill_info = {
+                "s3_key": key,
+                "vendor": first_rec.get("EnrichedVendorName", "") or first_rec.get("Vendor Name", ""),
+                "account": first_rec.get("Account Number", ""),
+                "account_key": account_key,
+                "property_name": first_rec.get("EnrichedPropertyName", ""),
+                "pdf_id": computed_pdf_id,
+                "review_date": review_date,
+                "invoice_no": first_rec.get("Invoice Number", ""),
+                "total_amount": 0.0,
+                "line_count": 0,
+                "unassigned_lines": [],
+                "last_modified": posted_at_str,
+                "last_modified_ts": posted_at_ts,
+                "submitter": submitter,
+                "suggested_period": suggested_period,
+                "last_assigned_period": last_ubi_period,
+                "last_assigned_service": last_service_dates or last_service_month_str,
+                "is_ubi_account": is_ubi_account,
+                "duplicate_warning": duplicate_warning,
+                "prior_period_suggestion": prior_period_suggestion,
+            }
+
+            for line in lines:
+                try:
+                    rec = json.loads(line)
+                    line_hash = _compute_stable_line_hash(rec)
+
+                    if line_hash in excluded_hashes:
+                        continue
+
+                    charge = safe_parse_charge(rec.get("Line Item Charge", "0"))
+
+                    sanitized_rec = {}
+                    for k, v in rec.items():
+                        if k not in ESSENTIAL_FIELDS:
+                            continue
+                        if isinstance(v, str):
+                            sanitized_rec[k] = v.replace('\x00', '').replace('\ufffd', '')
+                        else:
+                            sanitized_rec[k] = v
+
+                    bill_info["unassigned_lines"].append({
+                        "line_hash": line_hash,
+                        "line_data": sanitized_rec,
+                        "charge": charge
+                    })
+                    bill_info["total_amount"] += charge
+                    bill_info["line_count"] += 1
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    continue
+
+            if bill_info["unassigned_lines"]:
+                return bill_info
+            return None
+        except Exception as e:
+            print(f"[UBI CACHE] Error processing {key}: {e}")
+            return None
+
+    # Process files concurrently
+    unassigned_bills = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(process_file, key): key for key in all_keys}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                unassigned_bills.append(result)
+
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print(f"[UBI CACHE] Computed {len(unassigned_bills)} unassigned bills in {elapsed:.1f}s")
+    return unassigned_bills
+
+
+def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False) -> list:
+    """Get unassigned bills from cache or compute fresh (5 min TTL, lock-protected)."""
+    global _UBI_UNASSIGNED_CACHE
+    now = time.time()
+    cached = _UBI_UNASSIGNED_CACHE
+    if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
+        print(f"[UBI CACHE] Returning {len(cached['data'])} bills from cache (age {now - cached['ts']:.0f}s)")
+        return cached["data"]
+    with _UBI_UNASSIGNED_LOCK:
+        # Double-check after acquiring lock
+        cached = _UBI_UNASSIGNED_CACHE
+        if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
+            return cached["data"]
+        print(f"[UBI CACHE] Computing fresh (force={force_refresh})...")
+        data = _compute_ubi_unassigned_bills(days_back)
+        _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time()}
+        return data
+
+
+def _invalidate_ubi_unassigned_cache():
+    """Invalidate UBI unassigned cache (call after assign/archive/unassign)."""
+    global _UBI_UNASSIGNED_CACHE
+    _UBI_UNASSIGNED_CACHE = {}
+    print("[UBI CACHE] Invalidated")
+
+
 @app.get("/api/billback/ubi/unassigned")
 def api_billback_ubi_unassigned(
     user: str = Depends(require_user),
     page: int = 1,
     page_size: int = 50,
     days_back: int = 60,
+    refresh: int = 0,
     sort: str = "amount_desc",
     property_filter: str = "",
     vendor_filter: str = "",
     gl_filter: str = ""
 ):
-    """Load line items from Stage 7 that haven't been assigned to UBI periods.
+    """Load unassigned line items from Stage 7 with server-side caching.
 
-    Pagination, sorting, and filtering to handle large datasets:
-    - page: Page number (1-indexed)
-    - page_size: Number of bills per page (default 50)
-    - days_back: Only look at files from the last N days (default 60)
-    - sort: Sort order (amount_desc, amount_asc, modified_desc, modified_asc, vendor_asc, property_asc)
-    - property_filter: Filter by property name (partial match)
-    - vendor_filter: Filter by vendor name (partial match)
-    - gl_filter: Filter by GL code (exact match)
-
-    IMPORTANT: Only shows bills for accounts marked as is_ubi=true in accounts_to_track.
+    First request computes and caches all bills (~5 min TTL).
+    Subsequent pages served instantly from cache.
+    Pass refresh=1 to force recomputation.
     """
     try:
-        import hashlib
-        from datetime import datetime, timedelta
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        start_time = datetime.now()
-
-        # Load UBI accounts - only show bills for accounts marked is_ubi=true AND is_tracked=true
-        accounts_to_track = _get_accounts_to_track()
-        ubi_account_keys = set()
-        for acct in accounts_to_track:
-            if acct.get("is_ubi") == True and acct.get("is_tracked", True):
-                prop_id = str(acct.get("propertyId", "")).strip()
-                vendor_id = str(acct.get("vendorId", "")).strip()
-                acct_num = str(acct.get("accountNumber", "")).strip()
-                if prop_id and acct_num:
-                    # Build key with and without vendor for flexible matching
-                    ubi_account_keys.add(f"{prop_id}|{vendor_id}|{acct_num}")
-                    ubi_account_keys.add(f"{prop_id}||{acct_num}")  # Fallback without vendor
-        print(f"[UBI UNASSIGNED] Found {len(ubi_account_keys)} UBI account keys")
-
-        # Use cached exclusion hashes (refreshed every 5 minutes)
-        excluded_hashes = _get_cached_exclusion_hashes(days_back)
-        print(f"[UBI UNASSIGNED] Using {len(excluded_hashes)} cached exclusion hashes")
-
-        # Get last UBI periods from Stage 8 (scans actual assigned bills)
-        last_ubi_periods = _get_last_ubi_periods_from_stage8()
-        print(f"[UBI UNASSIGNED] Got {len(last_ubi_periods)} accounts with UBI history from Stage 8")
-
-        # Build date-partitioned prefixes for the last N days to avoid scanning everything
-        prefixes_to_scan = []
-        today = datetime.now()
-        for i in range(days_back):
-            d = today - timedelta(days=i)
-            prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append(prefix)
-
-        print(f"[UBI UNASSIGNED] Scanning {len(prefixes_to_scan)} date partitions (last {days_back} days)")
-
-        # Collect all S3 keys first
-        all_keys = []
-        for prefix in prefixes_to_scan:
-            try:
-                paginator = s3.get_paginator('list_objects_v2')
-                s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
-                for s3_page in s3_pages:
-                    for obj in s3_page.get('Contents', []):
-                        key = obj['Key']
-                        if key.endswith('.jsonl'):
-                            all_keys.append(key)
-            except Exception:
-                continue
-
-        print(f"[UBI UNASSIGNED] Found {len(all_keys)} JSONL files to process")
-
-        # Helper function to safely parse charge values
-        def safe_parse_charge(charge_val):
-            """Safely parse a charge value, handling dates and invalid data."""
-            if charge_val is None:
-                return 0.0
-            charge_str = str(charge_val).replace("$", "").replace(",", "").strip()
-            if not charge_str:
-                return 0.0
-            # Skip if it looks like a date (contains /)
-            if "/" in charge_str or "-" in charge_str:
-                # Try to detect date-like patterns
-                import re
-                if re.match(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$', charge_str):
-                    return 0.0
-            try:
-                return float(charge_str)
-            except (ValueError, TypeError):
-                return 0.0
-
-        # Process a single S3 file
-        def process_file(key):
-            try:
-                obj_data = s3.get_object(Bucket=BUCKET, Key=key)
-                txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
-                lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
-
-                if not lines:
-                    return None
-
-                try:
-                    first_rec = json.loads(lines[0])
-                except json.JSONDecodeError as e:
-                    print(f"[UBI UNASSIGNED] Skipping corrupted file {key}: {e}")
-                    return None
-
-                # Compute pdf_id from s3_key and extract review date from path
-                computed_pdf_id = pdf_id_from_key(key)
-                import re
-                date_match = re.search(r'yyyy=(\d{4})/mm=(\d{2})/dd=(\d{2})', key)
-                review_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else ""
-
-                # Use PostedAt from record if available, then SubmittedAt, finally S3 LastModified
-                # Important: Use SubmittedAt before S3 LastModified since GL mapping refresh can change LastModified
-                posted_at_str = first_rec.get("PostedAt", "") or first_rec.get("SubmittedAt", "")
-                posted_at_ts = 0
-                submitter = first_rec.get("Submitter", "") or first_rec.get("SubmittedBy", "")
-                if posted_at_str:
-                    try:
-                        from datetime import datetime
-                        posted_at_dt = datetime.fromisoformat(posted_at_str.replace('Z', '+00:00'))
-                        posted_at_ts = posted_at_dt.timestamp()
-                    except Exception:
-                        pass
-                if not posted_at_str:
-                    # Fall back to S3 LastModified only if no record timestamps exist
-                    s3_last_mod = obj_data.get('LastModified')
-                    if s3_last_mod:
-                        posted_at_str = s3_last_mod.strftime("%Y-%m-%dT%H:%M:%S")
-                        posted_at_ts = s3_last_mod.timestamp()
-
-                # Build account key for history lookup
-                property_id = first_rec.get("EnrichedPropertyID", "")
-                vendor_id = first_rec.get("EnrichedVendorID", "")
-                account_number = str(first_rec.get("Account Number", "")).strip()
-                account_key = f"{property_id}|{vendor_id}|{account_number}"
-                account_key_no_vendor = f"{property_id}||{account_number}"
-
-                # Check if this is a UBI account (for suggestion purposes only - still show ALL bills)
-                is_ubi_account = account_key in ubi_account_keys or account_key_no_vendor in ubi_account_keys
-
-                # Look up suggestion from Stage 8 history (based on service periods)
-                # ONLY suggest for UBI accounts - but still show ALL bills
-                history = last_ubi_periods.get(account_key) if is_ubi_account else None
-                suggested_period = None
-                last_ubi_period = None
-                last_service_month_str = None
-
-                last_service_dates = None
-                if history and is_ubi_account:
-                    last_service_month = history.get("last_service_month")  # (year, month) tuple
-                    last_ubi_period = history.get("last_ubi_period")
-                    last_service_start = history.get("last_service_start", "")
-                    last_service_end = history.get("last_service_end", "")
-
-                    if last_service_month:
-                        last_service_month_str = f"{last_service_month[1]:02d}/{last_service_month[0]}"
-                        # Build full date range string
-                        if last_service_start and last_service_end:
-                            last_service_dates = f"{last_service_start} - {last_service_end}"
-                        elif last_service_start:
-                            last_service_dates = last_service_start
-
-                        # Get this bill's service period
-                        bill_service_start = first_rec.get("Bill Period Start", "")
-                        bill_service_month = _parse_service_period_to_month(bill_service_start)
-
-                        if bill_service_month and last_ubi_period:
-                            # Check if this bill's service month is AFTER the last assigned
-                            last_year, last_month = last_service_month
-                            bill_year, bill_month = bill_service_month
-
-                            # Calculate expected next service month
-                            if last_month == 12:
-                                expected_year, expected_month = last_year + 1, 1
-                            else:
-                                expected_year, expected_month = last_year, last_month + 1
-
-                            # If bill is the NEXT sequential month, suggest next UBI period
-                            if bill_year == expected_year and bill_month == expected_month:
-                                suggested_period = _get_next_ubi_period(last_ubi_period)
-                            # If bill is AFTER the last assigned (not exact next), still suggest next period
-                            # This handles cases where bills come in out of order
-                            elif (bill_year, bill_month) > (last_year, last_month):
-                                suggested_period = _get_next_ubi_period(last_ubi_period)
-                        elif last_ubi_period:
-                            # No service dates but have history - suggest next period
-                            suggested_period = _get_next_ubi_period(last_ubi_period)
-
-                # --- Duplicate detection & prior period suggestion ---
-                duplicate_warning = None     # "Possible duplicate of <period>"
-                prior_period_suggestion = None  # "Suggest <period> (prior to <period>)"
-                bill_svc_start_raw = first_rec.get("Bill Period Start", "")
-                bill_svc_end_raw = first_rec.get("Bill Period End", "")
-
-                if history and is_ubi_account and bill_svc_start_raw:
-                    all_assignments = history.get("all_assignments", [])
-                    bill_start_dt = _parse_date_any(bill_svc_start_raw)
-                    bill_end_dt = _parse_date_any(bill_svc_end_raw)
-
-                    if bill_start_dt and all_assignments:
-                        # 1) DUPLICATE CHECK: same service dates (within 5 days) already assigned
-                        for asgn in all_assignments:
-                            asgn_start = _parse_date_any(asgn.get("service_start", ""))
-                            asgn_end = _parse_date_any(asgn.get("service_end", ""))
-                            if asgn_start:
-                                start_diff = abs((bill_start_dt - asgn_start).days)
-                                # Only confirm match if both end dates available; skip if either missing
-                                if bill_end_dt and asgn_end:
-                                    end_diff = abs((bill_end_dt - asgn_end).days)
-                                else:
-                                    end_diff = 999
-                                if start_diff <= 5 and end_diff <= 5:
-                                    duplicate_warning = asgn.get("ubi_period", "")
-                                    break
-
-                        # 2) PRIOR PERIOD CHECK: this bill's service month is the month
-                        #    BEFORE an assigned bill → suggest the prior UBI period
-                        if not suggested_period and not duplicate_warning:
-                            bill_svc_month = _parse_service_period_to_month(bill_svc_start_raw)
-                            if bill_svc_month:
-                                bill_y, bill_m = bill_svc_month
-                                for asgn in all_assignments:
-                                    asgn_month = asgn.get("service_month")  # (year, month) tuple
-                                    if not asgn_month:
-                                        continue
-                                    asgn_y, asgn_m = asgn_month
-                                    # Calculate what month is one BEFORE the assigned service month
-                                    if asgn_m == 1:
-                                        prev_y, prev_m = asgn_y - 1, 12
-                                    else:
-                                        prev_y, prev_m = asgn_y, asgn_m - 1
-                                    if bill_y == prev_y and bill_m == prev_m:
-                                        prior_ubi = _get_prev_ubi_period(asgn.get("ubi_period", ""))
-                                        if prior_ubi:
-                                            prior_period_suggestion = prior_ubi
-                                            # Also set as the main suggested_period for Accept button
-                                            suggested_period = prior_ubi
-                                            break
-
-                bill_info = {
-                    "s3_key": key,
-                    "vendor": first_rec.get("EnrichedVendorName", "") or first_rec.get("Vendor Name", ""),
-                    "account": first_rec.get("Account Number", ""),
-                    "account_key": account_key,
-                    "property_name": first_rec.get("EnrichedPropertyName", ""),
-                    "pdf_id": computed_pdf_id,  # Computed from s3_key
-                    "review_date": review_date,  # For /review URL
-                    "invoice_no": first_rec.get("Invoice Number", ""),
-                    "total_amount": 0.0,
-                    "line_count": 0,
-                    "unassigned_lines": [],
-                    "last_modified": posted_at_str,
-                    "last_modified_ts": posted_at_ts,
-                    "submitter": submitter,
-                    "suggested_period": suggested_period,
-                    "last_assigned_period": last_ubi_period,
-                    "last_assigned_service": last_service_dates or last_service_month_str,
-                    "is_ubi_account": is_ubi_account,
-                    "duplicate_warning": duplicate_warning,
-                    "prior_period_suggestion": prior_period_suggestion,
-                }
-
-                for line in lines:
-                    try:
-                        rec = json.loads(line)
-                        line_hash = _compute_stable_line_hash(rec)
-
-                        # Skip if already assigned (line_hash from DDB)
-                        if line_hash in excluded_hashes:
-                            continue
-
-                        charge = safe_parse_charge(rec.get("Line Item Charge", "0"))
-
-                        # Only include essential fields to reduce payload size
-                        # This drastically improves load time for large datasets
-                        ESSENTIAL_FIELDS = {
-                            'EnrichedPropertyName', 'EnrichedPropertyID', 'Property Name',
-                            'EnrichedVendorName', 'EnrichedVendorID', 'Vendor Name',
-                            'Account Number', 'Bill Period Start', 'Bill Period End',
-                            'EnrichedGLAccountNumber', 'EnrichedGLAccountName', 'GL Account Number',
-                            'Line Item Description', 'Line Item Charge', 'Charge Code',
-                            'source_input_key', 'PDF_LINK', 'Invoice Number',
-                            'Service Address', 'Meter Number', 'Consumption Amount', 'Unit of Measure',
-                            'Current Amount', 'Amount Overridden', 'Charge Code Source',
-                        }
-                        sanitized_rec = {}
-                        for k, v in rec.items():
-                            if k not in ESSENTIAL_FIELDS:
-                                continue  # Skip non-essential fields
-                            if isinstance(v, str):
-                                # Remove any null bytes or other problematic characters
-                                sanitized_rec[k] = v.replace('\x00', '').replace('\ufffd', '')
-                            else:
-                                sanitized_rec[k] = v
-
-                        bill_info["unassigned_lines"].append({
-                            "line_hash": line_hash,
-                            "line_data": sanitized_rec,
-                            "charge": charge
-                        })
-                        bill_info["total_amount"] += charge
-                        bill_info["line_count"] += 1
-                    except (json.JSONDecodeError, ValueError, TypeError):
-                        continue
-
-                if bill_info["unassigned_lines"]:
-                    return bill_info
-                return None
-            except Exception as e:
-                print(f"[UBI UNASSIGNED] Error processing {key}: {e}")
-                return None
-
-        # Process files concurrently with ThreadPoolExecutor
-        unassigned_bills = []
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(process_file, key): key for key in all_keys}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    unassigned_bills.append(result)
+        start_time = time.time()
+        all_bills = _get_ubi_unassigned_cached(days_back, force_refresh=bool(refresh))
 
         # Apply server-side filtering
+        filtered = all_bills
         prop_filter_lower = property_filter.lower().strip() if property_filter else ""
         vendor_filter_lower = vendor_filter.lower().strip() if vendor_filter else ""
         gl_filter_clean = gl_filter.strip() if gl_filter else ""
 
         if prop_filter_lower or vendor_filter_lower or gl_filter_clean:
             filtered_bills = []
-            for bill in unassigned_bills:
-                # Get first line data for filtering
+            for bill in filtered:
                 first_line = bill.get("unassigned_lines", [{}])[0] if bill.get("unassigned_lines") else {}
                 ld = first_line.get("line_data", {})
 
-                # Property filter
                 if prop_filter_lower:
                     prop_name = (ld.get("EnrichedPropertyName") or ld.get("Property Name") or "").lower()
                     if prop_filter_lower not in prop_name:
                         continue
 
-                # Vendor filter
                 if vendor_filter_lower:
                     vendor_name = (ld.get("EnrichedVendorName") or ld.get("Vendor Name") or bill.get("vendor", "")).lower()
                     if vendor_filter_lower not in vendor_name:
                         continue
 
-                # GL filter (check if ANY line has this GL code)
                 if gl_filter_clean:
                     has_gl = any(
                         (line.get("line_data", {}).get("EnrichedGLAccountNumber") or
@@ -5308,9 +5313,9 @@ def api_billback_ubi_unassigned(
                         continue
 
                 filtered_bills.append(bill)
-            unassigned_bills = filtered_bills
+            filtered = filtered_bills
 
-        # Apply server-side sorting
+        # Sort
         def get_sort_key(bill):
             first_line = bill.get("unassigned_lines", [{}])[0] if bill.get("unassigned_lines") else {}
             ld = first_line.get("line_data", {})
@@ -5327,21 +5332,18 @@ def api_billback_ubi_unassigned(
             elif sort == "property_asc":
                 return (ld.get("EnrichedPropertyName") or ld.get("Property Name") or "").lower()
             else:
-                return -bill.get("total_amount", 0)  # Default to amount_desc
+                return -bill.get("total_amount", 0)
 
-        unassigned_bills.sort(key=get_sort_key)
+        filtered.sort(key=get_sort_key)
 
-        # Calculate pagination
-        total_bills = len(unassigned_bills)
-        total_pages = (total_bills + page_size - 1) // page_size if total_bills > 0 else 1
+        # Paginate
+        total_bills = len(filtered)
+        total_pages = max(1, (total_bills + page_size - 1) // page_size)
         start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
+        paginated_bills = filtered[start_idx:start_idx + page_size]
 
-        # Get the requested page
-        paginated_bills = unassigned_bills[start_idx:end_idx]
-
-        elapsed = (datetime.now() - start_time).total_seconds()
-        print(f"[UBI UNASSIGNED] Returning page {page}/{total_pages} ({len(paginated_bills)} of {total_bills} bills) in {elapsed:.1f}s")
+        elapsed = time.time() - start_time
+        print(f"[UBI UNASSIGNED] Page {page}/{total_pages} ({len(paginated_bills)}/{total_bills} bills) in {elapsed:.2f}s")
 
         return {
             "bills": paginated_bills,
@@ -5350,7 +5352,7 @@ def api_billback_ubi_unassigned(
             "page_size": page_size,
             "total_pages": total_pages,
             "has_more": page < total_pages,
-            "processing_time_seconds": round(elapsed, 1)
+            "processing_time_seconds": round(elapsed, 2)
         }
 
     except Exception as e:
