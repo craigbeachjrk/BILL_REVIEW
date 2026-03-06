@@ -15,9 +15,9 @@ from typing import Optional, Dict, List, Callable
 
 import pandas as pd
 
-from .config import VEConfig, CHARGE_CODE_MAP
+from .config import VEConfig, CHARGE_CODE_MAP, MIN_ADMIN_OVERLAP_DAYS
 from .pipeline import VEPipeline
-from .classifier import classify_detail_df, classify_unmatched_df, get_status_summary, get_suggested_action
+from .classifier import classify_detail_df, classify_unmatched_df, classify_line, get_status_summary, get_suggested_action
 from .s3_bills import BillPDFLocator
 from .lease_clauses import LeaseClauseFinder
 from .queries import ap_invoice_query
@@ -218,7 +218,7 @@ def _run_batch_worker(
         config = VEConfig(
             month=month,
             year=year,
-            admin_fees=admin_fees or {},
+            admin_fees={},  # Admin fees now applied from lease extractions post-enrichment
             corrections_csv_path=corrections_csv_path,
         )
         pipeline = VEPipeline(config)
@@ -276,10 +276,30 @@ def _run_batch_worker(
             _progress(on_progress, batch_id, "Finding bill PDFs...")
             _enrich_bill_pdfs(lines, bill_locator)
 
-        # Enrich with lease clauses
+        # Enrich with lease clauses (also applies admin fees from lease extractions)
         if clause_finder:
             _progress(on_progress, batch_id, "Finding lease utility clauses...")
             _enrich_lease_clauses(lines, clause_finder)
+
+        # Re-classify lines that got admin fees (total changed → status may change)
+        reclassified = 0
+        for line in lines:
+            if line.admin_charge > 0:
+                row = pd.Series({
+                    'description': '',
+                    'ResiStatus': line.resi_status,
+                    'Total': line.total,
+                    'dramount': line.dramount,
+                    'Overlap Days': line.overlap_days,
+                    'MoveInDate': line.move_in_date,
+                    'Bill Start': line.bill_start,
+                })
+                new_status = classify_line(row)
+                if new_status != line.review_status:
+                    line.review_status = new_status
+                    reclassified += 1
+        if reclassified:
+            logger.info(f"Re-classified {reclassified} lines after admin fee application")
 
         # Set suggested actions
         for line in lines:
@@ -451,9 +471,12 @@ def _enrich_bill_pdfs(lines: list, locator: BillPDFLocator):
 
 
 def _enrich_lease_clauses(lines: list, finder: LeaseClauseFinder):
-    """Add lease utility clause info to lines."""
+    """Add lease utility clause info to lines AND apply lease-extracted admin fees."""
     found = 0
+    admin_applied = 0
     seen = {}  # cache by (entity_id, lease_id) to avoid duplicate S3 calls
+    seen_invoices = set()  # dedup: one admin fee per (resident, key, invoicedoc)
+
     for line in lines:
         if not line.entity_id or not line.resi_id:
             continue
@@ -491,7 +514,21 @@ def _enrich_lease_clauses(lines: list, finder: LeaseClauseFinder):
                         ext_data['special_provisions'] = raw_text
                 line.lease_extraction = json.dumps(ext_data, default=str)
 
+                # ── Apply admin fee from lease extraction ──
+                admin_fee = ext.admin_fee
+                if admin_fee and float(admin_fee) > 0:
+                    composite_key = f"{line.entity_id}|{line.bldg_id}|{line.unit_id}"
+                    invoice_key = (line.resident_name, composite_key, line.invoicedoc)
+                    if (line.dramount > 0
+                            and line.overlap_days > MIN_ADMIN_OVERLAP_DAYS
+                            and invoice_key not in seen_invoices):
+                        line.admin_charge = float(admin_fee)
+                        line.total = line.prorated_billback + line.admin_charge
+                        seen_invoices.add(invoice_key)
+                        admin_applied += 1
+
     logger.info(f"Lease clauses found: {found}/{len(lines)}")
+    logger.info(f"Admin fees applied from lease extractions: {admin_applied}")
 
 
 def _progress(callback, batch_id, message):

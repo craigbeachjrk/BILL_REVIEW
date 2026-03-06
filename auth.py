@@ -37,6 +37,13 @@ ROLES = {
             "reports:read"
         ],
         "pages": ["/", "/review", "/invoices", "/track"]
+    },
+    "HR_Admins": {
+        "name": "HR Administrator",
+        "permissions": [
+            "hr:read", "hr:write", "hr:export"
+        ],
+        "pages": []
     }
 }
 
