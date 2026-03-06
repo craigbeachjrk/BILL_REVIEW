@@ -25506,10 +25506,52 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
         return JSONResponse({"ok": False, "error": str(e), "trace": tb}, status_code=500)
 
 
+def _normalize_pdf_orientation(pdf_bytes: bytes) -> bytes:
+    """Rotate any landscape pages to portrait orientation.
+
+    Scanned invoices are sometimes captured in landscape format (width > height)
+    without rotation metadata, causing them to appear sideways in the browser PDF
+    viewer. This function detects such pages and adds the appropriate /Rotate entry
+    so they display upright in portrait orientation.
+
+    Returns the original bytes unchanged if no rotation is needed or if processing fails.
+    """
+    try:
+        from PyPDF2 import PdfReader, PdfWriter
+        from PyPDF2.generic import NumberObject, NameObject
+        reader = PdfReader(BytesIO(pdf_bytes))
+        any_changed = False
+        for page in reader.pages:
+            w = float(page.mediabox.width)
+            h = float(page.mediabox.height)
+            rotation = int(page.get('/Rotate', 0) or 0) % 360
+            # Effective display dimensions after applying existing rotation
+            if rotation in (90, 270):
+                eff_w, eff_h = h, w
+            else:
+                eff_w, eff_h = w, h
+            if eff_w > eff_h:
+                # Page displays as landscape; rotate 90° CW to make it portrait
+                new_rotation = (rotation + 90) % 360
+                page[NameObject("/Rotate")] = NumberObject(new_rotation)
+                any_changed = True
+        if not any_changed:
+            return pdf_bytes
+        writer = PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+        output = BytesIO()
+        writer.write(output)
+        return output.getvalue()
+    except Exception:
+        return pdf_bytes
+
+
 @app.get("/pdf")
-def pdf_proxy(u: str = "", k: str = "", date: str = "", pdf_id: str = ""):
+def pdf_proxy(u: str = "", k: str = "", date: str = "", pdf_id: str = "", normalize: int = 0):
     """Proxy endpoint that regenerates a fresh presigned URL for a given (possibly expired) PDF link.
     Accepts query param u=<original_or_short_url> and redirects to a new presigned URL.
+    Pass normalize=1 to auto-rotate any landscape pages to portrait (for scanned invoices).
     """
     # If an explicit S3 key was provided, use it
     if k:
@@ -25521,15 +25563,19 @@ def pdf_proxy(u: str = "", k: str = "", date: str = "", pdf_id: str = ""):
         try:
             print(f"/pdf proxy (k): streaming bucket={bucket} key={key}")
             obj = s3.get_object(Bucket=bucket, Key=key)
-            body = obj['Body']
-            from starlette.responses import StreamingResponse
             base_name = os.path.basename(key) or 'document.pdf'
             headers = {
                 'Content-Disposition': f'inline; filename="{base_name}"',
                 'Content-Type': 'application/pdf',
                 'Cache-Control': 'private, max-age=300',
             }
-            return StreamingResponse(body.iter_chunks(chunk_size=8192), headers=headers, media_type='application/pdf')
+            if normalize:
+                pdf_bytes = obj['Body'].read()
+                pdf_bytes = _normalize_pdf_orientation(pdf_bytes)
+                from starlette.responses import Response as StarletteResponse
+                return StarletteResponse(content=pdf_bytes, media_type='application/pdf', headers=headers)
+            from starlette.responses import StreamingResponse
+            return StreamingResponse(obj['Body'].iter_chunks(chunk_size=8192), headers=headers, media_type='application/pdf')
         except Exception as e:
             return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
     # If 'u' looks like a bare S3 key (not a URL), treat it as key

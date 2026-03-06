@@ -566,7 +566,7 @@
         if (u.hostname.endsWith('.s3.amazonaws.com')){
           const key = (u.pathname || '').replace(/^\//,'');
           if (key){
-            iframeUrl = '/pdf?k=' + encodeURIComponent(key) + '&date=' + encodeURIComponent(dateVal) + '&pdf_id=' + encodeURIComponent(pdfId) + '&cb=' + Date.now();
+            iframeUrl = '/pdf?k=' + encodeURIComponent(key) + '&date=' + encodeURIComponent(dateVal) + '&pdf_id=' + encodeURIComponent(pdfId) + '&normalize=1&cb=' + Date.now();
           }
         }
       } catch(e) { /* not a full URL; continue */ }
@@ -574,7 +574,7 @@
         const isUrl = /^(https?:)?\/\//i.test(pdf) || pdf.startsWith('s3://');
         const looksLikeKey = /^(Bill_Parser_|yyyy=mm=dd=|jrk-analytics-billing\/)/i.test(pdf) || (!isUrl && /\//.test(pdf));
         const q = looksLikeKey && !isUrl ? ('k=' + encodeURIComponent(pdf)) : (pdf ? ('u=' + encodeURIComponent(pdf)) : '');
-        const base = '/pdf?' + (q ? (q + '&') : '') + 'date=' + encodeURIComponent(dateVal) + '&pdf_id=' + encodeURIComponent(pdfId) + '&cb=' + Date.now();
+        const base = '/pdf?' + (q ? (q + '&') : '') + 'date=' + encodeURIComponent(dateVal) + '&pdf_id=' + encodeURIComponent(pdfId) + '&normalize=1&cb=' + Date.now();
         iframeUrl = base;
       }
       pdfFrame.src = iframeUrl;
