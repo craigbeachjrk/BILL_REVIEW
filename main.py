@@ -23673,7 +23673,7 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             "line_id": lid,
             "line_number": i,
             "orig_id": r.get("__id__"),
-            "pdf_link": (r.get("PDF_LINK", "") or pdf_link_any),
+            "pdf_link": (pdf_link_any or r.get("PDF_LINK", "")),
             "source_page_start": source_page_start,
             "source_page_end": source_page_end,
             "source_chunk": source_chunk,
