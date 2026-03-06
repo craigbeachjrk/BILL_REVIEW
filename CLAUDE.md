@@ -1,9 +1,9 @@
 # Claude Code Instructions
 
 ## Deployment Rules
-- **DO NOT deploy automatically** - Always ask the user before running deploy_app.ps1
-- Wait for explicit user approval before deploying any changes
-- Summarize what changes will be deployed and get confirmation first
+- App **auto-deploys on push to `main`** via CodeBuild + AppRunner
+- No manual deploy step needed — `git push` triggers rebuild automatically
+- `deploy_app.ps1` exists but is not needed for normal deploys
 
 ## Project Overview
 Bill Review App - A FastAPI web application for reviewing and processing utility bills at JRK Residential.
