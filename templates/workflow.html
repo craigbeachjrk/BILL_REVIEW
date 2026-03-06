@@ -204,9 +204,9 @@
     .dir-spinner{display:inline-block;width:32px;height:32px;border:3px solid #e5e7eb;border-top-color:#0ea5e9;border-radius:50%;animation:spin .6s linear infinite;margin-bottom:12px}
     @keyframes spin{to{transform:rotate(360deg)}}
 
-    .dir-drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+    .dir-drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,0.38);opacity:0;pointer-events:none;transition:opacity .2s;z-index:110}
     .dir-drawer-mask.open{opacity:1;pointer-events:auto}
-    .dir-drawer{position:fixed;top:0;right:-480px;width:480px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:41;display:flex;flex-direction:column}
+    .dir-drawer{position:fixed;top:0;right:-480px;width:480px;max-width:92vw;height:100vh;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.25);transition:right .25s;z-index:111;display:flex;flex-direction:column}
     .dir-drawer.open{right:0}
     .dir-drawer header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb}
     .dir-drawer .body{flex:1;overflow:auto;padding:16px 18px}
@@ -635,7 +635,7 @@
   <!-- Directed History Drawer -->
   <div class="dir-drawer-mask" id="dir_drawerMask" onclick="dir_closeHistory()"></div>
   <div class="dir-drawer" id="dir_historyDrawer">
-    <header><h3 style="margin:0">Plan History (7 days)</h3><button class="btn small secondary" onclick="dir_closeHistory()">Close</button></header>
+    <header><h3 style="margin:0">Plan History (30 days)</h3><button class="btn small secondary" onclick="dir_closeHistory()">Close</button></header>
     <div class="body" id="dir_historyBody"><div class="loading">Loading...</div></div>
   </div>
 
