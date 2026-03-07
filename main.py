@@ -825,7 +825,8 @@ _EXCLUSION_HASH_CACHE = {
 # -------- UBI Unassigned Bills Cache --------
 # Background-computed cache: rebuilds every 4 hours, never blocks requests
 import threading as _threading
-_UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float, "computing": bool}
+_UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float}
+_UBI_UNASSIGNED_COMPUTING = _threading.Event()  # Set while rebuild is running
 _UBI_UNASSIGNED_TTL = 14400  # 4 hours
 
 # -------- PRINT CHECKS Posted Invoices Cache --------
@@ -1220,6 +1221,9 @@ async def startup_prewarm_caches():
             print("[UBI CACHE] Periodic rebuild triggered")
             _ubi_cache_rebuild_async()
     threading.Thread(target=ubi_cache_loop, daemon=True, name="ubi-cache-loop").start()
+
+    # GL mapping refresh: every 2 hours between 7am-7pm Pacific
+    threading.Thread(target=_gl_refresh_schedule_loop, daemon=True, name="gl-refresh-loop").start()
 
     # Background refresh thread for invoice history cache (every 2 hours)
     def _invoice_history_refresh_loop():
@@ -5232,7 +5236,7 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
 
     # Process files concurrently
     unassigned_bills = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=50) as executor:
         futures = {executor.submit(process_file, key): key for key in all_keys}
         for future in as_completed(futures):
             result = future.result()
@@ -5247,19 +5251,20 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
 def _ubi_cache_rebuild_async(days_back: int = 60):
     """Rebuild UBI unassigned cache in a background thread. Never blocks requests."""
     global _UBI_UNASSIGNED_CACHE
-    if _UBI_UNASSIGNED_CACHE.get("computing"):
+    if _UBI_UNASSIGNED_COMPUTING.is_set():
         print("[UBI CACHE] Background rebuild already in progress, skipping")
         return
-    _UBI_UNASSIGNED_CACHE["computing"] = True
+    _UBI_UNASSIGNED_COMPUTING.set()
     def _do_rebuild():
         global _UBI_UNASSIGNED_CACHE
         try:
             data = _compute_ubi_unassigned_bills(days_back)
-            _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time(), "computing": False}
+            _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time()}
             print(f"[UBI CACHE] Background rebuild complete: {len(data)} bills")
         except Exception as e:
             print(f"[UBI CACHE] Background rebuild failed: {e}")
-            _UBI_UNASSIGNED_CACHE["computing"] = False
+        finally:
+            _UBI_UNASSIGNED_COMPUTING.clear()
     t = _threading.Thread(target=_do_rebuild, daemon=True)
     t.start()
 
@@ -5270,13 +5275,14 @@ def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False)
     now = time.time()
     has_data = cached.get("data") is not None
     is_fresh = has_data and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL)
+    is_computing = _UBI_UNASSIGNED_COMPUTING.is_set()
 
     if force_refresh or not is_fresh:
         _ubi_cache_rebuild_async(days_back)
 
     if has_data:
         age = now - cached.get("ts", 0)
-        print(f"[UBI CACHE] Returning {len(cached['data'])} bills (age {age:.0f}s, computing={cached.get('computing', False)})")
+        print(f"[UBI CACHE] Returning {len(cached['data'])} bills (age {age:.0f}s, computing={is_computing})")
         return cached["data"]
 
     # No data yet — return empty, rebuild is in progress
@@ -5290,6 +5296,171 @@ def _invalidate_ubi_unassigned_cache():
     _UBI_UNASSIGNED_CACHE = {}
     print("[UBI CACHE] Invalidated, triggering async rebuild")
     _ubi_cache_rebuild_async()
+
+
+# -------- Server-Side GL Mapping Refresh --------
+
+def _lookup_charge_code(property_id: str, gl_account_id: str, gl_code: str, mappings: list) -> dict | None:
+    """Python equivalent of frontend lookupChargeCode(). Returns mapping dict or None."""
+    if not property_id or (not gl_account_id and not gl_code):
+        return None
+    pid = str(property_id).strip()
+    gaid = str(gl_account_id or "").strip()
+    gc = str(gl_code or "").strip()
+
+    # 1. Property-specific by GL Code
+    if gc:
+        for m in mappings:
+            if str(m.get("property_id", "")).strip() == pid and str(m.get("gl_code", "")).strip() == gc:
+                return m
+    # 2. Property-specific by GL Account ID
+    if gaid:
+        for m in mappings:
+            if str(m.get("property_id", "")).strip() == pid and str(m.get("gl_account_id", "")).strip() == gaid:
+                return m
+    # 3. Wildcard by GL Code
+    if gc:
+        for m in mappings:
+            if str(m.get("property_id", "")).strip() == "*" and str(m.get("gl_code", "")).strip() == gc:
+                return m
+    # 4. Wildcard by GL Account ID
+    if gaid:
+        for m in mappings:
+            if str(m.get("property_id", "")).strip() == "*" and str(m.get("gl_account_id", "")).strip() == gaid:
+                return m
+    return None
+
+
+_GL_REFRESH_COMPUTING = _threading.Event()
+
+
+def _run_gl_mapping_refresh():
+    """Server-side batch: apply GL code mappings to all Stage 7 unassigned bills."""
+    if _GL_REFRESH_COMPUTING.is_set():
+        print("[GL REFRESH] Already in progress, skipping")
+        return
+    _GL_REFRESH_COMPUTING.set()
+    try:
+        from datetime import datetime, timedelta
+        start_time = time.time()
+
+        # Load GL mappings from config
+        gl_mappings = _ddb_get_config("gl-charge-code-mapping")
+        if not gl_mappings or not isinstance(gl_mappings, list) or len(gl_mappings) == 0:
+            print("[GL REFRESH] No GL code mappings configured, skipping")
+            return
+
+        print(f"[GL REFRESH] Loaded {len(gl_mappings)} GL mapping rules")
+
+        # Collect Stage 7 S3 keys (last 60 days)
+        all_keys = []
+        today = datetime.now()
+        for i in range(60):
+            d = today - timedelta(days=i)
+            prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+            try:
+                paginator = s3.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                    for obj in page.get('Contents', []):
+                        if obj['Key'].endswith('.jsonl'):
+                            all_keys.append(obj['Key'])
+            except Exception:
+                continue
+
+        print(f"[GL REFRESH] Found {len(all_keys)} Stage 7 files to process")
+
+        updated_files = 0
+        updated_lines = 0
+        skipped_overridden = 0
+        no_mapping = 0
+
+        for key in all_keys:
+            try:
+                obj_data = s3.get_object(Bucket=BUCKET, Key=key)
+                txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
+                lines_raw = txt.strip().split("\n")
+                records = []
+                file_changed = False
+
+                for raw_line in lines_raw:
+                    if not raw_line.strip():
+                        continue
+                    try:
+                        rec = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        records.append(raw_line)
+                        continue
+
+                    # Skip manually overridden
+                    is_overridden = rec.get("Charge Code Overridden") in (True, "true", "True")
+                    if is_overridden:
+                        skipped_overridden += 1
+                        records.append(json.dumps(rec, ensure_ascii=False))
+                        continue
+
+                    property_id = rec.get("EnrichedPropertyID", "")
+                    gl_account_id = rec.get("EnrichedGLAccountID", "") or rec.get("GL Account ID", "")
+                    gl_code = rec.get("EnrichedGLAccountNumber", "") or rec.get("GL Account Number", "")
+
+                    mapping = _lookup_charge_code(property_id, gl_account_id, gl_code, gl_mappings)
+                    if not mapping or not mapping.get("charge_code"):
+                        no_mapping += 1
+                        records.append(json.dumps(rec, ensure_ascii=False))
+                        continue
+
+                    new_cc = mapping["charge_code"]
+                    old_cc = rec.get("Charge Code", "")
+
+                    if old_cc != new_cc:
+                        rec["Charge Code"] = new_cc
+                        rec["Charge Code Source"] = "mapping"
+                        if mapping.get("utility_name"):
+                            rec["Utility Type"] = mapping["utility_name"]
+                            rec["Mapped Utility Name"] = mapping["utility_name"]
+                        file_changed = True
+                        updated_lines += 1
+
+                    records.append(json.dumps(rec, ensure_ascii=False))
+
+                if file_changed:
+                    jsonl_content = "\n".join(records)
+                    s3.put_object(Bucket=BUCKET, Key=key, Body=jsonl_content.encode("utf-8"),
+                                  ContentType="application/x-ndjson")
+                    updated_files += 1
+
+            except Exception as e:
+                print(f"[GL REFRESH] Error processing {key}: {e}")
+                continue
+
+        elapsed = time.time() - start_time
+        print(f"[GL REFRESH] Complete in {elapsed:.1f}s: {updated_files} files, {updated_lines} lines updated, "
+              f"{skipped_overridden} overridden, {no_mapping} no mapping")
+
+    except Exception as e:
+        print(f"[GL REFRESH] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        _GL_REFRESH_COMPUTING.clear()
+
+
+def _gl_refresh_schedule_loop():
+    """Run GL mapping refresh every 2 hours between 7am-7pm Pacific."""
+    from zoneinfo import ZoneInfo
+    pacific = ZoneInfo("America/Los_Angeles")
+    import time as _t
+    _t.sleep(30)  # Let app fully start
+
+    while True:
+        now = datetime.now(pacific)
+        hour = now.hour
+
+        if 7 <= hour < 19:  # 7am - 7pm Pacific
+            print(f"[GL REFRESH] Scheduled run at {now.strftime('%I:%M %p PT')}")
+            _run_gl_mapping_refresh()
+
+        # Sleep 2 hours
+        _t.sleep(7200)
 
 
 @app.get("/api/billback/ubi/unassigned")
@@ -5378,7 +5549,7 @@ def api_billback_ubi_unassigned(
         elapsed = time.time() - start_time
         print(f"[UBI UNASSIGNED] Page {page}/{total_pages} ({len(paginated_bills)}/{total_bills} bills) in {elapsed:.2f}s")
 
-        is_computing = _UBI_UNASSIGNED_CACHE.get("computing", False)
+        is_computing = _UBI_UNASSIGNED_COMPUTING.is_set()
         return {
             "bills": paginated_bills,
             "total_bills": total_bills,
