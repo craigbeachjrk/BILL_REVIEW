@@ -824,10 +824,47 @@ _EXCLUSION_HASH_CACHE = {
 
 # -------- UBI Unassigned Bills Cache --------
 # Background-computed cache: rebuilds every 4 hours, never blocks requests
+# Persisted to S3 so it survives deploys — instant load on startup
 import threading as _threading
 _UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float}
 _UBI_UNASSIGNED_COMPUTING = _threading.Event()  # Set while rebuild is running
 _UBI_UNASSIGNED_TTL = 14400  # 4 hours
+_UBI_CACHE_S3_KEY = "Bill_Parser_Cache/ubi_unassigned_cache.json.gz"
+
+
+def _persist_ubi_cache_to_s3(data: list):
+    """Save UBI cache to S3 as gzipped JSON for fast startup after deploys."""
+    try:
+        import gzip
+        payload = json.dumps({"data": data, "ts": time.time()}).encode("utf-8")
+        compressed = gzip.compress(payload)
+        s3.put_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY, Body=compressed,
+                      ContentType="application/gzip")
+        print(f"[UBI CACHE] Persisted {len(data)} bills to S3 ({len(compressed)//1024}KB)")
+    except Exception as e:
+        print(f"[UBI CACHE] Failed to persist to S3: {e}")
+
+
+def _load_ubi_cache_from_s3() -> bool:
+    """Load UBI cache from S3. Returns True if loaded successfully."""
+    global _UBI_UNASSIGNED_CACHE
+    try:
+        import gzip
+        obj = s3.get_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
+        compressed = obj["Body"].read()
+        payload = json.loads(gzip.decompress(compressed))
+        data = payload.get("data", [])
+        ts = payload.get("ts", 0)
+        age_hours = (time.time() - ts) / 3600
+        _UBI_UNASSIGNED_CACHE = {"data": data, "ts": ts}
+        print(f"[UBI CACHE] Loaded {len(data)} bills from S3 (age {age_hours:.1f}h)")
+        return True
+    except s3.exceptions.NoSuchKey:
+        print("[UBI CACHE] No persisted cache in S3")
+        return False
+    except Exception as e:
+        print(f"[UBI CACHE] Failed to load from S3: {e}")
+        return False
 
 # -------- PRINT CHECKS Posted Invoices Cache --------
 # Cache posted invoices to avoid scanning S3 on every request
@@ -1210,11 +1247,15 @@ async def startup_prewarm_caches():
         print("[STARTUP] POST helper caches ready")
     threading.Thread(target=prewarm_post_helpers, daemon=True, name="post-helper-prewarm").start()
 
-    # UBI unassigned cache: build on startup, then rebuild every 4 hours
+    # UBI unassigned cache: load from S3 on startup (instant), then rebuild in background
     def ubi_cache_loop():
         import time as _t
-        _t.sleep(10)  # Let other caches warm first
-        print("[STARTUP] Kicking off initial UBI unassigned cache build...")
+        _t.sleep(5)  # Let boto3 clients initialize
+        print("[STARTUP] Loading UBI cache from S3...")
+        loaded = _load_ubi_cache_from_s3()
+        if not loaded:
+            print("[STARTUP] No S3 cache, building fresh...")
+        # Always rebuild in background to get fresh data
         _ubi_cache_rebuild_async()
         while True:
             _t.sleep(_UBI_UNASSIGNED_TTL)
@@ -5261,6 +5302,7 @@ def _ubi_cache_rebuild_async(days_back: int = 60):
             data = _compute_ubi_unassigned_bills(days_back)
             _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time()}
             print(f"[UBI CACHE] Background rebuild complete: {len(data)} bills")
+            _persist_ubi_cache_to_s3(data)
         except Exception as e:
             print(f"[UBI CACHE] Background rebuild failed: {e}")
         finally:
