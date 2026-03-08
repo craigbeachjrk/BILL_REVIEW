@@ -5487,22 +5487,34 @@ def _run_gl_mapping_refresh():
 
 
 def _gl_refresh_schedule_loop():
-    """Run GL mapping refresh every 2 hours between 7am-7pm Pacific."""
+    """Run GL mapping refresh: once on startup, then every 2 hours 7am-7pm Pacific."""
     from zoneinfo import ZoneInfo
     pacific = ZoneInfo("America/Los_Angeles")
     import time as _t
-    _t.sleep(30)  # Let app fully start
+
+    # Wait for UBI cache to finish building first (check every 30s, max 30 min)
+    _t.sleep(30)
+    for _ in range(60):
+        if _UBI_UNASSIGNED_CACHE.get("data") is not None and not _UBI_UNASSIGNED_COMPUTING.is_set():
+            break
+        _t.sleep(30)
+
+    # Always run once on startup regardless of time
+    print("[GL REFRESH] Initial run on startup")
+    _run_gl_mapping_refresh()
+    # Rebuild UBI cache so it picks up the new charge codes
+    _ubi_cache_rebuild_async()
 
     while True:
+        _t.sleep(7200)  # Sleep 2 hours first
         now = datetime.now(pacific)
         hour = now.hour
 
         if 7 <= hour < 19:  # 7am - 7pm Pacific
             print(f"[GL REFRESH] Scheduled run at {now.strftime('%I:%M %p PT')}")
             _run_gl_mapping_refresh()
-
-        # Sleep 2 hours
-        _t.sleep(7200)
+            # Rebuild UBI cache so it picks up the new charge codes
+            _ubi_cache_rebuild_async()
 
 
 @app.get("/api/billback/ubi/unassigned")
