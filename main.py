@@ -5025,8 +5025,8 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
         gl_mappings = []
     print(f"[UBI CACHE] Loaded {len(gl_mappings)} GL mapping rules for inline application")
 
-    gl_files_updated = 0
-    gl_lines_updated = 0
+    _gl_stats = {"files": 0, "lines": 0}
+    _gl_stats_lock = _threading.Lock()
 
     # Load UBI accounts - only show bills for accounts marked is_ubi=true AND is_tracked=true
     accounts_to_track = _get_accounts_to_track()
@@ -5101,7 +5101,6 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
     }
 
     def process_file(key):
-        nonlocal gl_files_updated, gl_lines_updated
         try:
             obj_data = s3.get_object(Bucket=BUCKET, Key=key)
             txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
@@ -5136,13 +5135,15 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
                                     rec["Utility Type"] = mapping["utility_name"]
                                     rec["Mapped Utility Name"] = mapping["utility_name"]
                                 file_gl_changed = True
-                                gl_lines_updated += 1
+                                with _gl_stats_lock:
+                                    _gl_stats["lines"] += 1
                     all_recs.append(json.dumps(rec, ensure_ascii=False) if isinstance(rec, dict) else rec)
 
                 if file_gl_changed:
                     s3.put_object(Bucket=BUCKET, Key=key, Body="\n".join(all_recs).encode("utf-8"),
                                   ContentType="application/x-ndjson")
-                    gl_files_updated += 1
+                    with _gl_stats_lock:
+                        _gl_stats["files"] += 1
                     # Re-read lines from the updated records
                     lines = all_recs
 
@@ -5321,18 +5322,25 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
             print(f"[UBI CACHE] Error processing {key}: {e}")
             return None
 
-    # Process files concurrently
+    # Process files concurrently — use explicit executor lifecycle to avoid
+    # "cannot schedule new futures after shutdown" in daemon threads
     unassigned_bills = []
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    executor = ThreadPoolExecutor(max_workers=50)
+    try:
         futures = {executor.submit(process_file, key): key for key in all_keys}
         for future in as_completed(futures):
-            result = future.result()
-            if result:
-                unassigned_bills.append(result)
+            try:
+                result = future.result()
+                if result:
+                    unassigned_bills.append(result)
+            except Exception as e:
+                print(f"[UBI CACHE] Future error: {e}")
+    finally:
+        executor.shutdown(wait=True)
 
     elapsed = (datetime.now() - start_time).total_seconds()
     print(f"[UBI CACHE] Computed {len(unassigned_bills)} unassigned bills in {elapsed:.1f}s "
-          f"(GL: {gl_files_updated} files, {gl_lines_updated} lines updated)")
+          f"(GL: {_gl_stats['files']} files, {_gl_stats['lines']} lines updated)")
     return unassigned_bills
 
 
