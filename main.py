@@ -1244,7 +1244,7 @@ async def startup_prewarm_caches():
     # UBI unassigned cache: load from S3 on startup (instant), then rebuild in background
     def ubi_cache_loop():
         import time as _t
-        _t.sleep(5)  # Let boto3 clients initialize
+        _t.sleep(1)  # Brief pause for boto3 init
         print("[STARTUP] Loading UBI cache from S3...")
         loaded = _load_ubi_cache_from_s3()
         if not loaded:
@@ -5377,10 +5377,15 @@ def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False)
         return cached["data"]
 
     # No in-memory data — try S3 directly (startup thread may not have loaded yet)
-    loaded = _load_ubi_cache_from_s3()
-    if loaded and _UBI_UNASSIGNED_CACHE.get("data") is not None:
-        print(f"[UBI CACHE] Loaded from S3 on demand: {len(_UBI_UNASSIGNED_CACHE['data'])} bills")
-        return _UBI_UNASSIGNED_CACHE["data"]
+    print("[UBI CACHE] No in-memory data, attempting S3 fallback...")
+    try:
+        loaded = _load_ubi_cache_from_s3()
+        if loaded and _UBI_UNASSIGNED_CACHE.get("data") is not None:
+            print(f"[UBI CACHE] Loaded from S3 on demand: {len(_UBI_UNASSIGNED_CACHE['data'])} bills")
+            return _UBI_UNASSIGNED_CACHE["data"]
+        print(f"[UBI CACHE] S3 fallback returned loaded={loaded}")
+    except Exception as e:
+        print(f"[UBI CACHE] S3 fallback failed: {e}")
 
     # No data anywhere — return empty, rebuild is in progress
     print("[UBI CACHE] No data yet, rebuild in progress")
