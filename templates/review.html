@@ -1163,8 +1163,8 @@
       }
     }, 15000);
 
-    // Calculate initial total after page loads
-    setTimeout(updateLineItemsTotal, 100);
+    // NOTE: updateLineItemsTotal is called after draft loading completes in initOptions
+    // (not here — drafts haven't loaded yet so deleted lines aren't marked)
 
     // --- Dropdown options for Enriched fields ---
     // Datalists are placed at the end of body
@@ -1611,6 +1611,7 @@
             if (typeof loadAllDraftsBatch === 'function') {
               loadAllDraftsBatch().finally(() => {
                 _loadingDrafts = false;  // NOW safe to enable autosave after drafts applied to populated selects
+                updateLineItemsTotal();  // Recalc total now that deleted lines are marked
                 console.log('[review] Draft loading complete, autosave enabled');
               });
             } else {
@@ -1636,6 +1637,7 @@
             if (typeof loadAllDraftsBatch === 'function') {
               loadAllDraftsBatch().finally(() => {
                 _loadingDrafts = false;  // Enable autosave after drafts applied
+                updateLineItemsTotal();  // Recalc total now that deleted lines are marked
                 console.log('[review] Draft loading complete (fallback), autosave enabled');
               });
             } else {

@@ -10081,6 +10081,17 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
 _WORKFLOW_TRACKER_LOCK = threading.Lock()
 
 
+def _bg_rebuild_tracker():
+    """Rebuild completion tracker in the background (never blocks a request)."""
+    try:
+        data = _compute_workflow_tracker()
+        _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
+        _persist_completion_tracker_to_s3(data)
+        print("[COMPLETION TRACKER] Background rebuild complete")
+    except Exception as e:
+        print(f"[COMPLETION TRACKER] Background rebuild failed: {e}")
+
+
 def _persist_completion_tracker_to_s3(data: dict):
     """Save completion tracker data to S3 as gzipped JSON for fast startup."""
     import gzip as _gzip
@@ -10510,18 +10521,32 @@ def api_workflow_completion_tracker(
     """
     cache_key = ("workflow_tracker",)
 
-    if not refresh:
+    # 1) Serve from in-memory cache (fastest)
+    cached = _CACHE.get(cache_key)
+    if cached and cached.get("data"):
+        if refresh:
+            # Trigger background rebuild, but still return current data immediately
+            threading.Thread(target=_bg_rebuild_tracker, daemon=True).start()
+        return cached["data"]
+
+    # 2) In-memory empty — try S3 persisted cache
+    loaded = _load_completion_tracker_from_s3()
+    if loaded:
         cached = _CACHE.get(cache_key)
-        if cached and (time.time() - cached.get("ts", 0) < 300):
+        if cached and cached.get("data"):
+            if refresh:
+                threading.Thread(target=_bg_rebuild_tracker, daemon=True).start()
             return cached["data"]
 
-    # Cache miss or forced refresh — compute now
-    try:
-        data = _compute_workflow_tracker(months_back)
-        _CACHE[cache_key] = {"ts": time.time(), "data": data}
-        return data
-    except Exception as e:
-        return JSONResponse({"error": _sanitize_error(e, "completion tracker")}, status_code=500)
+    # 3) No cache anywhere — background thread is likely still computing
+    #    Return a "computing" response so the UI can poll
+    return {
+        "summary": {"by_status": {}, "total_account_months": 0, "percentage": 0},
+        "accounts": [],
+        "ap_summary": [],
+        "generated_at": None,
+        "cacheStatus": "computing",
+    }
 
 
 def _get_ubi_account_amounts_from_stage8() -> dict:
