@@ -11823,9 +11823,17 @@ def api_parser_throughput(hours: int = 24, user: str = Depends(require_user)):
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
+_QUEUE_DEPTH_CACHE: dict = {}
+
 @app.get("/api/parser/queue-depth")
 def api_parser_queue_depth(user: str = Depends(require_user)):
-    """Quick count of PDF files waiting to be parsed across all input queues."""
+    """Quick count of PDF files waiting to be parsed across all input queues.
+    Cached for 5 minutes — counting 2500+ S3 objects is expensive."""
+    cache_key = "queue_depth"
+    cached = _QUEUE_DEPTH_CACHE.get(cache_key)
+    if cached and (time.time() - cached.get("ts", 0) < 300):
+        return cached["data"]
+
     try:
         queue_defs = [
             ("pending", "Bill_Parser_1_Pending_Parsing/"),
@@ -11847,7 +11855,9 @@ def api_parser_queue_depth(user: str = Depends(require_user)):
             except Exception:
                 pass
             counts[name] = count
-        return {"queues": counts, "total_waiting": sum(counts.values())}
+        result = {"queues": counts, "total_waiting": sum(counts.values())}
+        _QUEUE_DEPTH_CACHE[cache_key] = {"ts": time.time(), "data": result}
+        return result
     except Exception as e:
         print(f"[QUEUE DEPTH] Error: {e}")
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
