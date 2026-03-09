@@ -719,15 +719,8 @@ def invalidate_day_cache(y: str, m: str, d: str):
     except Exception:
         pass
 
-# -------- Submitter Stats Cache --------
-# Cache submitter stats to avoid timeout on expensive DynamoDB scans
-_SUBMITTER_STATS_CACHE: Dict[str, Any] = {}  # key -> {"data": {...}, "ts": datetime}
-_SUBMITTER_STATS_TTL = 300  # 5 minutes
-
-# -------- Activity Detail Cache --------
-# Cache activity detail to avoid timeout on expensive scans
-_ACTIVITY_DETAIL_CACHE: Dict[str, Any] = {}  # key -> {"data": {...}, "ts": datetime}
-_ACTIVITY_DETAIL_TTL = 300  # 5 minutes
+# NOTE: Submitter Stats and Activity Detail caches have been migrated to the
+# unified _METRICS_CACHE with S3-persisted 60min TTL (see _metrics_serve near line 11733).
 
 # -------- Week Over Week Stats Cache --------
 # Cache week-over-week team stats (persisted to DynamoDB for historical data)
@@ -11664,8 +11657,8 @@ def api_metrics_parsing_volume(days: int = 7, user: str = Depends(require_user))
 
 @app.get("/api/metrics/pipeline-summary")
 def api_metrics_pipeline_summary(user: str = Depends(require_user)):
-    """Get pipeline summary - count of files in each processing stage."""
-    try:
+    """Get pipeline summary - count of files in each processing stage. Uses S3-persisted cache with 60min TTL."""
+    def _compute():
         stages = [
             {"id": "pending_parsing", "name": "Pending Parsing", "prefix": "Bill_Parser_1_Pending_Parsing/", "color": "#f59e0b"},
             {"id": "rework", "name": "Rework Queue", "prefix": "Bill_Parser_Rework_Input/", "color": "#8b5cf6"},
@@ -11725,24 +11718,80 @@ def api_metrics_pipeline_summary(user: str = Depends(require_user)):
             })
 
         return {"stages": results}
+
+    return _metrics_serve("pipeline_summary", _compute)
+
+
+# -------- Metrics S3-Persisted Cache --------
+# Generic caching layer: in-memory -> S3 (gzip) -> async background rebuild
+# All metrics endpoints use this to avoid blocking requests on expensive computations.
+
+_METRICS_CACHE: dict = {}
+_METRICS_CACHE_TTL = 3600  # 60 minutes
+
+def _metrics_cache_get(name: str):
+    """Get metrics from in-memory cache, falling back to S3."""
+    cached = _METRICS_CACHE.get(name)
+    if cached and cached.get("data") is not None:
+        return cached
+    # Try S3
+    try:
+        key = f"{CONFIG_PREFIX}metrics_cache_{name}.json.gz"
+        obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=key)
+        payload = json.loads(gzip.decompress(obj["Body"].read()))
+        _METRICS_CACHE[name] = payload
+        return payload
+    except Exception:
+        return None
+
+def _metrics_cache_put(name: str, data):
+    """Save metrics to in-memory cache and persist to S3."""
+    payload = {"data": data, "ts": time.time()}
+    _METRICS_CACHE[name] = payload
+    try:
+        key = f"{CONFIG_PREFIX}metrics_cache_{name}.json.gz"
+        compressed = gzip.compress(json.dumps(payload).encode("utf-8"))
+        s3.put_object(Bucket=CONFIG_BUCKET, Key=key, Body=compressed, ContentType="application/gzip")
     except Exception as e:
-        print(f"[METRICS] Pipeline summary error: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+        print(f"[METRICS CACHE] Failed to persist {name}: {e}")
+
+def _metrics_serve(name: str, compute_fn, force_refresh: bool = False):
+    """Serve metrics from cache, trigger async rebuild if stale.
+    1. In-memory hit (< TTL) -> instant return
+    2. S3 hit (< TTL) -> instant return
+    3. Stale data exists -> return stale immediately, rebuild in background
+    4. No data at all -> compute synchronously (first request only)
+    """
+    cached = _metrics_cache_get(name)
+    if cached and cached.get("data") is not None:
+        age = time.time() - cached.get("ts", 0)
+        if not force_refresh and age < _METRICS_CACHE_TTL:
+            return cached["data"]
+        # Stale — serve old data, rebuild in background
+        def _bg():
+            try:
+                result = compute_fn()
+                _metrics_cache_put(name, result)
+                print(f"[METRICS CACHE] Rebuilt {name}")
+            except Exception as e:
+                print(f"[METRICS CACHE] Rebuild {name} failed: {e}")
+        threading.Thread(target=_bg, daemon=True).start()
+        return cached["data"]
+    # No cache at all — compute synchronously (first time only)
+    try:
+        result = compute_fn()
+        _metrics_cache_put(name, result)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # -------- Parser Throughput & Queue Depth --------
 
-_PARSER_THROUGHPUT_CACHE: dict = {}
-
 @app.get("/api/parser/throughput")
 def api_parser_throughput(hours: int = 24, user: str = Depends(require_user)):
     """Get parser throughput metrics from timing sidecar files in Stage 3 and Stage 4."""
-    try:
-        cache_key = ("parser_throughput", hours)
-        cached = _PARSER_THROUGHPUT_CACHE.get(cache_key)
-        if cached and (time.time() - cached.get("ts", 0) < 300):  # 5 min cache
-            return cached.get("data")
-
+    def _compute():
         cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
         records = []
 
@@ -11815,26 +11864,16 @@ def api_parser_throughput(hours: int = 24, user: str = Depends(require_user)):
                 "failures": bd["failures"],
             }
 
-        result = {"hours": summary, "total_parsed": len(records)}
-        _PARSER_THROUGHPUT_CACHE[cache_key] = {"ts": time.time(), "data": result}
-        return result
-    except Exception as e:
-        print(f"[PARSER THROUGHPUT] Error: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+        return {"hours": summary, "total_parsed": len(records)}
 
+    return _metrics_serve(f"throughput_{hours}", _compute)
 
-_QUEUE_DEPTH_CACHE: dict = {}
 
 @app.get("/api/parser/queue-depth")
 def api_parser_queue_depth(user: str = Depends(require_user)):
     """Quick count of PDF files waiting to be parsed across all input queues.
-    Cached for 5 minutes — counting 2500+ S3 objects is expensive."""
-    cache_key = "queue_depth"
-    cached = _QUEUE_DEPTH_CACHE.get(cache_key)
-    if cached and (time.time() - cached.get("ts", 0) < 300):
-        return cached["data"]
-
-    try:
+    Uses S3-persisted cache with 60min TTL and async background rebuild."""
+    def _compute():
         queue_defs = [
             ("pending", "Bill_Parser_1_Pending_Parsing/"),
             ("standard", "Bill_Parser_1_Standard/"),
@@ -11855,12 +11894,9 @@ def api_parser_queue_depth(user: str = Depends(require_user)):
             except Exception:
                 pass
             counts[name] = count
-        result = {"queues": counts, "total_waiting": sum(counts.values())}
-        _QUEUE_DEPTH_CACHE[cache_key] = {"ts": time.time(), "data": result}
-        return result
-    except Exception as e:
-        print(f"[QUEUE DEPTH] Error: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+        return {"queues": counts, "total_waiting": sum(counts.values())}
+
+    return _metrics_serve("queue_depth", _compute)
 
 
 @app.get("/api/metrics/submitter-stats")
@@ -11876,39 +11912,32 @@ def api_metrics_submitter_stats(date: str = "", start_date: str = "", end_date: 
     - date: Single date (YYYY-MM-DD)
     - start_date, end_date: Date range (inclusive)
     """
-    try:
+    from zoneinfo import ZoneInfo
+    pacific = ZoneInfo("America/Los_Angeles")
+
+    # Parse date filter(s) or use today (in Pacific time)
+    if start_date and end_date:
+        try:
+            start_dt = dt.datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = dt.datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            start_dt = end_dt = dt.datetime.now(pacific).date()
+    elif date:
+        try:
+            start_dt = end_dt = dt.datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            start_dt = end_dt = dt.datetime.now(pacific).date()
+    else:
+        start_dt = end_dt = dt.datetime.now(pacific).date()
+
+    cache_name = f"submitter_stats_{start_dt.isoformat()}_{end_dt.isoformat()}"
+
+    def _compute():
         from zoneinfo import ZoneInfo
         pacific = ZoneInfo("America/Los_Angeles")
         utc = ZoneInfo("UTC")
 
-        # Parse date filter(s) or use today (in Pacific time)
-        if start_date and end_date:
-            # Date range mode (weekly view)
-            try:
-                start_dt = dt.datetime.strptime(start_date, "%Y-%m-%d").date()
-                end_dt = dt.datetime.strptime(end_date, "%Y-%m-%d").date()
-            except ValueError:
-                start_dt = end_dt = dt.datetime.now(pacific).date()
-        elif date:
-            # Single date mode
-            try:
-                start_dt = end_dt = dt.datetime.strptime(date, "%Y-%m-%d").date()
-            except ValueError:
-                start_dt = end_dt = dt.datetime.now(pacific).date()
-        else:
-            start_dt = end_dt = dt.datetime.now(pacific).date()
-
         target_date_str = start_dt.strftime('%Y-%m-%d')  # For backwards compatibility
-
-        # Check cache first to avoid timeout on expensive scans
-        cache_key = f"{start_dt.isoformat()}|{end_dt.isoformat()}"
-        now = dt.datetime.now()
-        if cache_key in _SUBMITTER_STATS_CACHE:
-            cached = _SUBMITTER_STATS_CACHE[cache_key]
-            cache_age = (now - cached["ts"]).total_seconds()
-            if cache_age < _SUBMITTER_STATS_TTL:
-                print(f"[SUBMITTER_STATS] Returning cached result (age: {cache_age:.1f}s)")
-                return cached["data"]
 
         print(f"[SUBMITTER_STATS] Computing stats for {start_dt} to {end_dt}")
 
@@ -12261,7 +12290,7 @@ def api_metrics_submitter_stats(date: str = "", start_date: str = "", end_date: 
             for k in sorted(aggregate_invoices.keys(), key=lambda x: len(aggregate_invoices[x]), reverse=True)
         ]
 
-        result = {
+        return {
             "date": target_date_str,
             "submitted": submitted_list,
             "submitted_totals": submitted_totals,
@@ -12271,15 +12300,7 @@ def api_metrics_submitter_stats(date: str = "", start_date: str = "", end_date: 
             "aggregate_by_submitter": aggregate_by_submitter
         }
 
-        # Cache the result
-        _SUBMITTER_STATS_CACHE[cache_key] = {"data": result, "ts": dt.datetime.now()}
-        print(f"[SUBMITTER_STATS] Cached result for {cache_key}")
-
-        return result
-    except Exception as e:
-        import traceback
-        print(f"[METRICS] Submitter stats error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    return _metrics_serve(cache_name, _compute)
 
 
 @app.get("/api/metrics/week-over-week")
@@ -12796,40 +12817,32 @@ def api_metrics_activity_detail(date: str = "", start_date: str = "", end_date: 
     - date: Single date (YYYY-MM-DD)
     - start_date, end_date: Date range (inclusive)
     """
-    try:
-        from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo
+    pacific = ZoneInfo("America/Los_Angeles")
 
+    # Parse date filter(s) or use today (in Pacific time)
+    if start_date and end_date:
+        try:
+            start_dt = dt.datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = dt.datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            start_dt = end_dt = dt.datetime.now(pacific).date()
+    elif date:
+        try:
+            start_dt = end_dt = dt.datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            start_dt = end_dt = dt.datetime.now(pacific).date()
+    else:
+        start_dt = end_dt = dt.datetime.now(pacific).date()
+
+    cache_name = f"activity_detail_{start_dt.isoformat()}_{end_dt.isoformat()}"
+
+    def _compute():
+        from zoneinfo import ZoneInfo
         pacific = ZoneInfo("America/Los_Angeles")
         utc = ZoneInfo("UTC")
 
-        # Parse date filter(s) or use today (in Pacific time)
-        if start_date and end_date:
-            # Date range mode (weekly view)
-            try:
-                start_dt = dt.datetime.strptime(start_date, "%Y-%m-%d").date()
-                end_dt = dt.datetime.strptime(end_date, "%Y-%m-%d").date()
-            except ValueError:
-                start_dt = end_dt = dt.datetime.now(pacific).date()
-        elif date:
-            # Single date mode
-            try:
-                start_dt = end_dt = dt.datetime.strptime(date, "%Y-%m-%d").date()
-            except ValueError:
-                start_dt = end_dt = dt.datetime.now(pacific).date()
-        else:
-            start_dt = end_dt = dt.datetime.now(pacific).date()
-
         target_date_str = start_dt.strftime('%Y-%m-%d')  # For backwards compatibility
-
-        # Check cache first to avoid timeout on expensive scans
-        cache_key = f"activity|{start_dt.isoformat()}|{end_dt.isoformat()}"
-        now = dt.datetime.now()
-        if cache_key in _ACTIVITY_DETAIL_CACHE:
-            cached = _ACTIVITY_DETAIL_CACHE[cache_key]
-            cache_age = (now - cached["ts"]).total_seconds()
-            if cache_age < _ACTIVITY_DETAIL_TTL:
-                print(f"[ACTIVITY_DETAIL] Returning cached result (age: {cache_age:.1f}s)")
-                return cached["data"]
 
         print(f"[ACTIVITY_DETAIL] Computing activity for {start_dt} to {end_dt}")
 
@@ -13043,7 +13056,7 @@ def api_metrics_activity_detail(date: str = "", start_date: str = "", end_date: 
         # Sort by timestamp (earliest first for chronological view)
         activities.sort(key=lambda x: x.get("submitted_at", ""), reverse=False)
 
-        result = {
+        return {
             "date": target_date_str,
             "start_date": start_dt.strftime('%Y-%m-%d'),
             "end_date": end_dt.strftime('%Y-%m-%d'),
@@ -13051,31 +13064,16 @@ def api_metrics_activity_detail(date: str = "", start_date: str = "", end_date: 
             "count": len(activities)
         }
 
-        # Cache the result
-        _ACTIVITY_DETAIL_CACHE[cache_key] = {"data": result, "ts": dt.datetime.now()}
-        print(f"[ACTIVITY_DETAIL] Cached result for {cache_key}")
-
-        return result
-    except Exception as e:
-        import traceback
-        print(f"[METRICS] Activity detail error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    return _metrics_serve(cache_name, _compute)
 
 
 @app.get("/api/metrics/overrides")
 def api_metrics_overrides(user: str = Depends(require_user)):
     """Get override statistics - all line item changes from the last 3 weeks.
 
-    Groups by property name. Cached for 10 minutes.
+    Groups by property name. Uses S3-persisted cache with 60min TTL.
     """
-    # Check cache first
-    cache_key = ("metrics_overrides",)
-    now = time.time()
-    cached = _CACHE.get(cache_key)
-    if cached and (now - cached.get("ts", 0) < 600):  # 10 minute cache
-        return cached.get("data")
-
-    try:
+    def _compute():
         from zoneinfo import ZoneInfo
         utc = ZoneInfo("UTC")
 
@@ -13291,7 +13289,7 @@ def api_metrics_overrides(user: str = Depends(require_user)):
         # Sort users by total overrides
         user_stats = sorted(by_user.values(), key=lambda x: x["total"], reverse=True)
 
-        result = {
+        return {
             "total_overrides": total_overrides,
             "unique_users": len(unique_users),
             "change_type_totals": all_change_types,
@@ -13300,14 +13298,7 @@ def api_metrics_overrides(user: str = Depends(require_user)):
             "raw_overrides": overrides[:100]  # Return first 100 raw records for detail view
         }
 
-        # Cache the result
-        _CACHE[cache_key] = {"ts": time.time(), "data": result}
-
-        return result
-    except Exception as e:
-        import traceback
-        print(f"[METRICS] Override stats error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    return _metrics_serve("overrides", _compute)
 
 
 # -------- Outlier Detection --------
@@ -14910,38 +14901,42 @@ def api_metrics_outliers(
     min_z: float = 0,
     user: str = Depends(require_user)
 ):
-    """Get detected outliers with optional filtering."""
-    try:
-        outliers = _s3_get_outlier_records()
+    """Get detected outliers with optional filtering. Uses S3-persisted cache with 60min TTL."""
+    def _compute():
+        return _s3_get_outlier_records()
 
-        # Filter by status
-        if status:
-            outliers = [o for o in outliers if o.get("status") == status]
+    all_outliers = _metrics_serve("outliers", _compute)
+    # If _metrics_serve returned an error dict, pass it through
+    if isinstance(all_outliers, dict) and "error" in all_outliers:
+        return all_outliers
 
-        # Filter by type
-        if outlier_type:
-            outliers = [o for o in outliers if o.get("outlier_type") == outlier_type]
+    outliers = list(all_outliers) if isinstance(all_outliers, list) else []
 
-        # Filter by z-score
-        if min_z > 0:
-            outliers = [o for o in outliers if abs(o.get("z_score", 0)) >= min_z]
+    # Filter by status
+    if status:
+        outliers = [o for o in outliers if o.get("status") == status]
 
-        # Sort by detection date (newest first)
-        outliers.sort(key=lambda x: x.get("detected_at", ""), reverse=True)
+    # Filter by type
+    if outlier_type:
+        outliers = [o for o in outliers if o.get("outlier_type") == outlier_type]
 
-        # Calculate summary
-        summary = {
-            "total": len(outliers),
-            "spikes": len([o for o in outliers if o.get("outlier_type") == "SPIKE"]),
-            "drops": len([o for o in outliers if o.get("outlier_type") == "DROP"]),
-            "pending": len([o for o in outliers if o.get("status") == "pending"]),
-            "reviewed": len([o for o in outliers if o.get("status") in ("resolved", "false_positive")])
-        }
+    # Filter by z-score
+    if min_z > 0:
+        outliers = [o for o in outliers if abs(o.get("z_score", 0)) >= min_z]
 
-        return {"outliers": outliers[:100], "summary": summary}
-    except Exception as e:
-        print(f"[OUTLIER] Error getting outliers: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    # Sort by detection date (newest first)
+    outliers.sort(key=lambda x: x.get("detected_at", ""), reverse=True)
+
+    # Calculate summary
+    summary = {
+        "total": len(outliers),
+        "spikes": len([o for o in outliers if o.get("outlier_type") == "SPIKE"]),
+        "drops": len([o for o in outliers if o.get("outlier_type") == "DROP"]),
+        "pending": len([o for o in outliers if o.get("status") == "pending"]),
+        "reviewed": len([o for o in outliers if o.get("status") in ("resolved", "false_positive")])
+    }
+
+    return {"outliers": outliers[:100], "summary": summary}
 
 
 @app.post("/api/metrics/outliers/{pdf_id}/review")
@@ -15163,16 +15158,9 @@ async def api_scan_outliers(request: Request, background_tasks: BackgroundTasks,
 def api_metrics_logins(user: str = Depends(require_user)):
     """Get login statistics showing who logged in and when.
 
-    Groups by user and shows login frequency. Cached for 10 minutes.
+    Groups by user and shows login frequency. Uses S3-persisted cache with 60min TTL.
     """
-    # Check cache first
-    cache_key = ("metrics_logins",)
-    now = time.time()
-    cached = _CACHE.get(cache_key)
-    if cached and (now - cached.get("ts", 0) < 600):  # 10 minute cache
-        return cached.get("data")
-
-    try:
+    def _compute():
         from zoneinfo import ZoneInfo
         utc = ZoneInfo("UTC")
 
@@ -15287,7 +15275,7 @@ def api_metrics_logins(user: str = Depends(require_user)):
         for u in user_stats:
             all_dates.update(u.get("logins_by_date", {}).keys())
 
-        result = {
+        return {
             "total_logins": total_logins,
             "unique_users": unique_users,
             "date_range": {
@@ -15297,14 +15285,7 @@ def api_metrics_logins(user: str = Depends(require_user)):
             "user_stats": user_stats
         }
 
-        # Cache the result
-        _CACHE[cache_key] = {"ts": time.time(), "data": result}
-
-        return result
-    except Exception as e:
-        import traceback
-        print(f"[METRICS] Login stats error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    return _metrics_serve("logins", _compute)
 
 
 @app.get("/api/metrics/job-log")
