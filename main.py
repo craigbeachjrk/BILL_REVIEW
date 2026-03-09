@@ -11017,6 +11017,21 @@ async def api_directed_generate(request: Request, user: str = Depends(require_us
         return JSONResponse({"error": _sanitize_error(e, "generating plan")}, status_code=500)
 
 
+@app.delete("/api/directed/plan")
+def api_directed_plan_clear(user: str = Depends(require_user)):
+    """Clear/cancel the current user's directed work plan."""
+    try:
+        key = f"{DIRECTED_PLAN_PREFIX}{user}.json"
+        try:
+            s3.delete_object(Bucket=CONFIG_BUCKET, Key=key)
+        except Exception:
+            pass
+        print(f"[DIRECTED] Plan cleared for {user}")
+        return {"ok": True, "message": "Plan cleared"}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "clearing plan")}, status_code=500)
+
+
 @app.get("/api/directed/plan")
 def api_directed_plan(user: str = Depends(require_user)):
     """Get the current user's directed work plan."""
@@ -13840,7 +13855,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
             "vendorName": str(acc.get("vendorName") or wf_row.get("vendorName") or ""),
             "vendorCode": str(wf_row.get("vendorCode") or ""),
             "accountNumber": str(acc.get("accountNumber") or wf_row.get("accountNumber") or ""),
-            "providerGroup": str(wf_row.get("vendorCode") or wf_row.get("vendorName") or "").lower(),
+            "providerGroup": str(acc.get("vendorId") or wf_row.get("vendorId") or wf_row.get("vendorCode") or "").strip(),
             "urgencyStatus": wf_row.get("status", ""),
             "urgencyScore": urgency_score,
             "daysOverdue": wf_row.get("daysOverdue", 0),
@@ -13952,7 +13967,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
             "vendorName": bill["vendorName"],
             "vendorCode": str(wf_row.get("vendorCode") or ""),
             "accountNumber": str(acc.get("accountNumber") or ""),
-            "providerGroup": str(wf_row.get("vendorCode") or bill["vendorName"] or "").lower(),
+            "providerGroup": str(acc.get("vendorId") or wf_row.get("vendorId") or wf_row.get("vendorCode") or "").strip(),
             "urgencyStatus": wf_row.get("status", ""),
             "urgencyScore": urgency_score,
             "daysOverdue": wf_row.get("daysOverdue", 0),
@@ -14003,7 +14018,7 @@ def _generate_directed_plan(user: str, *, mode: str = "my_bills",
                 "vendorName": str(acc.get("vendorName") or wf_row.get("vendorName") or ""),
                 "vendorCode": str(wf_row.get("vendorCode") or ""),
                 "accountNumber": str(acc.get("accountNumber") or wf_row.get("accountNumber") or ""),
-                "providerGroup": str(wf_row.get("vendorCode") or wf_row.get("vendorName") or "").lower(),
+                "providerGroup": str(acc.get("vendorId") or wf_row.get("vendorId") or wf_row.get("vendorCode") or "").strip(),
                 "urgencyStatus": wf_row.get("status", ""),
                 "urgencyScore": urgency_score,
                 "daysOverdue": wf_row.get("daysOverdue", 0),

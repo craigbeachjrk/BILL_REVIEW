@@ -132,6 +132,7 @@
     <div><a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a></div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="btn success" onclick="generatePlan()">Generate Plan</button>
+      <button class="btn" id="clearPlanBtn" style="background:#dc2626;display:none" onclick="clearPlan()">Clear Plan</button>
       <button class="btn" onclick="openHistory()">History</button>
       <a class="btn" href="/workflow">Workflow</a>
       <a class="btn secondary" href="/">Back</a>
@@ -242,10 +243,25 @@ async function generatePlan() {
   hideLoading();
 }
 
+// --- Clear Plan ---
+async function clearPlan() {
+  if (!confirm('Clear today\'s plan? You can generate a new one after.')) return;
+  try {
+    await fetch('/api/directed/plan', { method: 'DELETE' });
+    plan = null;
+    showEmpty();
+    document.getElementById('clearPlanBtn').style.display = 'none';
+    toast('Plan cleared', 'ok');
+  } catch (e) {
+    toast('Error clearing plan: ' + e.message, 'err');
+  }
+}
+
 // --- Render ---
 function render() {
-  if (!plan || !plan.tasks || !plan.tasks.length) { showEmpty(); return; }
+  if (!plan || !plan.tasks || !plan.tasks.length) { showEmpty(); document.getElementById('clearPlanBtn').style.display = 'none'; return; }
 
+  document.getElementById('clearPlanBtn').style.display = 'inline-block';
   document.getElementById('planDate').textContent = plan.planDate || '';
   renderStats();
   renderTasks();
