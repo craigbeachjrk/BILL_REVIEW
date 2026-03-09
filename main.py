@@ -118,6 +118,7 @@ UBI_MAPPING_KEY = os.getenv("UBI_MAPPING_KEY", CONFIG_PREFIX + "ubi_mapping.json
 WORKFLOW_REASONS_KEY = os.getenv("WORKFLOW_REASONS_KEY", CONFIG_PREFIX + "workflow_reason_codes.json")
 WORKFLOW_NOTES_KEY = os.getenv("WORKFLOW_NOTES_KEY", CONFIG_PREFIX + "workflow_notes.json")
 WORKFLOW_CACHE_KEY = os.getenv("WORKFLOW_CACHE_KEY", CONFIG_PREFIX + "workflow_cache.json")
+COMPLETION_TRACKER_CACHE_KEY = os.getenv("COMPLETION_TRACKER_CACHE_KEY", CONFIG_PREFIX + "completion_tracker_cache.json.gz")
 ACCOUNT_STATISTICS_KEY = os.getenv("ACCOUNT_STATISTICS_KEY", CONFIG_PREFIX + "account_statistics.json")
 OUTLIER_RECORDS_KEY = os.getenv("OUTLIER_RECORDS_KEY", CONFIG_PREFIX + "outlier_records.json")
 UBI_ACCOUNT_HISTORY_KEY = os.getenv("UBI_ACCOUNT_HISTORY_KEY", CONFIG_PREFIX + "ubi_account_history.json")
@@ -10064,6 +10065,41 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
 _WORKFLOW_TRACKER_LOCK = threading.Lock()
 
 
+def _persist_completion_tracker_to_s3(data: dict):
+    """Save completion tracker data to S3 as gzipped JSON for fast startup."""
+    import gzip as _gzip
+    try:
+        payload = json.dumps({"data": data, "ts": time.time()}).encode("utf-8")
+        compressed = _gzip.compress(payload)
+        s3.put_object(Bucket=CONFIG_BUCKET, Key=COMPLETION_TRACKER_CACHE_KEY, Body=compressed, ContentType="application/gzip")
+        print(f"[COMPLETION TRACKER] Persisted to S3 ({len(compressed)} bytes)")
+    except Exception as e:
+        print(f"[COMPLETION TRACKER] Failed to persist to S3: {e}")
+
+
+def _load_completion_tracker_from_s3() -> bool:
+    """Load completion tracker from S3. Returns True if loaded."""
+    import gzip as _gzip
+    try:
+        obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=COMPLETION_TRACKER_CACHE_KEY)
+        compressed = obj["Body"].read()
+        payload = json.loads(_gzip.decompress(compressed))
+        data = payload.get("data")
+        ts = payload.get("ts", 0)
+        if data:
+            _CACHE[("workflow_tracker",)] = {"ts": ts, "data": data}
+            age_min = (time.time() - ts) / 60
+            print(f"[COMPLETION TRACKER] Loaded from S3 (age {age_min:.0f}m)")
+            return True
+        return False
+    except s3.exceptions.NoSuchKey:
+        print("[COMPLETION TRACKER] No persisted cache in S3")
+        return False
+    except Exception as e:
+        print(f"[COMPLETION TRACKER] Failed to load from S3: {e}")
+        return False
+
+
 def _compute_workflow_tracker(months_back: int = 6) -> dict:
     """Compute completion tracker data: for every tracked account × every month,
     determine whether a bill exists in the pipeline (stages 4/6/7/archive).
@@ -10399,27 +10435,52 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
 
 def _workflow_tracker_refresh_loop():
     """Background loop that keeps workflow tracker cache warm.
-    Refreshes every 4 minutes (cache TTL is 5 minutes)."""
+    Loads from S3 on startup for instant availability, then refreshes every 4 min."""
     _REFRESH_INTERVAL = 240  # 4 minutes
-    # Initial load with retries
+
+    # Try S3 first for instant startup
+    loaded = _load_completion_tracker_from_s3()
+
+    # Initial compute (even if S3 loaded, get fresh data)
     for attempt in range(3):
         try:
             data = _compute_workflow_tracker()
             _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
+            _persist_completion_tracker_to_s3(data)
             print("[WORKFLOW TRACKER BG] Initial cache load complete")
             break
         except Exception as e:
             print(f"[WORKFLOW TRACKER BG] Initial load attempt {attempt+1} failed: {e}")
             if attempt < 2:
                 time.sleep(30)
+    # Also refresh aging accounts (workflow data) on startup
+    try:
+        aging_data = _compute_workflow_data()
+        _s3_put_workflow_cache(aging_data)
+        print("[WORKFLOW BG] Aging accounts refreshed and persisted to S3")
+    except Exception as e:
+        print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
+
+    _cycle = 0
     while True:
         time.sleep(_REFRESH_INTERVAL)
         try:
             data = _compute_workflow_tracker()
             _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
+            _persist_completion_tracker_to_s3(data)
             print("[WORKFLOW TRACKER BG] Proactive refresh complete")
         except Exception as e:
             print(f"[WORKFLOW TRACKER BG] Refresh error (will retry): {e}")
+
+        # Refresh aging accounts every ~15 cycles (60 min)
+        _cycle += 1
+        if _cycle % 15 == 0:
+            try:
+                aging_data = _compute_workflow_data()
+                _s3_put_workflow_cache(aging_data)
+                print("[WORKFLOW BG] Aging accounts auto-refreshed to S3")
+            except Exception as e:
+                print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
 
 
 @app.get("/api/workflow/completion-tracker")
