@@ -10032,8 +10032,24 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
     cached = _s3_get_workflow_cache()
 
     if cached and cached.get("rows"):
+        # Filter out archived accounts (archive updates config but cache may be stale)
+        archived_keys = set()
+        try:
+            all_accounts = _get_accounts_to_track()
+            for a in all_accounts:
+                if a.get("status") == "archived":
+                    ak = f"{a.get('propertyId')}|{a.get('vendorId')}|{a.get('accountNumber')}"
+                    archived_keys.add(ak)
+        except Exception:
+            pass
+
+        rows = cached.get("rows", [])
+        if archived_keys:
+            rows = [r for r in rows if r.get("accountKey") not in archived_keys]
+            cached["rows"] = rows
+
         # Inject fresh notes into cached rows
-        for row in cached.get("rows", []):
+        for row in rows:
             ak = row.get("accountKey")
             note = notes_by_key.get(ak)
             row["note"] = note

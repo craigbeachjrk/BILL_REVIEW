@@ -2213,7 +2213,9 @@ document.getElementById('editDelete')?.addEventListener('click', async () => {
     if (data.archived > 0) {
       showToast('Account archived', 'ok');
       document.getElementById('editModal').style.display = 'none';
-      loadLateBillsData();
+      // Remove from local data immediately so it disappears without waiting for cache refresh
+      allData = allData.filter(r => r.accountKey !== currentEditKey);
+      applyTableFilters();
     } else { showToast(data.error || 'Account not found', 'err'); }
   } catch (e) { showToast('Error: ' + e.message, 'err'); }
 });
