@@ -703,6 +703,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadWeeklyObjectives();
+
+  // Auto-load completion tracker and aging accounts in background
+  trackerLoaded = true;
+  loadTrackerData();
+  loadLateBillsData();
 });
 
 /* ============================================================
