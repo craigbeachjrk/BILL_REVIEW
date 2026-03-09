@@ -2540,11 +2540,6 @@
           const glAccountName = ld['GL Account Name'] || ld['glAccountName'] || '';
           const lineDesc = ld['Line Item Description'] || 'N/A';
 
-          // Debug logging for GL mapping - log only first line to avoid spam
-          if (lineIndex === 0) {
-            console.log('[Line Data Debug] Available fields:', Object.keys(ld));
-            console.log('[Line Data Debug] Extracted values:', { propertyId, glAccountId, glAccountNumber, glAccountName });
-          }
 
           // Check if line has override data
           const chargeCodeOverridden = ld['charge_code_overridden'] === true || ld['charge_code_overridden'] === 'true';
@@ -2894,7 +2889,8 @@
         const errors = [];
         const successfulS3Keys = new Set();
 
-        for (const invoice of invoicesToFlag) {
+        // Fire all flag requests in parallel
+        const flagPromises = invoicesToFlag.map(async (invoice) => {
           const fd = new FormData();
           fd.append('line_hashes', invoice.hashes.join(','));
           fd.append('s3_key', invoice.s3_key);
@@ -2902,31 +2898,25 @@
           fd.append('submitter', invoice.submitter);
           fd.append('line_notes', JSON.stringify(invoice.lineNotes));
 
-          const response = await fetch('/api/billback/flag', {
-            method: 'POST',
-            body: fd
-          });
+          try {
+            const response = await fetch('/api/billback/flag', { method: 'POST', body: fd });
+            processedBills++;
+            updateLoadingProgress(processedBills, totalBills);
 
-          processedBills++;
-          updateLoadingProgress(processedBills, totalBills);
-
-          if (!response.ok) {
-            let errorMsg = 'Unknown error';
-            try {
-              const errData = await response.json();
-              errorMsg = errData.error || `HTTP ${response.status}`;
-            } catch {
-              errorMsg = `HTTP ${response.status}`;
+            if (!response.ok) {
+              let errorMsg = 'Unknown error';
+              try { const errData = await response.json(); errorMsg = errData.error || `HTTP ${response.status}`; } catch { errorMsg = `HTTP ${response.status}`; }
+              errors.push(`${invoice.s3_key.split('/').pop()}: ${errorMsg}`);
+              return;
             }
-            const fileName = invoice.s3_key.split('/').pop();
-            errors.push(`${fileName}: ${errorMsg}`);
-            continue;
+            const respData = await response.json();
+            totalFlagged += respData.flagged || 0;
+            successfulS3Keys.add(invoice.s3_key);
+          } catch (err) {
+            errors.push(`${invoice.s3_key.split('/').pop()}: ${err.message}`);
           }
-
-          const respData = await response.json();
-          totalFlagged += respData.flagged || 0;
-          successfulS3Keys.add(invoice.s3_key);
-        }
+        });
+        await Promise.all(flagPromises);
 
         hideLoading();
 
@@ -2936,10 +2926,18 @@
           showToast(`Flagged ${totalFlagged} items for review`, 'ok');
         }
 
-        // Remove successfully flagged bills from local cache
+        // Remove successfully flagged bills from local cache and DOM (no full re-render)
         ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
 
-        renderUnassignedBills();
+        // Remove flagged bill DOM elements directly
+        for (const s3Key of successfulS3Keys) {
+          const safeId = 'bill_' + s3Key.replace(/[^a-zA-Z0-9]/g, '_');
+          const checkbox = document.getElementById(safeId);
+          if (checkbox) {
+            const billGroup = checkbox.closest('.bill-group');
+            if (billGroup) billGroup.remove();
+          }
+        }
         updateUbiSelectedCount();
       } catch (e) {
         hideLoading();
@@ -3022,8 +3020,30 @@
         showToast(comment ? 'Comment saved' : 'Comment removed', 'ok');
         closeAccountCommentModal();
 
-        // Re-render to show updated comment
-        renderUnassignedBills();
+        // Update comment badge inline without full re-render
+        // Find all bill headers for this account and update the comment span
+        document.querySelectorAll('.bill-group').forEach(group => {
+          const headerText = group.querySelector('.bill-header')?.textContent || '';
+          if (headerText.includes(currentCommentAccount)) {
+            // Find existing comment badge or the service period line
+            const infoDiv = group.querySelector('.bill-header div div:nth-child(2)');
+            if (infoDiv) {
+              // Remove old comment badge if exists
+              const oldBadge = infoDiv.querySelector('[data-comment-badge]');
+              if (oldBadge) oldBadge.remove();
+              // Add new one if comment exists
+              if (comment) {
+                const badge = document.createElement('span');
+                badge.setAttribute('data-comment-badge', '1');
+                badge.style.cssText = 'background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:4px';
+                badge.title = comment;
+                const display = comment.length > 30 ? comment.substring(0, 30) + '...' : comment;
+                badge.innerHTML = '📝 ' + escapeHtml(display);
+                infoDiv.appendChild(badge);
+              }
+            }
+          }
+        });
       } catch (e) {
         console.error('Error saving comment:', e);
         showToast('Error saving comment', 'err');

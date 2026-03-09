@@ -7265,11 +7265,11 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
         if total_updated == 0:
             return JSONResponse({"error": "No matching line items found"}, status_code=400)
 
-        # Invalidate the Stage 8 history cache so BILLBACK shows correct
-        # duplicate warnings and suggestions after reassign
+        # Invalidate caches so BILLBACK shows correct data after reassign
+        invalidate_exclusion_cache()
         global _last_ubi_periods_cache
         _last_ubi_periods_cache = {"data": {}, "expires": 0}
-        print("[UBI REASSIGN] Invalidated Stage 8 cache")
+        print("[UBI REASSIGN] Invalidated exclusion + Stage 8 caches")
 
         print(f"[UBI REASSIGN] COMPLETED: Updated {total_updated} items to period {new_period}")
         return {"ok": True, "reassigned": total_updated, "new_period": new_period}
