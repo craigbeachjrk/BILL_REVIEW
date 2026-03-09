@@ -486,18 +486,18 @@
       <!-- Throughput Chart -->
       <div class="card" style="margin-bottom:20px">
         <h2>Throughput (Bills Parsed Per Hour)</h2>
-        <canvas id="psThroughputChart" height="250"></canvas>
+        <canvas id="psThroughputChart" height="160"></canvas>
       </div>
 
       <!-- Parse Time Trend Chart -->
       <div class="card" style="margin-bottom:20px">
         <h2>Parse Time Trend (Avg ms Per Hour)</h2>
-        <canvas id="psTimeChart" height="250"></canvas>
+        <canvas id="psTimeChart" height="160"></canvas>
       </div>
 
       <!-- Queue Depth Monitor -->
       <div class="card" style="margin-bottom:20px">
-        <h2>Queue Depth <span id="psQueueTs" style="font-weight:400;font-size:12px;color:#64748b"></span></h2>
+        <h2>Queue Depth <span style="font-weight:400;font-size:12px;color:#64748b">(all-time files in S3)</span> <span id="psQueueTs" style="font-weight:400;font-size:12px;color:#64748b"></span></h2>
         <div id="psQueueBars" class="bar-chart">
           <div class="loading">Loading...</div>
         </div>
