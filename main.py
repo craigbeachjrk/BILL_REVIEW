@@ -25899,6 +25899,16 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                 import traceback
                 traceback.print_exc()
 
+        # Update statuses synchronously so the UI reflects submitted state immediately on redirect.
+        # The background task also calls put_status (idempotent) so this is safe to do twice.
+        for id_ in id_list:
+            if str(id_) in deleted_set:
+                put_status(id_, "Deleted", user)
+            else:
+                put_status(id_, "Submitted", user)
+        _CACHE.pop(("day_status_counts", y, m, d), None)
+        _CACHE.pop(("parse_dashboard",), None)
+
         # Run heavy I/O in background if BackgroundTasks is available
         if background_tasks:
             background_tasks.add_task(do_submit_io)
