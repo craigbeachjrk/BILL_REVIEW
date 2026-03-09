@@ -451,8 +451,8 @@
           <div class="label">Avg Parse Time (sec)</div>
         </div>
         <div class="card stat-card">
-          <div class="value" id="psQueueDepth">-</div>
-          <div class="label">Queue Depth</div>
+          <div class="value" id="psFailRate">-</div>
+          <div class="label">Fail Rate</div>
         </div>
         <div class="card stat-card">
           <div class="value" id="psSuccessRate">-</div>
@@ -478,7 +478,7 @@
               <input type="checkbox" id="psAutoRefresh" onchange="togglePsAutoRefresh()" style="margin-right:4px">
               Auto-refresh (60s)
             </label>
-            <button class="btn small" onclick="loadParserThroughput(); loadQueueDepth();">Refresh</button>
+            <button class="btn small" onclick="loadParserThroughput();">Refresh</button>
           </div>
         </div>
       </div>
@@ -495,13 +495,6 @@
         <div style="position:relative;height:200px"><canvas id="psTimeChart"></canvas></div>
       </div>
 
-      <!-- Queue Depth Monitor -->
-      <div class="card" style="margin-bottom:20px">
-        <h2>Queue Depth <span style="font-weight:400;font-size:12px;color:#64748b">(all-time files in S3)</span> <span id="psQueueTs" style="font-weight:400;font-size:12px;color:#64748b"></span></h2>
-        <div id="psQueueBars" class="bar-chart">
-          <div class="loading">Loading...</div>
-        </div>
-      </div>
     </div><!-- End PARSER SPEED Tab -->
 
   </div>
@@ -1097,7 +1090,6 @@
       // Load data if switching to parser speed
       if (tabName === 'parserSpeed' && !parserSpeedLoaded) {
         loadParserThroughput();
-        loadQueueDepth();
       }
     }
 
@@ -1705,30 +1697,28 @@
       }
     }
 
-    async function loadQueueDepth() {
-      try {
-        const r = await fetch('/api/parser/queue-depth');
-        if (!r.ok) throw new Error('Failed to load');
-        const data = await r.json();
-        document.getElementById('psQueueDepth').textContent = data.total_waiting;
-        document.getElementById('psQueueTs').textContent = '— updated ' + new Date().toLocaleTimeString();
-        renderQueueBars(data.queues);
-      } catch (e) {
-        console.error('Queue depth error:', e);
-      }
+    // Convert UTC hour key (e.g. "2026-03-09T14") to Pacific time label
+    function utcHourToPacific(hourKey) {
+      // Parse the UTC hour key and convert to America/Los_Angeles
+      const utcDate = new Date(hourKey + ':00:00Z');
+      return utcDate.toLocaleString('en-US', { hour: 'numeric', hour12: true, timeZone: 'America/Los_Angeles' });
     }
 
     function renderParserHeadlines(data) {
       const hours = data.hours || {};
       const keys = Object.keys(hours).sort();
-      // Today's stats
-      const todayPrefix = new Date().toISOString().slice(0, 10);
-      let todayCount = 0, todayTotalMs = 0, todayMsCount = 0, todaySuccesses = 0, todayTotal = 0;
+      // Today's stats (in Pacific)
+      const todayPacific = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+      let todayCount = 0, todayTotalMs = 0, todayMsCount = 0, todaySuccesses = 0, todayTotal = 0, todayFailures = 0;
       for (const k of keys) {
-        if (k.startsWith(todayPrefix)) {
+        // Convert UTC hour key to Pacific date to check if it's "today" in Pacific
+        const utcDate = new Date(k + ':00:00Z');
+        const pacificDate = utcDate.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+        if (pacificDate === todayPacific) {
           const h = hours[k];
           todayCount += h.count;
           todaySuccesses += h.successes;
+          todayFailures += h.failures;
           todayTotal += h.count;
           if (h.avgTotalMs) { todayTotalMs += h.avgTotalMs * h.count; todayMsCount += h.count; }
         }
@@ -1738,12 +1728,15 @@
       const rate = todayTotal > 0 ? Math.round(todaySuccesses / todayTotal * 100) : 100;
       document.getElementById('psSuccessRate').textContent = rate + '%';
       document.getElementById('psSuccessRate').style.color = rate >= 90 ? '#10b981' : rate >= 70 ? '#f59e0b' : '#ef4444';
+      const failRate = todayTotal > 0 ? Math.round(todayFailures / todayTotal * 100) : 0;
+      document.getElementById('psFailRate').textContent = failRate + '%';
+      document.getElementById('psFailRate').style.color = failRate === 0 ? '#10b981' : failRate <= 10 ? '#f59e0b' : '#ef4444';
     }
 
     function renderThroughputChart(data) {
       const hours = data.hours || {};
       const keys = Object.keys(hours).sort();
-      const labels = keys.map(k => k.slice(11, 13) + ':00');
+      const labels = keys.map(k => utcHourToPacific(k));
       const successData = keys.map(k => hours[k].successes);
       const failData = keys.map(k => hours[k].failures);
 
@@ -1773,7 +1766,7 @@
     function renderTimeChart(data) {
       const hours = data.hours || {};
       const keys = Object.keys(hours).sort();
-      const labels = keys.map(k => k.slice(11, 13) + ':00');
+      const labels = keys.map(k => utcHourToPacific(k));
       const totalMs = keys.map(k => hours[k].avgTotalMs);
       const geminiMs = keys.map(k => hours[k].avgGeminiMs);
       const enrichMs = keys.map(k => hours[k].avgEnrichMs);
@@ -1801,32 +1794,10 @@
       });
     }
 
-    function renderQueueBars(queues) {
-      const container = document.getElementById('psQueueBars');
-      const colors = { pending: '#f59e0b', standard: '#3b82f6', large: '#8b5cf6', rework: '#6d28d9', failed: '#ef4444' };
-      const labels = { pending: 'Pending', standard: 'Standard', large: 'Large File', rework: 'Rework', failed: 'Failed' };
-      const maxVal = Math.max(1, ...Object.values(queues));
-
-      let html = '';
-      for (const [name, count] of Object.entries(queues)) {
-        const pct = Math.max(2, (count / maxVal) * 100);
-        const color = colors[name] || '#64748b';
-        html += `<div class="bar-row">
-          <div class="bar-label">${labels[name] || name}</div>
-          <div class="bar-container">
-            <div class="bar-fill" style="width:${pct}%;background:${color}"></div>
-          </div>
-          <div class="bar-value">${count}</div>
-        </div>`;
-      }
-      container.innerHTML = html;
-    }
-
     function togglePsAutoRefresh() {
       if (document.getElementById('psAutoRefresh').checked) {
         psAutoRefreshTimer = setInterval(() => {
           loadParserThroughput();
-          loadQueueDepth();
         }, 60000);
       } else {
         clearInterval(psAutoRefreshTimer);
