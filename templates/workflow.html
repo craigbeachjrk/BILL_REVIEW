@@ -338,6 +338,7 @@
             <option value="">All Vendors</option>
           </select>
           <button class="btn success" onclick="dir_generatePlan()">Generate Plan</button>
+          <button class="btn" id="dir_clearPlanBtn" style="background:#dc2626;display:none" onclick="dir_clearPlan()">Clear Plan</button>
           <button class="btn" onclick="dir_openHistory()">History</button>
         </div>
       </div>
@@ -927,6 +928,19 @@ function dir_showEmpty() {
       <p>Click <strong>Generate Plan</strong> to build today's work plan based on your processing rate and current priorities.</p>
     </div>`;
   document.getElementById('dir_eodButton').style.display = 'none';
+  document.getElementById('dir_clearPlanBtn').style.display = 'none';
+}
+
+async function dir_clearPlan() {
+  if (!confirm('Clear today\'s plan? You can generate a new one after.')) return;
+  try {
+    await fetch('/api/directed/plan', { method: 'DELETE' });
+    dir_plan = null;
+    dir_showEmpty();
+    showToast('Plan cleared', 'ok');
+  } catch (e) {
+    showToast('Error clearing plan: ' + e.message, 'err');
+  }
 }
 
 async function dir_generatePlan() {
@@ -1049,6 +1063,7 @@ function dir_render() {
   }
   if (!dir_plan.tasks || !dir_plan.tasks.length) { dir_showEmpty(); return; }
   document.getElementById('dir_planDate').textContent = dir_plan.planDate || '';
+  document.getElementById('dir_clearPlanBtn').style.display = 'inline-block';
   dir_renderHistoryBanner();
   dir_renderStats();
   dir_renderTasks();

@@ -9687,12 +9687,22 @@ async def api_gap_analysis_add_missing(request: Request, user: str = Depends(req
 
 
 # Workflow S3 cache functions
+_WORKFLOW_DATA_CACHE: dict = {}  # in-memory cache for aging accounts S3 data
+
 def _s3_get_workflow_cache() -> dict | None:
-    """Load pre-computed workflow data from S3 cache."""
+    """Load pre-computed workflow data from S3 cache, with in-memory caching."""
+    # Check in-memory first (avoids re-downloading 3MB from S3 every request)
+    cached = _WORKFLOW_DATA_CACHE.get("data")
+    if cached and (time.time() - _WORKFLOW_DATA_CACHE.get("ts", 0) < 300):
+        return json.loads(json.dumps(cached))  # deep copy to prevent mutation
     try:
         obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=WORKFLOW_CACHE_KEY)
         data = json.loads(obj["Body"].read().decode("utf-8"))
-        return data if isinstance(data, dict) else None
+        if isinstance(data, dict):
+            _WORKFLOW_DATA_CACHE["data"] = data
+            _WORKFLOW_DATA_CACHE["ts"] = time.time()
+            return json.loads(json.dumps(data))  # deep copy
+        return None
     except s3.exceptions.NoSuchKey:
         return None
     except Exception as e:
@@ -10003,6 +10013,7 @@ def api_workflow_recalculate(background_tasks: BackgroundTasks, user: str = Depe
         try:
             data = _compute_workflow_data()
             _s3_put_workflow_cache(data)
+            _WORKFLOW_DATA_CACHE.clear()  # invalidate in-memory cache
             print("[api_workflow_recalculate] Background recalculation complete, saved to S3")
         except Exception as e:
             print(f"[api_workflow_recalculate] Background recalculation failed: {e}")
@@ -10477,6 +10488,7 @@ def _workflow_tracker_refresh_loop():
     try:
         aging_data = _compute_workflow_data()
         _s3_put_workflow_cache(aging_data)
+        _WORKFLOW_DATA_CACHE.clear()
         print("[WORKFLOW BG] Aging accounts refreshed and persisted to S3")
     except Exception as e:
         print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
@@ -10498,6 +10510,7 @@ def _workflow_tracker_refresh_loop():
             try:
                 aging_data = _compute_workflow_data()
                 _s3_put_workflow_cache(aging_data)
+                _WORKFLOW_DATA_CACHE.clear()
                 print("[WORKFLOW BG] Aging accounts auto-refreshed to S3")
             except Exception as e:
                 print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
