@@ -1689,13 +1689,20 @@ function initTrackerEvents() {
   document.getElementById('refreshBtn').addEventListener('click', () => { loadTrackerData(); });
 }
 
-async function loadTrackerData(forceRefresh) {
+async function loadTrackerData(forceRefresh, _retryCount) {
   const container = document.getElementById('trackerContent');
-  container.innerHTML = '<div class="loading">Loading completion tracker...</div>';
+  const retry = _retryCount || 0;
+  if (retry === 0) container.innerHTML = '<div class="loading">Loading completion tracker...</div>';
   try {
     const url = '/api/workflow/completion-tracker' + (forceRefresh ? '?refresh=1' : '');
     const resp = await fetch(url);
     if (!resp.ok) {
+      // Server error (502/504) — auto-retry up to 3 times with backoff
+      if (retry < 3 && (resp.status >= 500)) {
+        container.innerHTML = `<div class="loading">Server busy, retrying... (${retry + 1}/3)</div>`;
+        setTimeout(() => loadTrackerData(false, retry + 1), 5000 * (retry + 1));
+        return;
+      }
       container.innerHTML = `<div class="loading" style="color:#ef4444">Server error (${resp.status}). Click Recalculate to retry.</div>`;
       return;
     }
@@ -1704,11 +1711,27 @@ async function loadTrackerData(forceRefresh) {
       container.innerHTML = '<div class="loading" style="color:#ef4444">Error: ' + trackerData.error + '</div>';
       return;
     }
+    // Backend still computing — poll until ready
+    if (trackerData.cacheStatus === 'computing') {
+      if (retry < 10) {
+        container.innerHTML = '<div class="loading">Data is being computed... auto-refreshing (' + (retry + 1) + ')</div>';
+        setTimeout(() => loadTrackerData(false, retry + 1), 8000);
+        return;
+      }
+      container.innerHTML = '<div class="loading" style="color:#ef4444">Still computing. Click Recalculate to retry.</div>';
+      return;
+    }
     updateStatusCards();
     renderApCards();
     renderTracker();
     document.getElementById('trackerMeta').textContent = 'Generated: ' + (trackerData.generated_at || '');
   } catch (e) {
+    // Network error / timeout — auto-retry
+    if (retry < 3) {
+      container.innerHTML = `<div class="loading">Connection error, retrying... (${retry + 1}/3)</div>`;
+      setTimeout(() => loadTrackerData(false, retry + 1), 5000 * (retry + 1));
+      return;
+    }
     container.innerHTML = '<div class="loading" style="color:#ef4444">Failed to load: ' + e.message + '</div>';
   }
 }
