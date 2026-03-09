@@ -10350,21 +10350,15 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                     pipeline_stage = acct_bills[m[0]]
                     break
 
-            # Status calculation
+            # Status calculation — use expected arrival date (cycle_start + days_between)
+            # to match aging accounts logic, not raw month-end
+            cycle_start_date = cycle_months[0][1]  # First day of first month in cycle
+            expected_by = cycle_start_date + dt.timedelta(days=days_between)
             if has_bill:
                 status_label = "COMPLETE"
                 days_overdue = 0
-            elif today <= cycle_end_date:
-                # Cycle hasn't ended yet
-                days_until_end = (cycle_end_date - today).days
-                if days_until_end <= 7:
-                    status_label = "DUE_SOON"
-                else:
-                    status_label = "ON_TRACK"
-                days_overdue = 0
             else:
-                # Cycle ended — count days since cycle end
-                days_overdue = (today - cycle_end_date).days
+                days_overdue = (today - expected_by).days
                 if days_overdue >= 15:
                     status_label = "VERY_LATE"
                 elif days_overdue >= 8:
