@@ -5376,7 +5376,13 @@ def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False)
         print(f"[UBI CACHE] Returning {len(cached['data'])} bills (age {age:.0f}s, computing={is_computing})")
         return cached["data"]
 
-    # No data yet — return empty, rebuild is in progress
+    # No in-memory data — try S3 directly (startup thread may not have loaded yet)
+    loaded = _load_ubi_cache_from_s3()
+    if loaded and _UBI_UNASSIGNED_CACHE.get("data") is not None:
+        print(f"[UBI CACHE] Loaded from S3 on demand: {len(_UBI_UNASSIGNED_CACHE['data'])} bills")
+        return _UBI_UNASSIGNED_CACHE["data"]
+
+    # No data anywhere — return empty, rebuild is in progress
     print("[UBI CACHE] No data yet, rebuild in progress")
     return []
 
