@@ -134,6 +134,7 @@ def run_batch(
     clause_finder: Optional[LeaseClauseFinder] = None,
     on_progress: Optional[Callable] = None,
     s3_client=None,
+    existing_batch_id: Optional[str] = None,
 ) -> str:
     """
     Launch a pipeline batch run in a background thread.
@@ -150,18 +151,22 @@ def run_batch(
         clause_finder: Optional LeaseClauseFinder for lease clause enrichment
         on_progress: Optional callback(batch_id, message) for progress updates
         s3_client: boto3 S3 client for loading dim_property + S3 property mapping
+        existing_batch_id: If provided, use this batch_id (batch already created)
 
     Returns:
         batch_id string (pipeline runs asynchronously)
     """
-    batch = VEBatch(
-        month=month,
-        year=year,
-        status=BATCH_RUNNING,
-        created_by=user,
-    )
-    store.put_batch(batch)
-    batch_id = batch.batch_id
+    if existing_batch_id:
+        batch_id = existing_batch_id
+    else:
+        batch = VEBatch(
+            month=month,
+            year=year,
+            status=BATCH_RUNNING,
+            created_by=user,
+        )
+        store.put_batch(batch)
+        batch_id = batch.batch_id
 
     logger.info(f"Starting batch {batch_id}: {month}/{year} by {user}")
 

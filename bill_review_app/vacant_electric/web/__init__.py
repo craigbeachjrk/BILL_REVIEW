@@ -158,19 +158,38 @@ async def api_run_pipeline(
     if not _snowflake_conn_factory:
         raise HTTPException(500, "Snowflake connection not configured")
 
-    conn = _snowflake_conn_factory()
-    batch_id = run_batch(
-        month=month,
-        year=year,
-        user=user,
-        snowflake_conn=conn,
-        store=store,
-        admin_fees=_admin_fees,
-        corrections_csv_path=_corrections_csv,
-        bill_locator=_bill_locator,
-        clause_finder=_clause_finder,
-        s3_client=_s3_client,
-    )
+    # Create batch record first so the UI can start polling immediately
+    from ..web_models import VEBatch, BATCH_RUNNING
+    batch = VEBatch(month=month, year=year, status=BATCH_RUNNING, created_by=user)
+    store.put_batch(batch)
+    batch_id = batch.batch_id
+
+    # Run everything in background — don't block the request with Snowflake connect
+    import threading
+    def _bg_run():
+        try:
+            conn = _snowflake_conn_factory()
+            run_batch(
+                month=month,
+                year=year,
+                user=user,
+                snowflake_conn=conn,
+                store=store,
+                admin_fees=_admin_fees,
+                corrections_csv_path=_corrections_csv,
+                bill_locator=_bill_locator,
+                clause_finder=_clause_finder,
+                s3_client=_s3_client,
+                existing_batch_id=batch_id,
+            )
+        except Exception as e:
+            logger.error(f"Pipeline background run failed: {e}")
+            try:
+                from ..web_models import BATCH_FAILED
+                store.update_batch_status(batch_id, BATCH_FAILED, error_message=str(e))
+            except Exception:
+                pass
+    threading.Thread(target=_bg_run, daemon=True).start()
 
     return JSONResponse({'batch_id': batch_id, 'status': BATCH_RUNNING})
 

@@ -5388,10 +5388,14 @@ def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False)
 
 
 def _invalidate_ubi_unassigned_cache():
-    """Invalidate cache and trigger async rebuild."""
+    """Mark cache stale and trigger async rebuild. Keep serving old data while rebuilding."""
     global _UBI_UNASSIGNED_CACHE
-    _UBI_UNASSIGNED_CACHE = {}
-    print("[UBI CACHE] Invalidated, triggering async rebuild")
+    # Don't wipe the cache — mark it stale so it keeps serving old data
+    if _UBI_UNASSIGNED_CACHE.get("data") is not None:
+        _UBI_UNASSIGNED_CACHE["ts"] = 0  # Force stale, but keep data
+        print("[UBI CACHE] Marked stale, triggering async rebuild (still serving old data)")
+    else:
+        print("[UBI CACHE] No data to keep, triggering async rebuild")
     _ubi_cache_rebuild_async()
 
 

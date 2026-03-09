@@ -211,7 +211,10 @@ class VEBatchStore:
         item = resp.get('Item')
         if not item:
             return None
-        return _from_ddb_item(item, VEBatch)
+        batch = _from_ddb_item(item, VEBatch)
+        # Ensure batch_id matches the pk (may be missing from item attrs)
+        batch.batch_id = batch_id
+        return batch
 
     def update_batch_status(self, batch_id: str, status: str, **extra_fields):
         """Update batch status and optional extra fields."""
@@ -248,7 +251,11 @@ class VEBatchStore:
         while True:
             resp = self.ddb.scan(**scan_args)
             for item in resp.get('Items', []):
-                batches.append(_from_ddb_item(item, VEBatch))
+                batch = _from_ddb_item(item, VEBatch)
+                # Ensure batch_id is extracted from pk if missing from item attrs
+                if not batch.batch_id or batch.batch_id != item['pk']['S'].replace('BATCH#', ''):
+                    batch.batch_id = item['pk']['S'].replace('BATCH#', '')
+                batches.append(batch)
             if 'LastEvaluatedKey' not in resp or len(batches) >= limit:
                 break
             scan_args['ExclusiveStartKey'] = resp['LastEvaluatedKey']
