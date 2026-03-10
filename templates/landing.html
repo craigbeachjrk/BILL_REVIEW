@@ -126,35 +126,13 @@
         <h2>ADVANCED SEARCH</h2>
         <div class="muted">Search across all parse dates</div>
       </a>
-      <a class="tile" href="/workflow">
-        <h2>WORKFLOW</h2>
-        <div class="muted">Prioritized account status & overdue alerts</div>
-      </a>
-      <a class="tile" href="/directed">
-        <h2>DIRECTED</h2>
-        <div class="muted">Auto-generated daily work plans by priority</div>
-      </a>
       <a class="tile" href="/track">
         <h2>TRACK</h2>
         <div class="muted">Track status of utility accounts</div>
       </a>
-      {% if is_admin %}
-      <a class="tile" href="/print-checks">
-        <h2>PRINT CHECKS</h2>
-        <div class="muted">Create check slips from posted invoices</div>
-      </a>
-      <a class="tile" href="/review-checks">
-        <h2>REVIEW CHECKS</h2>
-        <div class="muted">Treasury review and approval of check slips</div>
-      </a>
-      {% endif %}
       <a class="tile" href="/billback">
         <h2>BILLBACK</h2>
         <div class="muted">Review & adjust UBI billback amounts</div>
-      </a>
-      <a class="tile" href="/flagged">
-        <h2>FLAGGED REVIEW</h2>
-        <div class="muted">Review flagged bills for quality control</div>
       </a>
       <a class="tile" href="/master-bills">
         <h2>MASTER BILLS</h2>
@@ -168,43 +146,15 @@
         <h2>CHART BY METER</h2>
         <div class="muted">Visualize consumption trends & clean meter data</div>
       </a>
-      {% if is_admin %}
-      <a class="tile" href="/ubi-batch">
-        <h2>UBI BATCH</h2>
-        <div class="muted">Manage UBI batches for Snowflake export</div>
-      </a>
-      <a class="tile" href="/history">
-        <h2>HISTORY</h2>
-        <div class="muted">View archived bills & posting history</div>
-      </a>
-      {% endif %}
       <a class="tile" href="/config">
         <h2>CONFIG</h2>
         <div class="muted">Set the system up</div>
       </a>
-      {% if is_admin %}
-      <a class="tile" href="/vendor-corrections">
-        <h2>VENDOR CORRECTIONS</h2>
-        <div class="muted">Find & fix mismatched vendor assignments</div>
-      </a>
-      <a class="tile" href="/account-gap-analysis">
-        <h2>GAP ANALYSIS</h2>
-        <div class="muted">Compare tracked accounts vs external lists</div>
-      </a>
-      {% endif %}
       <a class="tile" href="/metrics">
         <h2>METRICS</h2>
         <div class="muted">View processing time & productivity stats</div>
       </a>
       {% if is_admin %}
-      <a class="tile" href="/failed">
-        <h2>FAILED JOBS</h2>
-        <div class="muted">Review failed parsing jobs</div>
-      </a>
-      <a class="tile" href="/debug">
-        <h2>DEBUG</h2>
-        <div class="muted">Triage bugs & enhancement requests</div>
-      </a>
       <a class="tile" href="/ve">
         <h2>VACANT ELECTRIC</h2>
         <div class="muted">Vacant utility billback pipeline & review</div>
