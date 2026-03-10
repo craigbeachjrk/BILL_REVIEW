@@ -10201,7 +10201,10 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
         scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
     scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
 
-    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, scan_months, suffix_filter=".jsonl"))
+    # Stage4 = enriched but not posted. Old stage4 files are stuck/failed — limit to last 3 months.
+    # Stages 6/7/archive have already been posted so scan the full window.
+    stage4_recent = [m for m in scan_months if m >= dt.date(today.year, today.month, 1) - dt.timedelta(days=90)]
+    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, stage4_recent, suffix_filter=".jsonl"))
     stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months, suffix_filter=".jsonl"))
     stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months, suffix_filter=".jsonl"))
     archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months, suffix_filter=".jsonl"))
