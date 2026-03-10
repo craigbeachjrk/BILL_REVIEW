@@ -10200,11 +10200,13 @@ def _load_or_build_bill_index(today, months_list) -> dict:
         scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
     scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
 
-    # List all S3 keys (skip S4 — filenames have no property/account info,
-    # reading 17K+ files is too slow on AppRunner, and S4 = pre-posting so
-    # these bills haven't completed the pipeline yet)
+    # List all S3 keys — all post-enrichment stages use Property-Vendor-Account
+    # filename format so we can parse from key names (no S3 reads needed).
+    # Skip S4 (filenames are just timestamps, no property/account info).
     all_keys_by_stage = [
         (list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months, suffix_filter=".jsonl")), "S7"),
+        (list(_iter_stage_objects_by_month(UBI_ASSIGNED_PREFIX, scan_months, suffix_filter=".jsonl")), "S8"),
+        (list(_iter_stage_objects_by_month(FLAGGED_REVIEW_PREFIX, scan_months, suffix_filter=".jsonl")), "S9"),
         (list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months, suffix_filter=".jsonl")), "S99"),
         (list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months, suffix_filter=".jsonl")), "S6"),
     ]
@@ -10264,9 +10266,9 @@ def _load_or_build_bill_index(today, months_list) -> dict:
                     bills_found[key][bm] = {"stage": stage_label, "bill_date": bill_date, "service_days": service_days}
 
         for stage_keys, stage_label in new_keys_by_stage:
-            # For S7 and S99 (archive): parse info from filename (much faster than reading files)
-            # Format: .../Property Name-Vendor-Account-MM-DD-YYYY-MM-DD-YYYY-MM-DD-YYYY_timestamp.jsonl
-            if stage_label in ("S7", "S99"):
+            # All post-enrichment stages use same filename format:
+            # .../Property Name-Vendor-Account-MM-DD-YYYY-MM-DD-YYYY-MM-DD-YYYY_timestamp.jsonl
+            if stage_label in ("S6", "S7", "S8", "S9", "S99"):
                 parsed_count = 0
                 for s3_key in stage_keys:
                     fname = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
