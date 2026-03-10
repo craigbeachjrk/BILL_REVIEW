@@ -1896,8 +1896,8 @@ function renderTracker() {
       const aComplete = a.status_label === 'COMPLETE' ? 1 : 0;
       const bComplete = b.status_label === 'COMPLETE' ? 1 : 0;
       if (aComplete !== bComplete) return aComplete - bComplete;
-      if (!aComplete) return b.days_overdue - a.days_overdue;
-      return a.vendor_name.localeCompare(b.vendor_name);
+      // Within same completion group, sort by account number
+      return (a.account_number || '').localeCompare(b.account_number || '', undefined, {numeric: true});
     });
 
     for (const item of sorted) {
@@ -1907,16 +1907,18 @@ function renderTracker() {
       else if (item.status_label === 'DUE_SOON' || item.status_label === 'ON_TRACK') { icon = '&#9711;'; iconClass = 'wait'; }
       else {
         icon = '&#10007;'; iconClass = 'miss';
-        iconClick = ` onclick="event.stopPropagation();ct_openSkipModal('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}')" style="cursor:pointer" title="Add skip reason"`;
+        const skipTitle = item.comment ? escapeHtml(item.comment) : 'Click to add skip reason';
+        iconClick = ` onclick="event.stopPropagation();ct_openSkipModal('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}')" style="cursor:pointer" title="${skipTitle}"`;
       }
       const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
       const monthDisplay = formatMonth(item.month);
       const fullLabel = `${item.vendor_name || 'Unknown'} - ${item.account_number}`;
+      const commentTag = item.comment ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fef3c7;color:#92400e;font-weight:600;margin-left:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.length > 20 ? item.comment.substring(0, 20) + '...' : item.comment)}</span>` : '';
 
       const dblClick = IS_ADMIN ? ` ondblclick="event.stopPropagation();ct_removeAccount('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}',this)"` : '';
       html += `<div class="account-item" title="${escapeHtml(fullLabel)}"${dblClick}>
-        <div class="acct-info"><div class="acct-label">${fullLabel}${scraperTag}</div></div>
+        <div class="acct-info"><div class="acct-label">${fullLabel}${scraperTag}${commentTag}</div></div>
         <span class="month-badge ${item.status_label}" title="Expected bill period">${monthDisplay}</span>
         ${stageTag}
         <span class="status-icon ${iconClass}"${iconClick}>${icon}</span>
@@ -1946,7 +1948,28 @@ function ct_openSkipModal(account, vendor, property) {
   for (const c of dir_reasonCodes) {
     sel.innerHTML += `<option value="${c.code}">${escapeHtml(c.label)}</option>`;
   }
-  document.getElementById('ct_skipNotes').value = '';
+  // Pre-populate with existing comment if any
+  let existingComment = '';
+  if (trackerData && trackerData.properties) {
+    for (const p of trackerData.properties) {
+      for (const it of (p.items || [])) {
+        if (it.account_number === account && it.vendor_name === vendor && it.comment) {
+          existingComment = it.comment;
+          // Try to match reason code from comment format: [ReasonLabel] notes
+          const match = existingComment.match(/^\[(.+?)\]\s*(.*)/);
+          if (match) {
+            const label = match[1];
+            const code = dir_reasonCodes.find(c => c.label === label);
+            if (code) sel.value = code.code;
+            existingComment = match[2] || '';
+          }
+          break;
+        }
+      }
+      if (existingComment) break;
+    }
+  }
+  document.getElementById('ct_skipNotes').value = existingComment;
   document.getElementById('ct_skipModal').style.display = 'flex';
 }
 

@@ -10285,6 +10285,7 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
         acct = str(a.get("accountNumber") or "").strip()
         vendor_name = str(a.get("vendorName") or "").strip()
         days_between = int(a.get("daysBetweenBills") or 30)
+        comment = str(a.get("comment") or "").strip()
         norm_acct = _normalize_account_number(acct)
         acct_key = (pid, norm_acct)
         ap_name = ap_by_pid.get(pid, "")
@@ -10383,6 +10384,7 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                 "in_scraper": in_scraper,
                 "has_bill_in_pipeline": has_bill,
                 "pipeline_stage": pipeline_stage,
+                "comment": comment,
             })
 
             i += months_per_cycle
