@@ -16298,23 +16298,14 @@ def _iter_stage_objects(prefix_root: str, start: dt.date, end: dt.date):
 
 def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
     """Read only the first JSON record from each JSONL file.
-    Uses a dedicated boto3 client with large connection pool to avoid
-    exhausting the shared client's connections.
+    Uses global s3 client with low concurrency to avoid connection issues.
     """
     if not keys:
         return []
 
-    import boto3
-    from botocore.config import Config as BotoConfig
-    _s3_bulk = boto3.client(
-        "s3", region_name="us-east-1",
-        config=BotoConfig(max_pool_connections=25, retries={"max_attempts": 1},
-                          connect_timeout=5, read_timeout=10),
-    )
-
     def read_one(key: str) -> dict | None:
         try:
-            obj = _s3_bulk.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-32767")
+            obj = s3.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-32767")
             chunk = obj["Body"].read().decode("utf-8", errors="ignore")
             obj["Body"].close()
             first_line = chunk.split("\n")[0].strip()
@@ -16327,8 +16318,8 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
             pass
         return None
 
-    BATCH_SIZE = 500
-    WORKERS = 20
+    BATCH_SIZE = 200
+    WORKERS = 10
     out = []
     for batch_start in range(0, len(keys), BATCH_SIZE):
         batch_keys = keys[batch_start:batch_start + BATCH_SIZE]
