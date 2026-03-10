@@ -10162,231 +10162,42 @@ def _load_completion_tracker_from_s3() -> bool:
 
 
 def _load_or_build_bill_index(today, months_list) -> dict:
-    """Load cached bill index from S3, or do a full scan if no cache exists.
+    """Load bill index from S3 cache (built by jrk-bill-index-builder Lambda).
     Returns: dict of (pid, norm_acct) -> { month_str: {stage, bill_date, service_days} }
+
+    The Lambda reads actual file contents from S3 stages and writes the cache.
+    This function only reads the cache — no S3 file reads happen in AppRunner.
     """
     import gzip as _gzip
 
-    # Try loading cached index from S3
-    cached_index = None
-    cached_keys_seen = set()
     try:
         obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY)
         payload = json.loads(_gzip.decompress(obj["Body"].read()))
-        cached_index = {}
+        bills_found = {}
         for k_str, months_data in payload.get("index", {}).items():
-            # Key stored as "pid|norm_acct"
             parts = k_str.split("|", 1)
             if len(parts) == 2:
-                cached_index[tuple(parts)] = {}
+                bills_found[tuple(parts)] = {}
                 for m, info in months_data.items():
-                    # Convert bill_date string back to date
                     bd = None
                     if info.get("bill_date"):
                         bd = _parse_date_any(info["bill_date"])
-                    cached_index[tuple(parts)][m] = {
+                    bills_found[tuple(parts)][m] = {
                         "stage": info.get("stage"),
                         "bill_date": bd,
                         "service_days": info.get("service_days", 0),
                     }
-        cached_keys_seen = set(payload.get("keys_seen", []))
-        print(f"[BILL INDEX] Loaded from S3: {len(cached_index)} accounts, {len(cached_keys_seen)} keys seen")
+        built_at = payload.get("built_at", "unknown")
+        print(f"[BILL INDEX] Loaded from S3: {len(bills_found)} accounts (built {built_at})")
+        return bills_found
     except Exception as e:
         if "NoSuchKey" not in str(e):
             print(f"[BILL INDEX] Failed to load: {e}")
         else:
-            print("[BILL INDEX] No cached index, doing full scan")
-
-    # Determine scan months
-    scan_months = []
-    first_window = months_list[0][1]
-    for extra in range(3, 0, -1):
-        total_m = first_window.year * 12 + first_window.month - 1 - extra
-        scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
-    scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
-
-    # List all S3 keys — all post-enrichment stages use Property-Vendor-Account
-    # filename format so we can parse from key names (no S3 reads needed).
-    # Skip S4 (filenames are just timestamps, no property/account info).
-    all_keys_by_stage = [
-        (list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months, suffix_filter=".jsonl")), "S7"),
-        (list(_iter_stage_objects_by_month(UBI_ASSIGNED_PREFIX, scan_months, suffix_filter=".jsonl")), "S8"),
-        (list(_iter_stage_objects_by_month(FLAGGED_REVIEW_PREFIX, scan_months, suffix_filter=".jsonl")), "S9"),
-        (list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months, suffix_filter=".jsonl")), "S99"),
-        (list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months, suffix_filter=".jsonl")), "S6"),
-    ]
-
-    all_keys = set()
-    for keys, _ in all_keys_by_stage:
-        all_keys.update(keys)
-    total_keys = len(all_keys)
-
-    # Find NEW keys not in cached index
-    new_keys = all_keys - cached_keys_seen if cached_index is not None else all_keys
-    print(f"[BILL INDEX] Total S3 keys: {total_keys}, new keys to read: {len(new_keys)}")
-
-    # Start with cached index or empty
-    bills_found = cached_index if cached_index is not None else {}
-
-    if new_keys:
-        new_keys_by_stage = []
-        for keys, stage_label in all_keys_by_stage:
-            stage_new = [k for k in keys if k in new_keys]
-            if stage_new:
-                new_keys_by_stage.append((stage_new, stage_label))
-
-        total_new = sum(len(k) for k, _ in new_keys_by_stage)
-        print(f"[BILL INDEX] Processing {total_new} new keys...")
-
-        # Build property name -> property ID lookup from tracked accounts
-        all_accounts = _get_accounts_to_track()
-        prop_name_to_id = {}
-        for a in all_accounts:
-            pname = str(a.get("propertyName") or "").strip().lower()
-            pid_val = str(a.get("propertyId") or "").strip()
-            if pname and pid_val:
-                prop_name_to_id[pname] = pid_val
-
-        def _index_record(pid, acct, bill_date, ps, pe, stage_label):
-            """Add a bill record to the index."""
-            if not pid or not acct:
-                return
-            norm_acct = _normalize_account_number(acct)
-            service_days = (pe - ps).days if ps and pe and pe > ps else 0
-            # Determine covered months
-            bill_months = []
-            if ps and pe and ps <= pe:
-                cur = dt.date(ps.year, ps.month, 1)
-                end_m = dt.date(pe.year, pe.month, 1)
-                while cur <= end_m:
-                    bill_months.append(f"{cur.month:02d}/{cur.year}")
-                    cur = dt.date(cur.year + 1, 1, 1) if cur.month == 12 else dt.date(cur.year, cur.month + 1, 1)
-            if not bill_months and bill_date:
-                bill_months = [f"{bill_date.month:02d}/{bill_date.year}"]
-            key = (pid, norm_acct)
-            if key not in bills_found:
-                bills_found[key] = {}
-            for bm in bill_months:
-                if bm not in bills_found[key]:
-                    bills_found[key][bm] = {"stage": stage_label, "bill_date": bill_date, "service_days": service_days}
-
-        for stage_keys, stage_label in new_keys_by_stage:
-            # All post-enrichment stages use same filename format:
-            # .../Property Name-Vendor-Account-MM-DD-YYYY-MM-DD-YYYY-MM-DD-YYYY_timestamp.jsonl
-            if stage_label in ("S6", "S7", "S8", "S9", "S99"):
-                parsed_count = 0
-                for s3_key in stage_keys:
-                    fname = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
-                    # Strip .jsonl and timestamp suffix
-                    base = fname.replace(".jsonl", "")
-                    # Find the timestamp part (YYYYMMDDTHHMMSSZ pattern)
-                    ts_match = re.search(r'_(\d{8}T\d{6}Z)', base)
-                    if ts_match:
-                        base = base[:ts_match.start()]
-                    # Parse 3 dates from the end: bill_date, period_end, period_start
-                    # Each date is MM-DD-YYYY (10 chars with hyphens between parts)
-                    date_pattern = r'(\d{1,2})-(\d{1,2})-(\d{4})$'
-                    dates = []
-                    remaining = base
-                    for _ in range(3):
-                        dm = re.search(date_pattern, remaining)
-                        if dm:
-                            try:
-                                d = dt.date(int(dm.group(3)), int(dm.group(1)), int(dm.group(2)))
-                                dates.insert(0, d)
-                            except ValueError:
-                                dates.insert(0, None)
-                            remaining = remaining[:dm.start()].rstrip("-")
-                        else:
-                            break
-                    if len(dates) >= 3 and dates[0] and dates[1]:
-                        # remaining = "Property-Vendor-Account"
-                        parts = remaining.rsplit("-", 1)
-                        if len(parts) == 2:
-                            acct = parts[1].strip()
-                            pv = parts[0]
-                        else:
-                            continue
-                        # Try to match property name
-                        pid = ""
-                        for pname, pid_val in prop_name_to_id.items():
-                            if pv.lower().startswith(pname):
-                                pid = pid_val
-                                break
-                        if not pid:
-                            # Use S3 path date as fallback month, skip pid matching
-                            path_m = re.search(r'yyyy=(\d{4})/mm=(\d{2})', s3_key)
-                            if path_m:
-                                bm = f"{int(path_m.group(2)):02d}/{int(path_m.group(1))}"
-                                # Can't determine pid from key, skip this file
-                            continue
-                        _index_record(pid, acct, dates[2], dates[0], dates[1], stage_label)
-                        parsed_count += 1
-                print(f"[BILL INDEX] Parsed {parsed_count}/{len(stage_keys)} {stage_label} keys from filenames")
-            else:
-                # S4 and S6: must read file contents
-                records = _read_first_record_from_s3(stage_keys)
-                print(f"[BILL INDEX] Read {len(records)}/{len(stage_keys)} {stage_label} records from S3")
-                for rec in records:
-                    pid = str(rec.get("EnrichedPropertyID") or rec.get("propertyId")
-                              or rec.get("PropertyID") or rec.get("Property ID") or "").strip()
-                    acct = str(rec.get("Account Number") or rec.get("accountNumber")
-                               or rec.get("AccountNumber") or "").strip()
-                    bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
-                    bill_date = _parse_date_any(str(bd_str))
-                    ps = _parse_date_any(str(rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""))
-                    pe = _parse_date_any(str(rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""))
-                    _index_record(pid, acct, bill_date, ps, pe, stage_label)
-
-    # Persist updated index to S3
-    try:
-        serializable_index = {}
-        for (pid, norm_acct), months_data in bills_found.items():
-            k_str = f"{pid}|{norm_acct}"
-            serializable_index[k_str] = {}
-            for m, info in months_data.items():
-                serializable_index[k_str][m] = {
-                    "stage": info.get("stage"),
-                    "bill_date": info["bill_date"].isoformat() if info.get("bill_date") else None,
-                    "service_days": info.get("service_days", 0),
-                }
-        payload = json.dumps({"index": serializable_index, "keys_seen": list(all_keys)}).encode("utf-8")
-        compressed = _gzip.compress(payload)
-        s3.put_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY, Body=compressed, ContentType="application/gzip")
-        print(f"[BILL INDEX] Persisted to S3: {len(bills_found)} accounts, {len(all_keys)} keys ({len(compressed)} bytes)")
-    except Exception as e:
-        print(f"[BILL INDEX] Failed to persist: {e}")
+            print("[BILL INDEX] No cache found — invoke jrk-bill-index-builder Lambda")
+        return {}
 
     return bills_found
-
-
-def _extract_bill_months_static(rec: dict) -> list[str]:
-    """Extract ALL months covered by a bill using service period dates."""
-    ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
-    pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
-    ps = _parse_date_any(str(ps_str))
-    pe = _parse_date_any(str(pe_str))
-    if ps and pe and ps <= pe:
-        covered = []
-        cur = dt.date(ps.year, ps.month, 1)
-        end_m = dt.date(pe.year, pe.month, 1)
-        while cur <= end_m:
-            covered.append(f"{cur.month:02d}/{cur.year}")
-            if cur.month == 12:
-                cur = dt.date(cur.year + 1, 1, 1)
-            else:
-                cur = dt.date(cur.year, cur.month + 1, 1)
-        if covered:
-            return covered
-    bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
-    bd = _parse_date_any(str(bd_str))
-    if bd:
-        return [f"{bd.month:02d}/{bd.year}"]
-    s3k = rec.get("__s3_key__", "")
-    _m = re.search(r'yyyy=(\d{4})/mm=(\d{2})', s3k)
-    if _m:
-        return [f"{int(_m.group(2)):02d}/{int(_m.group(1))}"]
-    return []
 
 
 def _compute_workflow_tracker(months_back: int = 6) -> dict:
@@ -10671,8 +10482,8 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
 
 def _workflow_tracker_refresh_loop():
     """Background loop that keeps workflow tracker cache warm.
-    Loads from S3 on startup for instant availability, then refreshes every 4 min."""
-    _REFRESH_INTERVAL = 240  # 4 minutes
+    Loads from S3 on startup for instant availability, then refreshes once daily."""
+    _REFRESH_INTERVAL = 86400  # 24 hours
 
     # Try S3 first for instant startup
     loaded = _load_completion_tracker_from_s3()
@@ -10735,6 +10546,29 @@ def _workflow_tracker_refresh_loop():
                 print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
 
 
+BILL_INDEX_LAMBDA = os.getenv("BILL_INDEX_LAMBDA", "jrk-bill-index-builder")
+
+
+@app.post("/api/workflow/rebuild-bill-index")
+def api_rebuild_bill_index(user: str = Depends(require_user)):
+    """Invoke the bill-index-builder Lambda to rebuild the S3 bill index cache.
+    Admin only. Returns immediately — Lambda runs async."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    try:
+        resp = _lambda_client.invoke(
+            FunctionName=BILL_INDEX_LAMBDA,
+            InvocationType="Event",  # async — returns immediately
+            Payload=json.dumps({"triggered_by": user}).encode(),
+        )
+        status = resp.get("StatusCode", 0)
+        print(f"[BILL INDEX] Lambda invoked by {user}, status={status}")
+        return {"ok": True, "message": "Bill index rebuild started (Lambda)", "statusCode": status}
+    except Exception as e:
+        print(f"[BILL INDEX] Lambda invoke failed: {e}")
+        return JSONResponse({"error": f"Lambda invoke failed: {_sanitize_error(e, 'lambda')}"}, status_code=500)
+
+
 @app.get("/api/workflow/completion-tracker")
 def api_workflow_completion_tracker(
     months_back: int = 6,
@@ -10750,7 +10584,16 @@ def api_workflow_completion_tracker(
     cached = _CACHE.get(cache_key)
     if cached and cached.get("data"):
         if refresh:
-            # Trigger background rebuild, return current data with rebuilding flag
+            # Trigger Lambda to rebuild bill index, then rebuild tracker in background
+            try:
+                _lambda_client.invoke(
+                    FunctionName=BILL_INDEX_LAMBDA,
+                    InvocationType="Event",
+                    Payload=json.dumps({"triggered_by": user, "source": "refresh"}).encode(),
+                )
+                print(f"[COMPLETION TRACKER] Lambda triggered by {user} via refresh")
+            except Exception as e:
+                print(f"[COMPLETION TRACKER] Lambda trigger failed: {e}")
             threading.Thread(target=_bg_rebuild_tracker, daemon=True).start()
             data = dict(cached["data"])
             data["cacheStatus"] = "rebuilding"
