@@ -2870,7 +2870,7 @@ def api_archive_parsed(keys: str = Form(...), user: str = Depends(require_user))
         return JSONResponse({"error": _sanitize_error(e, "API request")}, status_code=500)
 
 # Month-level listing: list once per month prefix rather than per day
-def _iter_stage_objects_by_month(prefix_root: str, months: List[dt.date]):
+def _iter_stage_objects_by_month(prefix_root: str, months: List[dt.date], suffix_filter: str = ""):
     seen: set[str] = set()
     for md in months:
         y = md.year; m = md.month
@@ -2886,6 +2886,8 @@ def _iter_stage_objects_by_month(prefix_root: str, months: List[dt.date]):
                     for obj in page.get("Contents", []) or []:
                         k = obj.get("Key", "")
                         if k and k not in seen:
+                            if suffix_filter and not k.endswith(suffix_filter):
+                                continue
                             seen.add(k); yield k
             except Exception:
                 pass
@@ -9777,10 +9779,10 @@ def _compute_workflow_data() -> dict:
 
     # Read bill records from all stages
     print(f"[_compute_workflow_data] Scanning {len(months)} months of bills...")
-    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, months))
-    stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, months))
-    stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, months))
-    archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, months))
+    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, months, suffix_filter=".jsonl"))
+    stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, months, suffix_filter=".jsonl"))
+    stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, months, suffix_filter=".jsonl"))
+    archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, months, suffix_filter=".jsonl"))
 
     print(f"[_compute_workflow_data] Found keys: S4={len(stage4_keys)}, S6={len(stage6_keys)}, S7={len(stage7_keys)}, Archive={len(archive_keys)}")
 
@@ -10199,10 +10201,10 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
         scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
     scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
 
-    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, scan_months))
-    stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months))
-    stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months))
-    archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months))
+    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, scan_months, suffix_filter=".jsonl"))
+    stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months, suffix_filter=".jsonl"))
+    stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months, suffix_filter=".jsonl"))
+    archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months, suffix_filter=".jsonl"))
 
     total_keys = len(stage4_keys) + len(stage6_keys) + len(stage7_keys) + len(archive_keys)
     print(f"[WORKFLOW TRACKER] Found {total_keys} S3 keys (S4={len(stage4_keys)}, S6={len(stage6_keys)}, S7={len(stage7_keys)}, Archive={len(archive_keys)})")
@@ -16242,7 +16244,7 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
     def read_one(key: str) -> dict | None:
         try:
             obj = s3.get_object(Bucket=BUCKET, Key=key)
-            chunk = obj["Body"].read(65536).decode("utf-8", errors="ignore")
+            chunk = obj["Body"].read(4096).decode("utf-8", errors="ignore")
             obj["Body"].close()
             first_line = chunk.split("\n")[0].strip()
             if first_line:
