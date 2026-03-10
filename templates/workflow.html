@@ -437,20 +437,22 @@
       <div class="ap-cards" id="apCards"></div>
 
       <!-- Legend -->
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 16px;font-size:11px">
-        <span style="font-weight:600;color:#fff;opacity:.7">Legend:</span>
-        <span><span class="month-badge VERY_LATE">JAN 2026</span> Very Late (15+ days)</span>
-        <span><span class="month-badge LATE">JAN 2026</span> Late (8-14)</span>
-        <span><span class="month-badge SLIGHTLY_LATE">JAN 2026</span> Slightly Late (1-7)</span>
-        <span><span class="month-badge DUE_SOON">JAN 2026</span> Due Soon</span>
-        <span><span class="month-badge ON_TRACK">JAN 2026</span> On Track</span>
-        <span><span class="month-badge COMPLETE">JAN 2026</span> Complete</span>
-        <span style="margin-left:8px"><span class="status-icon miss" style="font-size:12px">&#10007;</span> Missing (click to add skip reason)</span>
-        <span><span class="status-icon ok" style="font-size:12px">&#10003;</span> Has bill</span>
-        <span><span class="status-icon wait" style="font-size:12px">&#9711;</span> Not yet due</span>
-        <span><span class="stage-tag">S4</span> Pipeline stage</span>
-        <span><span class="scraper-tag">SCR</span> Scraper-fetched</span>
-        {% if is_admin %}<span style="opacity:.7">Double-click account to remove from tracker</span>{% endif %}
+      <div style="background:rgba(255,255,255,.12);border-radius:10px;padding:12px 16px;margin:0 0 12px 0;font-size:12px;color:#fff">
+        <div style="font-weight:700;margin-bottom:8px;font-size:13px">Legend</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 24px">
+          <span><span class="month-badge VERY_LATE">JAN 2026</span> Very Late (15+ days)</span>
+          <span><span class="month-badge LATE">JAN 2026</span> Late (8-14 days)</span>
+          <span><span class="month-badge SLIGHTLY_LATE">JAN 2026</span> Slightly Late (1-7 days)</span>
+          <span><span class="month-badge DUE_SOON">JAN 2026</span> Due Soon (within 7 days)</span>
+          <span><span class="month-badge ON_TRACK">JAN 2026</span> On Track</span>
+          <span><span class="month-badge COMPLETE">JAN 2026</span> Complete</span>
+          <span><span class="status-icon miss" style="font-size:13px">&#10007;</span> Missing — click to add skip reason</span>
+          <span><span class="status-icon ok" style="font-size:13px">&#10003;</span> Has bill in pipeline</span>
+          <span><span class="status-icon wait" style="font-size:13px">&#9711;</span> Not yet due</span>
+          <span><span class="stage-tag">S4</span> Pipeline stage</span>
+          <span><span class="scraper-tag">SCR</span> Scraper-fetched</span>
+          {% if is_admin %}<span style="opacity:.7">Double-click account to remove from tracker</span>{% endif %}
+        </div>
       </div>
 
       <!-- Toolbar: Search -->
