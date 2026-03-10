@@ -16264,7 +16264,7 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
         executor = ThreadPoolExecutor(max_workers=WORKERS)
         futures = {executor.submit(read_one, key): key for key in batch_keys}
         try:
-            for future in as_completed(futures, timeout=120):
+            for future in as_completed(futures, timeout=300):
                 try:
                     s3_key = futures[future]
                     result = future.result(timeout=10)
