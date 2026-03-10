@@ -16234,7 +16234,7 @@ def _iter_stage_objects(prefix_root: str, start: dt.date, end: dt.date):
 def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
     """Read only the first JSON record from each JSONL file (much faster for header info).
     Uses parallel threads for better performance with many files.
-    Processes in batches to avoid overwhelming S3 connections.
+    Processes in batches with timeouts to prevent hangs.
     """
     if not keys:
         return []
@@ -16242,7 +16242,6 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
     def read_one(key: str) -> dict | None:
         try:
             obj = s3.get_object(Bucket=BUCKET, Key=key)
-            # Read up to 64KB — first JSON line rarely exceeds this
             chunk = obj["Body"].read(65536).decode("utf-8", errors="ignore")
             obj["Body"].close()
             first_line = chunk.split("\n")[0].strip()
@@ -16255,14 +16254,14 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
             pass
         return None
 
-    # Process in batches to avoid overwhelming S3/network
     BATCH_SIZE = 2000
     WORKERS = 50
     out = []
     for batch_start in range(0, len(keys), BATCH_SIZE):
         batch_keys = keys[batch_start:batch_start + BATCH_SIZE]
-        with ThreadPoolExecutor(max_workers=WORKERS) as executor:
-            futures = {executor.submit(read_one, key): key for key in batch_keys}
+        executor = ThreadPoolExecutor(max_workers=WORKERS)
+        futures = {executor.submit(read_one, key): key for key in batch_keys}
+        try:
             for future in as_completed(futures, timeout=120):
                 try:
                     s3_key = futures[future]
@@ -16272,8 +16271,13 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
                         out.append(result)
                 except Exception:
                     pass
-        if batch_start % 10000 == 0 and batch_start > 0:
+        except TimeoutError:
+            print(f"[S3 READ] Batch at {batch_start} timed out after 120s, moving on")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        if batch_start > 0 and batch_start % 10000 == 0:
             print(f"[S3 READ] Processed {batch_start}/{len(keys)} keys...")
+    print(f"[S3 READ] Done: {len(out)} records from {len(keys)} keys")
     return out
 
 
