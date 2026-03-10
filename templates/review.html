@@ -708,8 +708,12 @@
           clone.removeAttribute('data-orig-id');
           clone.setAttribute('data-line-id', newLine.line_id);
 
-          // Clear all inputs first
-          clone.querySelectorAll('input[type=text]').forEach(i => { i.value = ''; });
+          // Clear all inputs (text + hidden) — hidden EnrichedGLAccountID
+          // was retaining first line's GL ID
+          clone.querySelectorAll('input').forEach(i => {
+            if (i.type === 'checkbox' || i.type === 'radio') return;
+            i.value = '';
+          });
           clone.querySelectorAll('select').forEach(s => { try { s.value = ''; } catch(_) {} });
 
           // Reset checkbox
@@ -1769,8 +1773,12 @@
       clone.setAttribute('data-new','1');
       clone.removeAttribute('data-orig-id');
       clone.setAttribute('data-line-id', 'new-' + Date.now());
-      // clear inputs
-      clone.querySelectorAll('input[type=text]').forEach(i => { i.value = ''; i.setAttribute('data-orig', ''); });
+      // clear ALL inputs (text + hidden) — hidden EnrichedGLAccountID was
+      // retaining first line's GL ID, causing GL swap even when selects were correct
+      clone.querySelectorAll('input').forEach(i => {
+        if (i.type === 'checkbox' || i.type === 'radio') return;
+        i.value = ''; i.setAttribute('data-orig', '');
+      });
       // clear readonly display divs inside .field (they show cloned values otherwise)
       clone.querySelectorAll('.field > div:not(.lbl)').forEach(d => {
         // Don't clear the label div, only the value display div
@@ -1828,7 +1836,8 @@
           const sel = src.querySelector(`select[name="${name}"]`);
           if (sel) srcValues[name] = sel.value || sel.getAttribute('data-orig') || '';
         });
-        src.querySelectorAll('input[type="text"]').forEach(inp => {
+        src.querySelectorAll('input').forEach(inp => {
+          if (inp.type === 'checkbox' || inp.type === 'radio') return;
           if (inp.name) srcValues[inp.name] = inp.value || '';
         });
 

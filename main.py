@@ -2578,6 +2578,11 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
                         if gid:
                             for r in rows:
                                 if isinstance(r, dict):
+                                    # Skip lines where user manually set a different GL
+                                    # (e.g. penalty/late-fee lines with non-utility GL)
+                                    row_gl_num = str(r.get("EnrichedGLAccountNumber") or "").strip()
+                                    if row_gl_num and row_gl_num != wanted_num:
+                                        continue
                                     r["EnrichedGLAccountID"] = gid
             except Exception:
                 pass
@@ -26038,12 +26043,14 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                         extra_records = []
                         for e in extra_lines:
                             new_rec = dict(first)
+                            # Clear GL fields — same fix as merged path above
+                            for gf in _GL_FIELDS_NO_INHERIT:
+                                new_rec.pop(gf, None)
                             for k in header_edit_fields:
                                 if k in header_fields and header_fields[k] != "":
                                     new_rec[k] = header_fields[k]
                             for k, v in (e or {}).items():
-                                if v != "":
-                                    new_rec[k] = v
+                                new_rec[k] = v
                             for fname in UPPER_FIELDS:
                                 if fname in new_rec and isinstance(new_rec[fname], str):
                                     new_rec[fname] = new_rec[fname].upper()
