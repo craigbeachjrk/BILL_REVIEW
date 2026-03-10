@@ -16234,17 +16234,25 @@ def _iter_stage_objects(prefix_root: str, start: dt.date, end: dt.date):
 
 
 def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
-    """Read only the first JSON record from each JSONL file (much faster for header info).
-    Uses parallel threads for better performance with many files.
-    Processes in batches with timeouts to prevent hangs.
+    """Read only the first JSON record from each JSONL file.
+    Uses a dedicated boto3 client with large connection pool to avoid
+    exhausting the shared client's connections.
     """
     if not keys:
         return []
 
+    import boto3
+    from botocore.config import Config as BotoConfig
+    _s3_bulk = boto3.client(
+        "s3", region_name="us-east-1",
+        config=BotoConfig(max_pool_connections=25, retries={"max_attempts": 1},
+                          connect_timeout=5, read_timeout=10),
+    )
+
     def read_one(key: str) -> dict | None:
         try:
-            obj = s3.get_object(Bucket=BUCKET, Key=key)
-            chunk = obj["Body"].read(4096).decode("utf-8", errors="ignore")
+            obj = _s3_bulk.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-4095")
+            chunk = obj["Body"].read().decode("utf-8", errors="ignore")
             obj["Body"].close()
             first_line = chunk.split("\n")[0].strip()
             if first_line:
@@ -16257,7 +16265,7 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
         return None
 
     BATCH_SIZE = 500
-    WORKERS = 30
+    WORKERS = 20
     out = []
     for batch_start in range(0, len(keys), BATCH_SIZE):
         batch_keys = keys[batch_start:batch_start + BATCH_SIZE]
@@ -16267,7 +16275,7 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
             for future in as_completed(futures, timeout=300):
                 try:
                     s3_key = futures[future]
-                    result = future.result(timeout=10)
+                    result = future.result(timeout=15)
                     if result:
                         result["__s3_key__"] = s3_key
                         out.append(result)
@@ -16277,8 +16285,8 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
             print(f"[S3 READ] Batch at {batch_start} timed out/failed: {_batch_err}")
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
-        if batch_start > 0 and batch_start % 10000 == 0:
-            print(f"[S3 READ] Processed {batch_start}/{len(keys)} keys...")
+        if batch_start > 0 and batch_start % 5000 == 0:
+            print(f"[S3 READ] Processed {batch_start}/{len(keys)} keys ({len(out)} records so far)")
     print(f"[S3 READ] Done: {len(out)} records from {len(keys)} keys")
     return out
 
