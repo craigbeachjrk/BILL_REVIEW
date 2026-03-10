@@ -16314,7 +16314,7 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
 
     def read_one(key: str) -> dict | None:
         try:
-            obj = _s3_bulk.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-4095")
+            obj = _s3_bulk.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-32767")
             chunk = obj["Body"].read().decode("utf-8", errors="ignore")
             obj["Body"].close()
             first_line = chunk.split("\n")[0].strip()
