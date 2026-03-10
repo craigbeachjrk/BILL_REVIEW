@@ -9746,8 +9746,9 @@ def _compute_workflow_data() -> dict:
 
     # Load configs
     all_accounts = _get_accounts_to_track()
-    # Filter out archived accounts
-    accounts = [a for a in all_accounts if a.get("status") != "archived"]
+    # Filter out archived and untracked accounts (match completion tracker filter)
+    accounts = [a for a in all_accounts
+                if a.get("status") != "archived" and a.get("is_tracked", True)]
     print(f"[_compute_workflow_data] {len(accounts)} active accounts (filtered from {len(all_accounts)} total)")
     mapping = _ddb_get_config("ap-mapping") or []
     map_by_pid = {str(r.get("propertyId") or "").strip(): r for r in mapping if isinstance(r, dict)}
@@ -10202,8 +10203,8 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
     stage7 = _read_first_record_from_s3(stage7_keys)
     archive = _read_first_record_from_s3(archive_keys)
 
-    # Build lookup: (normalized_property_id, normalized_account) -> { month_str: stage_label }
-    bills_found: dict[tuple, dict[str, str]] = {}  # key -> {month: stage}
+    # Build lookup: (normalized_property_id, normalized_account) -> { month_str: {stage, bill_date, service_days} }
+    bills_found: dict[tuple, dict[str, dict]] = {}  # key -> {month: info_dict}
 
     def _extract_bill_months(rec: dict) -> list[str]:
         """Extract ALL months covered by a bill using service period dates.
@@ -10258,10 +10259,24 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
             key = (pid, norm_acct)
             if key not in bills_found:
                 bills_found[key] = {}
+
+            # Extract bill date and service period for expected_by calculation
+            bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
+            bill_date = _parse_date_any(str(bd_str))
+            ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
+            pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
+            ps = _parse_date_any(str(ps_str))
+            pe = _parse_date_any(str(pe_str))
+            service_days = (pe - ps).days if ps and pe and pe > ps else 0
+
             for bm in bill_months:
                 # First stage seen wins (stage7 > archive > stage6 > stage4)
                 if bm not in bills_found[key]:
-                    bills_found[key][bm] = stage_label
+                    bills_found[key][bm] = {
+                        "stage": stage_label,
+                        "bill_date": bill_date,
+                        "service_days": service_days,
+                    }
 
     print(f"[WORKFLOW TRACKER] Indexed bills for {len(bills_found)} account keys")
 
@@ -10349,15 +10364,34 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
             # Check if ANY month in this cycle has a bill
             has_bill = any(m[0] in acct_bills for m in cycle_months)
             pipeline_stage = None
+            bill_info = None
             for m in cycle_months:
                 if m[0] in acct_bills:
-                    pipeline_stage = acct_bills[m[0]]
+                    bill_info = acct_bills[m[0]]
+                    pipeline_stage = bill_info["stage"]
                     break
 
-            # Status calculation — use expected arrival date (cycle_start + days_between)
-            # to match aging accounts logic, not raw month-end
-            cycle_start_date = cycle_months[0][1]  # First day of first month in cycle
-            expected_by = cycle_start_date + dt.timedelta(days=days_between)
+            # Status calculation — use real bill date + service period to match aging accounts
+            # Find the most recent bill BEFORE this cycle to calculate expected arrival
+            cycle_start_date = cycle_months[0][1]
+            expected_by = None
+
+            # Look for the most recent bill before this cycle across all known bills
+            best_prev_date = None
+            best_prev_svc = days_between
+            for bm_str, bm_info in acct_bills.items():
+                if bm_str >= cycle_months[0][0]:
+                    continue  # Skip current/future months
+                bd = bm_info.get("bill_date")
+                if bd and (best_prev_date is None or bd > best_prev_date):
+                    best_prev_date = bd
+                    best_prev_svc = bm_info.get("service_days") or days_between
+            if best_prev_date:
+                expected_by = best_prev_date + dt.timedelta(days=best_prev_svc)
+
+            # Fallback: cycle_start + days_between (same as before)
+            if not expected_by:
+                expected_by = cycle_start_date + dt.timedelta(days=days_between)
             if has_bill:
                 status_label = "COMPLETE"
                 days_overdue = 0
