@@ -1903,6 +1903,7 @@ function renderTracker() {
     });
 
     for (const item of sorted) {
+      const monthDisplay = formatMonth(item.month);
       const isComplete = item.status_label === 'COMPLETE';
       let icon, iconClass, iconClick = '';
       if (isComplete) { icon = '&#10003;'; iconClass = 'ok'; }
@@ -1915,7 +1916,6 @@ function renderTracker() {
       }
       const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
-      const monthDisplay = formatMonth(item.month);
       const fullLabel = `${item.vendor_name || 'Unknown'} - ${item.account_number}`;
       const skipDisplay = item.skip_reason || '';
       const commentTag = skipDisplay ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fef3c7;color:#92400e;font-weight:600;margin-left:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${escapeHtml(skipDisplay)}">${escapeHtml(skipDisplay.length > 20 ? skipDisplay.substring(0, 20) + '...' : skipDisplay)}</span>` : '';
