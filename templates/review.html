@@ -716,12 +716,14 @@
           const pick = clone.querySelector('.line-pick');
           if (pick) pick.checked = false;
 
-          // Apply saved field values
+          // Apply saved field values — set both value AND data-orig so
+          // initLineSelects (which rebuilds select DOM) preserves them via
+          // its `glSel.getAttribute('data-orig')` fallback
           if (newLine.fields) {
             for (const [k, v] of Object.entries(newLine.fields)) {
               if (k === '__deleted__') continue;
               const inp = clone.querySelector(`input[name="${k}"]`);
-              if (inp) inp.value = v ?? '';
+              if (inp) { inp.value = v ?? ''; inp.setAttribute('data-orig', v ?? ''); }
               const sel = clone.querySelector(`select[name="${k}"]`);
               if (sel) {
                 // SAFETY: Don't apply empty values for GL fields
@@ -730,6 +732,7 @@
                   continue;
                 }
                 try { sel.value = v ?? ''; } catch(_) {}
+                sel.setAttribute('data-orig', v ?? '');
               }
             }
           }
@@ -2402,7 +2405,14 @@
         } else if (b.hasAttribute('data-new')) {
           // collect new line fields - use collectFields to capture selects (GL, Utility Type, etc.)
           // and hidden inputs (EnrichedGLAccountID) in addition to text inputs
-          extras.push(collectFields(b));
+          const ef = collectFields(b);
+          // Warn if new line has no GL — this was the root cause of GL swap bugs
+          if (!ef['EnrichedGLAccountNumber'] && !ef['EnrichedGLAccountName']) {
+            const lineNum = b.querySelector('.line-num');
+            const label = lineNum ? lineNum.textContent.trim() : 'New line';
+            if (!confirm(`${label} has no GL Account selected. It will be submitted without a GL code. Continue?`)) return;
+          }
+          extras.push(ef);
         } else {
           // derive a friendly line label
           const numEl = b.querySelector('.line-num');

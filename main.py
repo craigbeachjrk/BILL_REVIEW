@@ -25884,17 +25884,27 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
             # ignore malformed extras to avoid blocking submits
             extra_lines = []
 
+        # GL fields that must NOT be inherited from the first line — if the
+        # frontend didn't send them, we want them empty rather than silently
+        # copying the first line's GL (which causes the "Water GL on penalty" bug).
+        _GL_FIELDS_NO_INHERIT = {
+            "EnrichedGLAccountID", "EnrichedGLAccountName", "EnrichedGLAccountNumber",
+            "GL Account Name", "GL Account Number", "charge_code_overridden",
+        }
         for e in extra_lines:
             # build a new record using header defaults overlaid with provided fields
             new_rec = dict(first)  # start from first to retain context columns
+            # Clear GL fields so empty extras don't silently inherit first line's GL
+            for gf in _GL_FIELDS_NO_INHERIT:
+                new_rec.pop(gf, None)
             # apply header fields first
             for k in header_edit_fields:
                 if k in header_fields and header_fields[k] != "":
                     new_rec[k] = header_fields[k]
-            # then overlay provided manual fields
+            # then overlay provided manual fields (empty strings are now also applied
+            # so the user's explicit selection always wins, even if blank)
             for k, v in (e or {}).items():
-                if v != "":
-                    new_rec[k] = v
+                new_rec[k] = v
             # Normalize select fields to ALL CAPS
             for fname in UPPER_FIELDS:
                 if fname in new_rec and isinstance(new_rec[fname], str):
