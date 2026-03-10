@@ -16254,8 +16254,8 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
             pass
         return None
 
-    BATCH_SIZE = 2000
-    WORKERS = 50
+    BATCH_SIZE = 500
+    WORKERS = 30
     out = []
     for batch_start in range(0, len(keys), BATCH_SIZE):
         batch_keys = keys[batch_start:batch_start + BATCH_SIZE]
