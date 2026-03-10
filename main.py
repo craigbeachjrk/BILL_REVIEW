@@ -10097,8 +10097,16 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
 _WORKFLOW_TRACKER_LOCK = threading.Lock()
 
 
+_TRACKER_REBUILDING = False  # simple flag to prevent concurrent rebuilds
+
+
 def _bg_rebuild_tracker():
     """Rebuild completion tracker in the background (never blocks a request)."""
+    global _TRACKER_REBUILDING
+    if _TRACKER_REBUILDING:
+        print("[COMPLETION TRACKER] Rebuild already in progress, skipping")
+        return
+    _TRACKER_REBUILDING = True
     try:
         data = _compute_workflow_tracker()
         _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
@@ -10106,6 +10114,8 @@ def _bg_rebuild_tracker():
         print("[COMPLETION TRACKER] Background rebuild complete")
     except Exception as e:
         print(f"[COMPLETION TRACKER] Background rebuild failed: {e}")
+    finally:
+        _TRACKER_REBUILDING = False
 
 
 def _persist_completion_tracker_to_s3(data: dict):
@@ -10528,7 +10538,13 @@ def _workflow_tracker_refresh_loop():
     loaded = _load_completion_tracker_from_s3()
 
     # Initial compute (even if S3 loaded, get fresh data)
+    global _TRACKER_REBUILDING
     for attempt in range(3):
+        if _TRACKER_REBUILDING:
+            print("[WORKFLOW TRACKER BG] Another rebuild in progress, waiting...")
+            time.sleep(30)
+            continue
+        _TRACKER_REBUILDING = True
         try:
             data = _compute_workflow_tracker()
             _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
@@ -10539,6 +10555,8 @@ def _workflow_tracker_refresh_loop():
             print(f"[WORKFLOW TRACKER BG] Initial load attempt {attempt+1} failed: {e}")
             if attempt < 2:
                 time.sleep(30)
+        finally:
+            _TRACKER_REBUILDING = False
     # Also refresh aging accounts (workflow data) on startup
     try:
         aging_data = _compute_workflow_data()
@@ -10551,6 +10569,10 @@ def _workflow_tracker_refresh_loop():
     _cycle = 0
     while True:
         time.sleep(_REFRESH_INTERVAL)
+        if _TRACKER_REBUILDING:
+            print("[WORKFLOW TRACKER BG] Rebuild in progress, skipping cycle")
+            continue
+        _TRACKER_REBUILDING = True
         try:
             data = _compute_workflow_tracker()
             _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
@@ -10558,6 +10580,8 @@ def _workflow_tracker_refresh_loop():
             print("[WORKFLOW TRACKER BG] Proactive refresh complete")
         except Exception as e:
             print(f"[WORKFLOW TRACKER BG] Refresh error (will retry): {e}")
+        finally:
+            _TRACKER_REBUILDING = False
 
         # Refresh aging accounts every ~15 cycles (60 min)
         _cycle += 1
