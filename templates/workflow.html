@@ -1771,6 +1771,40 @@ async function loadTrackerData(forceRefresh, _retryCount) {
       container.innerHTML = '<div class="loading" style="color:#ef4444">Still computing. Click Recalculate to retry.</div>';
       return;
     }
+    // Backend is rebuilding — show stale data but poll for fresh
+    if (trackerData.cacheStatus === 'rebuilding') {
+      const oldGenAt = trackerData.generated_at;
+      // Show current data immediately with "updating" indicator
+      updateStatusCards();
+      renderApCards();
+      renderTracker();
+      document.getElementById('trackerMeta').textContent = 'Recalculating... (showing previous data)';
+      // Poll until generated_at changes
+      const pollForNew = async (attempt) => {
+        if (attempt > 15) {
+          document.getElementById('trackerMeta').textContent = 'Generated: ' + oldGenAt + ' (refresh may have failed)';
+          return;
+        }
+        try {
+          const r2 = await fetch('/api/workflow/completion-tracker');
+          if (r2.ok) {
+            const d2 = await r2.json();
+            if (d2.generated_at && d2.generated_at !== oldGenAt && d2.cacheStatus !== 'rebuilding') {
+              trackerData = d2;
+              updateStatusCards();
+              renderApCards();
+              renderTracker();
+              document.getElementById('trackerMeta').textContent = 'Generated: ' + d2.generated_at;
+              showToast('Recalculation complete', 'ok');
+              return;
+            }
+          }
+        } catch (_) {}
+        setTimeout(() => pollForNew(attempt + 1), 5000);
+      };
+      setTimeout(() => pollForNew(0), 8000);
+      return;
+    }
     updateStatusCards();
     renderApCards();
     renderTracker();

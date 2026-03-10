@@ -10586,8 +10586,11 @@ def api_workflow_completion_tracker(
     cached = _CACHE.get(cache_key)
     if cached and cached.get("data"):
         if refresh:
-            # Trigger background rebuild, but still return current data immediately
+            # Trigger background rebuild, return current data with rebuilding flag
             threading.Thread(target=_bg_rebuild_tracker, daemon=True).start()
+            data = dict(cached["data"])
+            data["cacheStatus"] = "rebuilding"
+            return data
         return cached["data"]
 
     # 2) In-memory empty — try S3 persisted cache
@@ -10597,6 +10600,9 @@ def api_workflow_completion_tracker(
         if cached and cached.get("data"):
             if refresh:
                 threading.Thread(target=_bg_rebuild_tracker, daemon=True).start()
+                data = dict(cached["data"])
+                data["cacheStatus"] = "rebuilding"
+                return data
             return cached["data"]
 
     # 3) No cache anywhere — background thread is likely still computing
