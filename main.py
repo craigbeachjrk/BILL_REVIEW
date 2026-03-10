@@ -16271,8 +16271,8 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
                         out.append(result)
                 except Exception:
                     pass
-        except TimeoutError:
-            print(f"[S3 READ] Batch at {batch_start} timed out after 120s, moving on")
+        except Exception as _batch_err:
+            print(f"[S3 READ] Batch at {batch_start} timed out/failed: {_batch_err}")
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         if batch_start > 0 and batch_start % 10000 == 0:
