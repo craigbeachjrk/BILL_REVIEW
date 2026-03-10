@@ -16305,8 +16305,9 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
 
     def read_one(key: str) -> dict | None:
         try:
-            obj = s3.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-32767")
-            chunk = obj["Body"].read().decode("utf-8", errors="ignore")
+            obj = s3.get_object(Bucket=BUCKET, Key=key)
+            # Read up to 512KB — first JSONL line can be large (embedded base64 PDF)
+            chunk = obj["Body"].read(524288).decode("utf-8", errors="ignore")
             obj["Body"].close()
             first_line = chunk.split("\n")[0].strip()
             if first_line:
