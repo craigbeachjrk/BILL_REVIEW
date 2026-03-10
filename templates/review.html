@@ -2400,10 +2400,9 @@
           allOrigIds.push(oid);
           if (b.hasAttribute('data-deleted')) deletedIds.push(oid);
         } else if (b.hasAttribute('data-new')) {
-          // collect new line fields
-          const obj = {};
-          b.querySelectorAll('input[type=text]').forEach(i => obj[i.name] = i.value);
-          extras.push(obj);
+          // collect new line fields - use collectFields to capture selects (GL, Utility Type, etc.)
+          // and hidden inputs (EnrichedGLAccountID) in addition to text inputs
+          extras.push(collectFields(b));
         } else {
           // derive a friendly line label
           const numEl = b.querySelector('.line-num');
