@@ -119,6 +119,7 @@ WORKFLOW_REASONS_KEY = os.getenv("WORKFLOW_REASONS_KEY", CONFIG_PREFIX + "workfl
 WORKFLOW_NOTES_KEY = os.getenv("WORKFLOW_NOTES_KEY", CONFIG_PREFIX + "workflow_notes.json")
 WORKFLOW_CACHE_KEY = os.getenv("WORKFLOW_CACHE_KEY", CONFIG_PREFIX + "workflow_cache.json")
 COMPLETION_TRACKER_CACHE_KEY = os.getenv("COMPLETION_TRACKER_CACHE_KEY", CONFIG_PREFIX + "completion_tracker_cache.json.gz")
+BILL_INDEX_CACHE_KEY = os.getenv("BILL_INDEX_CACHE_KEY", CONFIG_PREFIX + "bill_index_cache.json.gz")
 ACCOUNT_STATISTICS_KEY = os.getenv("ACCOUNT_STATISTICS_KEY", CONFIG_PREFIX + "account_statistics.json")
 OUTLIER_RECORDS_KEY = os.getenv("OUTLIER_RECORDS_KEY", CONFIG_PREFIX + "outlier_records.json")
 UBI_ACCOUNT_HISTORY_KEY = os.getenv("UBI_ACCOUNT_HISTORY_KEY", CONFIG_PREFIX + "ubi_account_history.json")
@@ -10155,6 +10156,164 @@ def _load_completion_tracker_from_s3() -> bool:
         return False
 
 
+def _load_or_build_bill_index(today, months_list) -> dict:
+    """Load cached bill index from S3, or do a full scan if no cache exists.
+    Returns: dict of (pid, norm_acct) -> { month_str: {stage, bill_date, service_days} }
+    """
+    import gzip as _gzip
+
+    # Try loading cached index from S3
+    cached_index = None
+    cached_keys_seen = set()
+    try:
+        obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY)
+        payload = json.loads(_gzip.decompress(obj["Body"].read()))
+        cached_index = {}
+        for k_str, months_data in payload.get("index", {}).items():
+            # Key stored as "pid|norm_acct"
+            parts = k_str.split("|", 1)
+            if len(parts) == 2:
+                cached_index[tuple(parts)] = {}
+                for m, info in months_data.items():
+                    # Convert bill_date string back to date
+                    bd = None
+                    if info.get("bill_date"):
+                        bd = _parse_date_any(info["bill_date"])
+                    cached_index[tuple(parts)][m] = {
+                        "stage": info.get("stage"),
+                        "bill_date": bd,
+                        "service_days": info.get("service_days", 0),
+                    }
+        cached_keys_seen = set(payload.get("keys_seen", []))
+        print(f"[BILL INDEX] Loaded from S3: {len(cached_index)} accounts, {len(cached_keys_seen)} keys seen")
+    except Exception as e:
+        if "NoSuchKey" not in str(e):
+            print(f"[BILL INDEX] Failed to load: {e}")
+        else:
+            print("[BILL INDEX] No cached index, doing full scan")
+
+    # Determine scan months
+    scan_months = []
+    first_window = months_list[0][1]
+    for extra in range(3, 0, -1):
+        total_m = first_window.year * 12 + first_window.month - 1 - extra
+        scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
+    scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
+
+    # List all S3 keys
+    stage4_recent = [m for m in scan_months if m >= dt.date(today.year, today.month, 1) - dt.timedelta(days=90)]
+    all_keys_by_stage = [
+        (list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months, suffix_filter=".jsonl")), "S7"),
+        (list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months, suffix_filter=".jsonl")), "S99"),
+        (list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months, suffix_filter=".jsonl")), "S6"),
+        (list(_iter_stage_objects_by_month(STAGE4_PREFIX, stage4_recent, suffix_filter=".jsonl")), "S4"),
+    ]
+
+    all_keys = set()
+    for keys, _ in all_keys_by_stage:
+        all_keys.update(keys)
+    total_keys = len(all_keys)
+
+    # Find NEW keys not in cached index
+    new_keys = all_keys - cached_keys_seen if cached_index is not None else all_keys
+    print(f"[BILL INDEX] Total S3 keys: {total_keys}, new keys to read: {len(new_keys)}")
+
+    # Start with cached index or empty
+    bills_found = cached_index if cached_index is not None else {}
+
+    if new_keys:
+        # Only read new files
+        new_keys_by_stage = []
+        for keys, stage_label in all_keys_by_stage:
+            stage_new = [k for k in keys if k in new_keys]
+            if stage_new:
+                new_keys_by_stage.append((stage_new, stage_label))
+
+        total_new = sum(len(k) for k, _ in new_keys_by_stage)
+        print(f"[BILL INDEX] Reading {total_new} new files...")
+
+        for stage_keys, stage_label in new_keys_by_stage:
+            records = _read_first_record_from_s3(stage_keys)
+            for rec in records:
+                pid = str(rec.get("EnrichedPropertyID") or rec.get("propertyId")
+                          or rec.get("PropertyID") or rec.get("Property ID") or "").strip()
+                acct = str(rec.get("Account Number") or rec.get("accountNumber")
+                           or rec.get("AccountNumber") or "").strip()
+                if not pid or not acct:
+                    continue
+                norm_acct = _normalize_account_number(acct)
+                bill_months = _extract_bill_months_static(rec)
+                key = (pid, norm_acct)
+                if key not in bills_found:
+                    bills_found[key] = {}
+
+                bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
+                bill_date = _parse_date_any(str(bd_str))
+                ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
+                pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
+                ps = _parse_date_any(str(ps_str))
+                pe = _parse_date_any(str(pe_str))
+                service_days = (pe - ps).days if ps and pe and pe > ps else 0
+
+                for bm in bill_months:
+                    if bm not in bills_found[key]:
+                        bills_found[key][bm] = {
+                            "stage": stage_label,
+                            "bill_date": bill_date,
+                            "service_days": service_days,
+                        }
+
+    # Persist updated index to S3
+    try:
+        serializable_index = {}
+        for (pid, norm_acct), months_data in bills_found.items():
+            k_str = f"{pid}|{norm_acct}"
+            serializable_index[k_str] = {}
+            for m, info in months_data.items():
+                serializable_index[k_str][m] = {
+                    "stage": info.get("stage"),
+                    "bill_date": info["bill_date"].isoformat() if info.get("bill_date") else None,
+                    "service_days": info.get("service_days", 0),
+                }
+        payload = json.dumps({"index": serializable_index, "keys_seen": list(all_keys)}).encode("utf-8")
+        compressed = _gzip.compress(payload)
+        s3.put_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY, Body=compressed, ContentType="application/gzip")
+        print(f"[BILL INDEX] Persisted to S3: {len(bills_found)} accounts, {len(all_keys)} keys ({len(compressed)} bytes)")
+    except Exception as e:
+        print(f"[BILL INDEX] Failed to persist: {e}")
+
+    return bills_found
+
+
+def _extract_bill_months_static(rec: dict) -> list[str]:
+    """Extract ALL months covered by a bill using service period dates."""
+    ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
+    pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
+    ps = _parse_date_any(str(ps_str))
+    pe = _parse_date_any(str(pe_str))
+    if ps and pe and ps <= pe:
+        covered = []
+        cur = dt.date(ps.year, ps.month, 1)
+        end_m = dt.date(pe.year, pe.month, 1)
+        while cur <= end_m:
+            covered.append(f"{cur.month:02d}/{cur.year}")
+            if cur.month == 12:
+                cur = dt.date(cur.year + 1, 1, 1)
+            else:
+                cur = dt.date(cur.year, cur.month + 1, 1)
+        if covered:
+            return covered
+    bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
+    bd = _parse_date_any(str(bd_str))
+    if bd:
+        return [f"{bd.month:02d}/{bd.year}"]
+    s3k = rec.get("__s3_key__", "")
+    _m = re.search(r'yyyy=(\d{4})/mm=(\d{2})', s3k)
+    if _m:
+        return [f"{int(_m.group(2)):02d}/{int(_m.group(1))}"]
+    return []
+
+
 def _compute_workflow_tracker(months_back: int = 6) -> dict:
     """Compute completion tracker data: for every tracked account × every month,
     determine whether a bill exists in the pipeline (stages 4/6/7/archive).
@@ -10190,110 +10349,11 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
 
     month_strings = [m[0] for m in months_list]
 
-    # Step 3: Scan pipeline for bills (stages 4, 6, 7, archive)
-    # Scan 3 extra months before the display window to catch bills whose
-    # service period extends into our window (e.g., quarterly bill processed
-    # in JUL with service period JUL-SEP should mark SEP as covered)
-    scan_months = []
-    first_window = months_list[0][1]  # first_day of earliest display month
-    for extra in range(3, 0, -1):
-        total_m = first_window.year * 12 + first_window.month - 1 - extra
-        scan_months.append(dt.date(total_m // 12, total_m % 12 + 1, 1))
-    scan_months.extend([dt.date(ml[1].year, ml[1].month, 1) for ml in months_list])
-
-    # Stage4 = enriched but not posted. Old stage4 files are stuck/failed — limit to last 3 months.
-    # Stages 6/7/archive have already been posted so scan the full window.
-    stage4_recent = [m for m in scan_months if m >= dt.date(today.year, today.month, 1) - dt.timedelta(days=90)]
-    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, stage4_recent, suffix_filter=".jsonl"))
-    stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, scan_months, suffix_filter=".jsonl"))
-    stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, scan_months, suffix_filter=".jsonl"))
-    archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, scan_months, suffix_filter=".jsonl"))
-
-    total_keys = len(stage4_keys) + len(stage6_keys) + len(stage7_keys) + len(archive_keys)
-    print(f"[WORKFLOW TRACKER] Found {total_keys} S3 keys (S4={len(stage4_keys)}, S6={len(stage6_keys)}, S7={len(stage7_keys)}, Archive={len(archive_keys)})")
-
-    # Read first record from each file
-    stage4 = _read_first_record_from_s3(stage4_keys)
-    stage6 = _read_first_record_from_s3(stage6_keys)
-    stage7 = _read_first_record_from_s3(stage7_keys)
-    archive = _read_first_record_from_s3(archive_keys)
-
-    # Build lookup: (normalized_property_id, normalized_account) -> { month_str: {stage, bill_date, service_days} }
-    bills_found: dict[tuple, dict[str, dict]] = {}  # key -> {month: info_dict}
-
-    def _extract_bill_months(rec: dict) -> list[str]:
-        """Extract ALL months covered by a bill using service period dates.
-        A quarterly bill with service AUG-OCT marks AUG, SEP, OCT all covered.
-        Falls back to bill date month if no service period available."""
-        # Try service period first
-        ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
-        pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
-        ps = _parse_date_any(str(ps_str))
-        pe = _parse_date_any(str(pe_str))
-        if ps and pe and ps <= pe:
-            covered = []
-            cur = dt.date(ps.year, ps.month, 1)
-            end_m = dt.date(pe.year, pe.month, 1)
-            while cur <= end_m:
-                covered.append(f"{cur.month:02d}/{cur.year}")
-                if cur.month == 12:
-                    cur = dt.date(cur.year + 1, 1, 1)
-                else:
-                    cur = dt.date(cur.year, cur.month + 1, 1)
-            if covered:
-                return covered
-        # Fallback: bill date
-        bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
-        bd = _parse_date_any(str(bd_str))
-        if bd:
-            return [f"{bd.month:02d}/{bd.year}"]
-        # Fallback: S3 key path
-        s3k = rec.get("__s3_key__", "")
-        _m = re.search(r'yyyy=(\d{4})/mm=(\d{2})', s3k)
-        if _m:
-            return [f"{int(_m.group(2)):02d}/{int(_m.group(1))}"]
-        return []
-
-    stage_labels = [
-        (stage7, "S7"),
-        (archive, "S99"),
-        (stage6, "S6"),
-        (stage4, "S4"),
-    ]
-
-    for records, stage_label in stage_labels:
-        for rec in records:
-            pid = str(rec.get("EnrichedPropertyID") or rec.get("propertyId")
-                      or rec.get("PropertyID") or rec.get("Property ID") or "").strip()
-            acct = str(rec.get("Account Number") or rec.get("accountNumber")
-                       or rec.get("AccountNumber") or "").strip()
-            if not pid or not acct:
-                continue
-            norm_acct = _normalize_account_number(acct)
-            bill_months = _extract_bill_months(rec)
-            key = (pid, norm_acct)
-            if key not in bills_found:
-                bills_found[key] = {}
-
-            # Extract bill date and service period for expected_by calculation
-            bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
-            bill_date = _parse_date_any(str(bd_str))
-            ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
-            pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
-            ps = _parse_date_any(str(ps_str))
-            pe = _parse_date_any(str(pe_str))
-            service_days = (pe - ps).days if ps and pe and pe > ps else 0
-
-            for bm in bill_months:
-                # First stage seen wins (stage7 > archive > stage6 > stage4)
-                if bm not in bills_found[key]:
-                    bills_found[key][bm] = {
-                        "stage": stage_label,
-                        "bill_date": bill_date,
-                        "service_days": service_days,
-                    }
-
-    print(f"[WORKFLOW TRACKER] Indexed bills for {len(bills_found)} account keys")
+    # Step 3: Load bill index — incremental scan
+    # On first run, full-scan all S3 files and cache the index.
+    # On subsequent runs, load cached index + only scan files modified since last scan.
+    bills_found = _load_or_build_bill_index(today, months_list)
+    print(f"[WORKFLOW TRACKER] Bill index: {len(bills_found)} account keys")
 
     # Load scraper mappings for badge
     import re as _re
