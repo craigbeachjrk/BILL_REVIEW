@@ -25766,9 +25766,18 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
             if user_edited_gl:
                 return
 
-            # Only modify GL for utility types (Electric, Gas, Water, Sewer).
-            # Everything else (Penalties, Late Fee, Taxes, etc.) is never a House/Vacant GL.
-            if not any(kw in gln_upper for kw in _UTILITY_GL_KEYWORDS):
+            # Only modify GL for pure utility types (Electric, Gas, Water, Sewer,
+            # Vacant Electric, etc.). Skip compound names like "Water Late Fee",
+            # "Gas Penalty", etc. — those are NOT House/Vacant utility GLs.
+            _is_utility_gl = False
+            for kw in _UTILITY_GL_KEYWORDS:
+                # Match: "ELECTRIC", "VACANT ELECTRIC", "HOUSE ELECTRIC"
+                # but NOT: "ELECTRIC LATE FEE", "WATER PENALTY", "GAS TAX"
+                stripped = gln_upper.replace("VACANT", "").replace("HOUSE", "").strip()
+                if stripped == kw:
+                    _is_utility_gl = True
+                    break
+            if not _is_utility_gl:
                 return
 
             # adjust GL Name if it conflicts with desired

@@ -968,10 +968,18 @@
         // First set GL Name if present
         if (glNameSel){ setSelectValue(glNameSel, desiredName); }
         // Then set GL Number using map, if available
+        let resolvedNum = '';
         try{
           const map = (window._glNameToNum||{});
-          const num = map[desiredName] || '';
-          if (num && glNumSel){ setSelectValue(glNumSel, num); }
+          resolvedNum = map[desiredName] || '';
+          if (resolvedNum && glNumSel){ setSelectValue(glNumSel, resolvedNum); }
+        }catch(_){ }
+        // Update hidden EnrichedGLAccountID to match new GL
+        try{
+          const idField = line.querySelector('input[name="EnrichedGLAccountID"]');
+          const numForId = resolvedNum || (glNumSel ? glNumSel.value : '');
+          const mappedId = (window._glNumToId||{})[numForId] || '';
+          if (idField && mappedId) idField.value = mappedId;
         }catch(_){ }
         // If only number exists but name select missing, try backfilling name from number
         if (!glNameSel && glNumSel){
@@ -1229,7 +1237,12 @@
             const v = value == null ? '' : String(value);
             const inst = _choicesMap.get(sel);
             if (inst) {
-              try { inst.setChoiceByValue(v); } catch(e) { sel.value = v; }
+              try { inst.setChoiceByValue(v); } catch(e) { /* fall through */ }
+              // Verify result; Choices can silently no-op if option not yet matched
+              if (sel.value !== v) {
+                sel.value = v;
+                try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch(_){}
+              }
             } else {
               sel.value = v;
             }
