@@ -10222,7 +10222,6 @@ def _load_or_build_bill_index(today, months_list) -> dict:
     bills_found = cached_index if cached_index is not None else {}
 
     if new_keys:
-        # Only read new files
         new_keys_by_stage = []
         for keys, stage_label in all_keys_by_stage:
             stage_new = [k for k in keys if k in new_keys]
@@ -10230,38 +10229,107 @@ def _load_or_build_bill_index(today, months_list) -> dict:
                 new_keys_by_stage.append((stage_new, stage_label))
 
         total_new = sum(len(k) for k, _ in new_keys_by_stage)
-        print(f"[BILL INDEX] Reading {total_new} new files...")
+        print(f"[BILL INDEX] Processing {total_new} new keys...")
+
+        # Build property name -> property ID lookup from tracked accounts
+        all_accounts = _get_accounts_to_track()
+        prop_name_to_id = {}
+        for a in all_accounts:
+            pname = str(a.get("propertyName") or "").strip().lower()
+            pid_val = str(a.get("propertyId") or "").strip()
+            if pname and pid_val:
+                prop_name_to_id[pname] = pid_val
+
+        def _index_record(pid, acct, bill_date, ps, pe, stage_label):
+            """Add a bill record to the index."""
+            if not pid or not acct:
+                return
+            norm_acct = _normalize_account_number(acct)
+            service_days = (pe - ps).days if ps and pe and pe > ps else 0
+            # Determine covered months
+            bill_months = []
+            if ps and pe and ps <= pe:
+                cur = dt.date(ps.year, ps.month, 1)
+                end_m = dt.date(pe.year, pe.month, 1)
+                while cur <= end_m:
+                    bill_months.append(f"{cur.month:02d}/{cur.year}")
+                    cur = dt.date(cur.year + 1, 1, 1) if cur.month == 12 else dt.date(cur.year, cur.month + 1, 1)
+            if not bill_months and bill_date:
+                bill_months = [f"{bill_date.month:02d}/{bill_date.year}"]
+            key = (pid, norm_acct)
+            if key not in bills_found:
+                bills_found[key] = {}
+            for bm in bill_months:
+                if bm not in bills_found[key]:
+                    bills_found[key][bm] = {"stage": stage_label, "bill_date": bill_date, "service_days": service_days}
 
         for stage_keys, stage_label in new_keys_by_stage:
-            records = _read_first_record_from_s3(stage_keys)
-            for rec in records:
-                pid = str(rec.get("EnrichedPropertyID") or rec.get("propertyId")
-                          or rec.get("PropertyID") or rec.get("Property ID") or "").strip()
-                acct = str(rec.get("Account Number") or rec.get("accountNumber")
-                           or rec.get("AccountNumber") or "").strip()
-                if not pid or not acct:
-                    continue
-                norm_acct = _normalize_account_number(acct)
-                bill_months = _extract_bill_months_static(rec)
-                key = (pid, norm_acct)
-                if key not in bills_found:
-                    bills_found[key] = {}
-
-                bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
-                bill_date = _parse_date_any(str(bd_str))
-                ps_str = rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""
-                pe_str = rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""
-                ps = _parse_date_any(str(ps_str))
-                pe = _parse_date_any(str(pe_str))
-                service_days = (pe - ps).days if ps and pe and pe > ps else 0
-
-                for bm in bill_months:
-                    if bm not in bills_found[key]:
-                        bills_found[key][bm] = {
-                            "stage": stage_label,
-                            "bill_date": bill_date,
-                            "service_days": service_days,
-                        }
+            # For S7 and S99 (archive): parse info from filename (much faster than reading files)
+            # Format: .../Property Name-Vendor-Account-MM-DD-YYYY-MM-DD-YYYY-MM-DD-YYYY_timestamp.jsonl
+            if stage_label in ("S7", "S99"):
+                parsed_count = 0
+                for s3_key in stage_keys:
+                    fname = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+                    # Strip .jsonl and timestamp suffix
+                    base = fname.replace(".jsonl", "")
+                    # Find the timestamp part (YYYYMMDDTHHMMSSZ pattern)
+                    ts_match = re.search(r'_(\d{8}T\d{6}Z)', base)
+                    if ts_match:
+                        base = base[:ts_match.start()]
+                    # Parse 3 dates from the end: bill_date, period_end, period_start
+                    # Each date is MM-DD-YYYY (10 chars with hyphens between parts)
+                    date_pattern = r'(\d{1,2})-(\d{1,2})-(\d{4})$'
+                    dates = []
+                    remaining = base
+                    for _ in range(3):
+                        dm = re.search(date_pattern, remaining)
+                        if dm:
+                            try:
+                                d = dt.date(int(dm.group(3)), int(dm.group(1)), int(dm.group(2)))
+                                dates.insert(0, d)
+                            except ValueError:
+                                dates.insert(0, None)
+                            remaining = remaining[:dm.start()].rstrip("-")
+                        else:
+                            break
+                    if len(dates) >= 3 and dates[0] and dates[1]:
+                        # remaining = "Property-Vendor-Account"
+                        parts = remaining.rsplit("-", 1)
+                        if len(parts) == 2:
+                            acct = parts[1].strip()
+                            pv = parts[0]
+                        else:
+                            continue
+                        # Try to match property name
+                        pid = ""
+                        for pname, pid_val in prop_name_to_id.items():
+                            if pv.lower().startswith(pname):
+                                pid = pid_val
+                                break
+                        if not pid:
+                            # Use S3 path date as fallback month, skip pid matching
+                            path_m = re.search(r'yyyy=(\d{4})/mm=(\d{2})', s3_key)
+                            if path_m:
+                                bm = f"{int(path_m.group(2)):02d}/{int(path_m.group(1))}"
+                                # Can't determine pid from key, skip this file
+                            continue
+                        _index_record(pid, acct, dates[2], dates[0], dates[1], stage_label)
+                        parsed_count += 1
+                print(f"[BILL INDEX] Parsed {parsed_count}/{len(stage_keys)} {stage_label} keys from filenames")
+            else:
+                # S4 and S6: must read file contents
+                records = _read_first_record_from_s3(stage_keys)
+                print(f"[BILL INDEX] Read {len(records)}/{len(stage_keys)} {stage_label} records from S3")
+                for rec in records:
+                    pid = str(rec.get("EnrichedPropertyID") or rec.get("propertyId")
+                              or rec.get("PropertyID") or rec.get("Property ID") or "").strip()
+                    acct = str(rec.get("Account Number") or rec.get("accountNumber")
+                               or rec.get("AccountNumber") or "").strip()
+                    bd_str = rec.get("Bill Date") or rec.get("billDate") or ""
+                    bill_date = _parse_date_any(str(bd_str))
+                    ps = _parse_date_any(str(rec.get("Bill Period Start") or rec.get("billPeriodStart") or ""))
+                    pe = _parse_date_any(str(rec.get("Bill Period End") or rec.get("billPeriodEnd") or ""))
+                    _index_record(pid, acct, bill_date, ps, pe, stage_label)
 
     # Persist updated index to S3
     try:
