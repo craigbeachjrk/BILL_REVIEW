@@ -95,6 +95,30 @@ If only one is updated, the UI will show inconsistent data.
 - Check `/config/gl-code-mapping`
 - Check if `charge_code_overridden = true` (manual override wins)
 
+### GL swapping on added lines (FIXED 2026-03-10)
+**Pattern:** When adding a line (e.g., late fee), GL would swap to the first line's GL (e.g., Water).
+
+**Critical rule: `EnrichedGLAccountID` is a hidden input that MUST stay in sync with GL Name/Number selects.** Any code that changes GL selects must also update the hidden ID via `_glNumToId`.
+
+**Backend rule:** Never use `dict(first)` for extras without clearing GL fields via `_GL_FIELDS_NO_INHERIT`. Both the merged path AND the Stage 4 append path need this.
+
+**Frontend rule:** When cloning lines, clear ALL inputs (text + hidden), not just `input[type=text]`. The hidden `EnrichedGLAccountID` retains the source line's value otherwise.
+
+**`_ensure_hov` rule:** Only modify GL for pure utility names (exactly "ELECTRIC", "GAS", "WATER", "SEWER" after stripping VACANT/HOUSE). Never substring-match — "WATER LATE FEE" is not a utility GL.
+
+## Completion Tracker Bill Index
+The tracker uses `_load_or_build_bill_index()` (~line 10159) to find which accounts have bills in which months.
+
+**Architecture:**
+- Scans S6, S7, S8, S9, S99 stages (NOT S4 — filenames unparseable, pre-posting)
+- All stages use filename format: `Property-Vendor-Account-StartDate-EndDate-BillDate_timestamp.jsonl`
+- Parses property/vendor/account/dates from filenames — **zero S3 file reads needed**
+- Index cached to S3 as `config/bill_index_cache.json.gz` — incremental updates only read new keys
+- `_TRACKER_REBUILDING` flag prevents concurrent rebuilds across threads/instances
+- Background thread rebuilds on startup + hourly refresh loop
+
+**AppRunner S3 performance caveat:** S3 GET throughput on AppRunner is extremely slow (2-5s per request vs 50-200ms normally). Never design features that require bulk S3 file reads. Parse from filenames or use cached indexes.
+
 ## Known Issues / Planned Fixes
 
 ### BILLBACK Multi-Period Suggestion (NOT YET IMPLEMENTED)
