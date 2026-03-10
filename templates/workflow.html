@@ -1910,7 +1910,7 @@ function renderTracker() {
       else {
         icon = '&#10007;'; iconClass = 'miss';
         const skipTitle = item.comment ? escapeHtml(item.comment) : 'Click to add skip reason';
-        iconClick = ` onclick="event.stopPropagation();ct_openSkipModal('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}')" style="cursor:pointer" title="${skipTitle}"`;
+        iconClick = ` onclick="event.stopPropagation();ct_openSkipModal('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}','${escapeJs(monthDisplay)}')" style="cursor:pointer" title="${skipTitle}"`;
       }
       const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
@@ -1938,16 +1938,29 @@ function toggleExpand(el) { el.classList.toggle('expanded'); }
 let ct_skipAccount = null;
 let ct_skipVendor = null;
 let ct_skipProperty = null;
+let ct_skipMonth = null;
 
-function ct_openSkipModal(account, vendor, property) {
+const CT_SKIP_REASONS = [
+  { code: 'entered_manually', label: 'Entered manually into the system' },
+  { code: 'wrong_service_period', label: 'Account ID service period is not correct' },
+  { code: 'account_closed', label: 'Account is closed' },
+  { code: 'portal_down', label: 'Portal/website was down' },
+  { code: 'not_available', label: 'Bill not yet available from provider' },
+  { code: 'vendor_issue', label: 'Vendor issue (wrong account, etc.)' },
+  { code: 'waiting_info', label: 'Waiting on information' },
+  { code: 'other', label: 'Other (see notes)' },
+];
+
+function ct_openSkipModal(account, vendor, property, month) {
   ct_skipAccount = account;
   ct_skipVendor = vendor;
   ct_skipProperty = property;
-  document.getElementById('ct_skipInfo').textContent = `${property} — ${vendor} — ${account}`;
-  // Populate reason codes (reuse from daily work plan)
+  ct_skipMonth = month;
+  document.getElementById('ct_skipInfo').textContent = `${property} — ${vendor} — ${account}\nPeriod: ${month}`;
+  // Populate tracker-specific reason codes
   const sel = document.getElementById('ct_skipReason');
   sel.innerHTML = '<option value="">Select reason...</option>';
-  for (const c of dir_reasonCodes) {
+  for (const c of CT_SKIP_REASONS) {
     sel.innerHTML += `<option value="${c.code}">${escapeHtml(c.label)}</option>`;
   }
   // Pre-populate with existing comment if any
@@ -1957,11 +1970,10 @@ function ct_openSkipModal(account, vendor, property) {
       for (const it of (p.items || [])) {
         if (it.account_number === account && it.vendor_name === vendor && it.comment) {
           existingComment = it.comment;
-          // Try to match reason code from comment format: [ReasonLabel] notes
           const match = existingComment.match(/^\[(.+?)\]\s*(.*)/);
           if (match) {
             const label = match[1];
-            const code = dir_reasonCodes.find(c => c.label === label);
+            const code = CT_SKIP_REASONS.find(c => c.label === label);
             if (code) sel.value = code.code;
             existingComment = match[2] || '';
           }
@@ -1980,6 +1992,7 @@ function ct_closeSkipModal() {
   ct_skipAccount = null;
   ct_skipVendor = null;
   ct_skipProperty = null;
+  ct_skipMonth = null;
 }
 
 async function ct_confirmSkip() {
@@ -1987,8 +2000,8 @@ async function ct_confirmSkip() {
   const notes = document.getElementById('ct_skipNotes').value.trim();
   if (!reason) { showToast('Please select a reason', 'err'); return; }
 
-  // Build comment from reason label + optional notes
-  const reasonLabel = dir_reasonCodes.find(c => c.code === reason)?.label || reason;
+  // Build comment from reason label + month + optional notes
+  const reasonLabel = CT_SKIP_REASONS.find(c => c.code === reason)?.label || reason;
   const comment = notes ? `[${reasonLabel}] ${notes}` : `[${reasonLabel}]`;
 
   ct_closeSkipModal();
