@@ -451,6 +451,21 @@
       <div id="trackerContent">
         <div class="loading">Loading completion tracker...</div>
       </div>
+      <!-- Tracker Skip Reason Modal -->
+      <div id="ct_skipModal" class="modal-overlay dir-skip-modal" style="display:none;z-index:200">
+        <div class="modal-box">
+          <h3>Skip Reason</h3>
+          <p id="ct_skipInfo" style="font-size:13px;color:#475569"></p>
+          <select id="ct_skipReason" style="width:100%;padding:8px;margin:8px 0;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit">
+            <option value="">Select reason...</option>
+          </select>
+          <textarea id="ct_skipNotes" placeholder="Optional notes..." style="width:100%;padding:8px;margin:8px 0;min-height:60px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+            <button class="btn secondary" onclick="ct_closeSkipModal()">Cancel</button>
+            <button class="btn danger" onclick="ct_confirmSkip()">Save</button>
+          </div>
+        </div>
+      </div>
     </div><!-- End Tracker Tab -->
 
     <!-- LATE BILLS TABLE TAB -->
@@ -1869,19 +1884,23 @@ function renderTracker() {
 
     for (const item of sorted) {
       const isComplete = item.status_label === 'COMPLETE';
-      let icon, iconClass;
+      let icon, iconClass, iconClick = '';
       if (isComplete) { icon = '&#10003;'; iconClass = 'ok'; }
       else if (item.status_label === 'DUE_SOON' || item.status_label === 'ON_TRACK') { icon = '&#9711;'; iconClass = 'wait'; }
-      else { icon = '&#10007;'; iconClass = 'miss'; }
+      else {
+        icon = '&#10007;'; iconClass = 'miss';
+        iconClick = ` onclick="event.stopPropagation();ct_openSkipModal('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}')" style="cursor:pointer" title="Add skip reason"`;
+      }
       const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
       const monthDisplay = formatMonth(item.month);
+      const fullLabel = `${item.vendor_name || 'Unknown'} - ${item.account_number}`;
 
-      html += `<div class="account-item">
-        <div class="acct-info"><div class="acct-label">${item.vendor_name || 'Unknown'} - ${item.account_number}${scraperTag}</div></div>
+      html += `<div class="account-item" title="${escapeHtml(fullLabel)}">
+        <div class="acct-info"><div class="acct-label">${fullLabel}${scraperTag}</div></div>
         <span class="month-badge ${item.status_label}">${monthDisplay}</span>
         ${stageTag}
-        <span class="status-icon ${iconClass}">${icon}</span>
+        <span class="status-icon ${iconClass}"${iconClick}>${icon}</span>
       </div>`;
     }
     html += `</div></div>`;
@@ -1891,6 +1910,60 @@ function renderTracker() {
 }
 
 function toggleExpand(el) { el.classList.toggle('expanded'); }
+
+/* ---- Tracker Skip Reason Modal ---- */
+let ct_skipAccount = null;
+let ct_skipVendor = null;
+let ct_skipProperty = null;
+
+function ct_openSkipModal(account, vendor, property) {
+  ct_skipAccount = account;
+  ct_skipVendor = vendor;
+  ct_skipProperty = property;
+  document.getElementById('ct_skipInfo').textContent = `${property} — ${vendor} — ${account}`;
+  // Populate reason codes (reuse from daily work plan)
+  const sel = document.getElementById('ct_skipReason');
+  sel.innerHTML = '<option value="">Select reason...</option>';
+  for (const c of dir_reasonCodes) {
+    sel.innerHTML += `<option value="${c.code}">${escapeHtml(c.label)}</option>`;
+  }
+  document.getElementById('ct_skipNotes').value = '';
+  document.getElementById('ct_skipModal').style.display = 'flex';
+}
+
+function ct_closeSkipModal() {
+  document.getElementById('ct_skipModal').style.display = 'none';
+  ct_skipAccount = null;
+  ct_skipVendor = null;
+  ct_skipProperty = null;
+}
+
+async function ct_confirmSkip() {
+  const reason = document.getElementById('ct_skipReason').value;
+  const notes = document.getElementById('ct_skipNotes').value.trim();
+  if (!reason) { showToast('Please select a reason', 'err'); return; }
+
+  // Build comment from reason label + optional notes
+  const reasonLabel = dir_reasonCodes.find(c => c.code === reason)?.label || reason;
+  const comment = notes ? `[${reasonLabel}] ${notes}` : `[${reasonLabel}]`;
+
+  ct_closeSkipModal();
+  try {
+    const fd = new FormData();
+    fd.append('account_number', ct_skipAccount);
+    fd.append('vendor_name', ct_skipVendor);
+    fd.append('comment', comment);
+    const resp = await fetch('/api/config/account-comment', { method: 'POST', body: fd });
+    if (!resp.ok) {
+      const err = await resp.json();
+      showToast(err.error || 'Failed to save', 'err');
+      return;
+    }
+    showToast('Skip reason saved', 'ok');
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+}
 
 function formatMonth(monthStr) {
   if (!monthStr) return '';
