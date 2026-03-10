@@ -10286,6 +10286,9 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
         vendor_name = str(a.get("vendorName") or "").strip()
         days_between = int(a.get("daysBetweenBills") or 30)
         comment = str(a.get("comment") or "").strip()
+        skip_reasons = a.get("skip_reasons") or {}
+        if not isinstance(skip_reasons, dict):
+            skip_reasons = {}
         norm_acct = _normalize_account_number(acct)
         acct_key = (pid, norm_acct)
         ap_name = ap_by_pid.get(pid, "")
@@ -10373,6 +10376,16 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                     status_label = "ON_TRACK"
                     days_overdue = 0
 
+            # Look up per-month skip reason (try exact month match, and range match)
+            month_skip = ""
+            if skip_reasons:
+                # For single-month display, key is "MM/YYYY"
+                # For multi-month, display_month is "MM/YYYY-MM/YYYY" but skip keys are individual months
+                for cm in cycle_months:
+                    if cm[0] in skip_reasons:
+                        month_skip = skip_reasons[cm[0]]
+                        break
+
             property_data[pid]["items"].append({
                 "vendor_name": vendor_name,
                 "account_number": acct,
@@ -10385,6 +10398,7 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                 "has_bill_in_pipeline": has_bill,
                 "pipeline_stage": pipeline_stage,
                 "comment": comment,
+                "skip_reason": month_skip,
             })
 
             i += months_per_cycle
@@ -17649,6 +17663,54 @@ async def api_update_account_comment(request: Request, user: str = Depends(requi
         return {"ok": True, "comment": comment}
     except Exception as e:
         print(f"[ACCOUNT COMMENT] Error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/config/account-skip-reason")
+async def api_update_account_skip_reason(request: Request, user: str = Depends(require_user)):
+    """Save a per-month skip reason for a tracked account."""
+    try:
+        form = await request.form()
+        account_number = form.get("account_number", "").strip()
+        vendor_name = form.get("vendor_name", "").strip()
+        month = form.get("month", "").strip()  # MM/YYYY format
+        reason = form.get("reason", "").strip()
+
+        if not account_number or not vendor_name or not month:
+            return JSONResponse({"error": "account_number, vendor_name, and month are required"}, status_code=400)
+
+        arr = _get_accounts_to_track()
+
+        found = False
+        for item in arr:
+            item_acct = str(item.get("accountNumber") or item.get("account_number") or "").strip()
+            item_vendor = str(item.get("vendorName") or item.get("vendor_name") or "").strip()
+            if item_acct == account_number and item_vendor == vendor_name:
+                skip_reasons = item.get("skip_reasons") or {}
+                if not isinstance(skip_reasons, dict):
+                    skip_reasons = {}
+                if reason:
+                    skip_reasons[month] = reason
+                else:
+                    skip_reasons.pop(month, None)
+                item["skip_reasons"] = skip_reasons
+                found = True
+                print(f"[ACCOUNT SKIP] {account_number} ({vendor_name}) month={month}: {reason[:50]}...")
+                break
+
+        if not found:
+            return JSONResponse({"error": "Account not found in tracker"}, status_code=404)
+
+        ok = _put_accounts_to_track(arr)
+        if not ok:
+            return JSONResponse({"error": "Failed to save"}, status_code=500)
+
+        cache_key = ("accounts_to_track",)
+        _CACHE.pop(cache_key, None)
+
+        return {"ok": True, "month": month, "reason": reason}
+    except Exception as e:
+        print(f"[ACCOUNT SKIP] Error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
