@@ -146,6 +146,25 @@
       <div id="portfolioView" class="view-section">
         <div class="stats-grid" id="portfolioStats"></div>
 
+        <!-- Unified filters for charts + grid -->
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+          <span style="font-weight:600;font-size:13px;color:#334155">Period:</span>
+          <div style="display:flex;gap:2px">
+            <button class="btn small period-btn" data-months="3" onclick="setMonths(3)">3 mo</button>
+            <button class="btn small secondary period-btn" data-months="6" onclick="setMonths(6)">6 mo</button>
+            <button class="btn small secondary period-btn" data-months="12" onclick="setMonths(12)">12 mo</button>
+            <button class="btn small secondary period-btn" data-months="24" onclick="setMonths(24)">24 mo</button>
+          </div>
+          <span style="font-weight:600;font-size:13px;color:#334155;margin-left:12px">Utility:</span>
+          <div style="display:flex;gap:2px">
+            <button class="btn small util-btn" data-ut="" onclick="setUtility('')">All</button>
+            <button class="btn small secondary util-btn" data-ut="electric" onclick="setUtility('electric')">Electric</button>
+            <button class="btn small secondary util-btn" data-ut="gas" onclick="setUtility('gas')">Gas</button>
+            <button class="btn small secondary util-btn" data-ut="water" onclick="setUtility('water')">Water</button>
+            <button class="btn small secondary util-btn" data-ut="sewer" onclick="setUtility('sewer')">Sewer</button>
+          </div>
+        </div>
+
         <!-- Portfolio Charts -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
           <div class="chart-container" style="height:350px"><canvas id="portfolioConsumptionChart"></canvas></div>
@@ -158,17 +177,8 @@
         <!-- Portfolio Data Grid: all properties x months -->
         <div class="card" style="margin-bottom:20px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <h3 style="margin:0">Monthly Spend by Property</h3>
-            <div style="display:flex;gap:8px;align-items:center">
-              <select id="gridUtilityFilter" onchange="renderPortfolioGrid()" style="font-size:13px">
-                <option value="">All Utilities</option>
-                <option value="electric">Electric</option>
-                <option value="gas">Gas</option>
-                <option value="water">Water</option>
-                <option value="sewer">Sewer</option>
-              </select>
-              <input type="text" id="gridPropSearch" placeholder="Search properties..." oninput="renderPortfolioGrid()" style="width:200px;font-size:13px">
-            </div>
+            <h3 style="margin:0">Monthly Spend by Property <span id="gridSubtitle" style="font-weight:400;font-size:13px;color:#64748b"></span></h3>
+            <input type="text" id="gridPropSearch" placeholder="Search properties..." oninput="renderPortfolioGrid()" style="width:200px;font-size:13px">
           </div>
           <div id="portfolioGrid" style="max-height:600px;overflow:auto"></div>
         </div>
@@ -218,6 +228,8 @@ let propRateChartInstance = null;
 let meterChartInstance = null;
 let portfolioConsChart = null;
 let portfolioCostChart = null;
+let selectedMonths = 3;
+let selectedUtility = '';
 
 const UTILITY_COLORS = {
   electric: '#f59e0b', electricity: '#f59e0b',
@@ -342,28 +354,20 @@ function escAttr(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot
 /* ── Portfolio View ───────────────────────────────────── */
 function renderPortfolio() {
   if (!DATA) return;
-  const p = DATA.portfolio;
 
-  // Stats
-  const totalSpend = _portfolioTotalSpend();
-  document.getElementById('portfolioStats').innerHTML =
-    statCard(fmtNum(p.total_properties), 'Properties') +
-    statCard(fmtNum(p.total_meters), 'Meters') +
-    statCard(fmtNum(p.total_readings), 'Readings') +
-    statCard(fmtMoney(totalSpend), 'Total Spend (12mo)') +
-    statCard(DATA.generated_at ? new Date(DATA.generated_at).toLocaleDateString() : '-', 'Last Updated');
+  // Render stats + charts + grid (respects selectedMonths + selectedUtility)
+  refreshPortfolioVisuals();
 
-  // ── Portfolio Charts ──
-  renderPortfolioCharts();
-
-  // Utility cards
-  const byUtil = p.by_utility || {};
+  // Utility cards (always show all utilities for context)
+  const byUtil = DATA.portfolio.by_utility || {};
+  const visibleMonths = new Set(_getAllMonths());
   let ucHtml = '';
   for (const [ut, info] of Object.entries(byUtil)) {
-    const months = Object.keys(info.monthly || {}).sort();
+    const months = Object.keys(info.monthly || {}).sort().filter(m => visibleMonths.has(m));
     const latest = months.length ? info.monthly[months[months.length - 1]] : {};
-    const totalCost = months.reduce((s, m) => s + (info.monthly[m].cost || 0), 0);
-    ucHtml += '<div class="utility-card ' + utilClass(ut) + '">'
+    const totalCost = months.reduce((s, m) => s + ((info.monthly[m] || {}).cost || 0), 0);
+    const active = _matchesUtilityFilter(ut);
+    ucHtml += '<div class="utility-card ' + utilClass(ut) + '" style="' + (active ? '' : 'opacity:0.4') + ';cursor:pointer" onclick="setUtility(\'' + (selectedUtility === ut ? '' : ut) + '\')">'
       + '<h4>' + capitalise(ut) + ' <span style="font-weight:400;font-size:12px;color:#64748b">(' + fmtNum(info.meters) + ' meters)</span></h4>'
       + '<div class="big-num">' + fmtMoney(totalCost) + '</div>'
       + '<div style="font-size:12px;color:#64748b;margin-top:4px">'
@@ -372,11 +376,8 @@ function renderPortfolio() {
   }
   document.getElementById('utilityCards').innerHTML = ucHtml;
 
-  // ── Portfolio Data Grid ──
-  renderPortfolioGrid();
-
   // Issue cards
-  const iss = p.issues_summary || {};
+  const iss = DATA.portfolio.issues_summary || {};
   const ri = iss.rate_increases || {count:0, est_monthly_impact:0};
   const vs = iss.volume_spikes || {count:0, est_monthly_impact:0};
   const di = iss.data_issues || {count:0, est_monthly_impact:0};
@@ -392,11 +393,55 @@ function renderPortfolio() {
   renderTopIssues();
 }
 
+function setMonths(n) {
+  selectedMonths = n;
+  document.querySelectorAll('.period-btn').forEach(b => {
+    b.className = 'btn small ' + (parseInt(b.dataset.months) === n ? '' : 'secondary');
+  });
+  refreshPortfolioVisuals();
+}
+
+function setUtility(ut) {
+  selectedUtility = ut;
+  document.querySelectorAll('.util-btn').forEach(b => {
+    b.className = 'btn small ' + (b.dataset.ut === ut ? '' : 'secondary');
+  });
+  refreshPortfolioVisuals();
+}
+
+function refreshPortfolioVisuals() {
+  if (!DATA) return;
+  const totalSpend = _portfolioTotalSpend();
+  document.getElementById('portfolioStats').innerHTML =
+    statCard(fmtNum(DATA.portfolio.total_properties), 'Properties') +
+    statCard(fmtNum(DATA.portfolio.total_meters), 'Meters') +
+    statCard(fmtNum(DATA.portfolio.total_readings), 'Readings') +
+    statCard(fmtMoney(totalSpend), 'Total Spend (' + selectedMonths + 'mo)') +
+    statCard(DATA.generated_at ? new Date(DATA.generated_at).toLocaleDateString() : '-', 'Last Updated');
+  renderPortfolioCharts();
+  renderPortfolioGrid();
+  // Update subtitle
+  const utLabel = selectedUtility ? capitalise(selectedUtility) : 'All Utilities';
+  document.getElementById('gridSubtitle').textContent = '(' + utLabel + ', ' + selectedMonths + ' months)';
+}
+
+function _matchesUtilityFilter(ut) {
+  if (!selectedUtility) return true;
+  const u = (ut || '').toLowerCase();
+  if (selectedUtility === 'electric') return u === 'electric' || u === 'electricity';
+  return u === selectedUtility;
+}
+
 function _portfolioTotalSpend() {
   const byUtil = DATA.portfolio.by_utility || {};
+  const months = _getAllMonths();
+  const monthSet = new Set(months);
   let total = 0;
-  for (const u of Object.values(byUtil)) {
-    for (const m of Object.values(u.monthly || {})) total += (m.cost || 0);
+  for (const [ut, u] of Object.entries(byUtil)) {
+    if (!_matchesUtilityFilter(ut)) continue;
+    for (const [m, vals] of Object.entries(u.monthly || {})) {
+      if (monthSet.has(m)) total += (vals.cost || 0);
+    }
   }
   return total;
 }
@@ -404,10 +449,11 @@ function _portfolioTotalSpend() {
 function _getAllMonths() {
   const monthSet = new Set();
   const byUtil = DATA.portfolio.by_utility || {};
-  for (const u of Object.values(byUtil)) {
+  for (const [ut, u] of Object.entries(byUtil)) {
+    if (!_matchesUtilityFilter(ut)) continue;
     for (const m of Object.keys(u.monthly || {})) monthSet.add(m);
   }
-  return [...monthSet].sort().slice(-12);
+  return [...monthSet].sort().slice(-selectedMonths);
 }
 
 function renderPortfolioCharts() {
@@ -416,10 +462,13 @@ function renderPortfolioCharts() {
   if (!months.length) return;
   const labels = months.map(m => { const [y, mo] = m.split('-'); return mo + '/' + y.slice(2); });
 
+  // Filter utilities
+  const filteredUtils = Object.entries(byUtil).filter(([ut]) => _matchesUtilityFilter(ut));
+
   // ── Consumption Chart: stacked bar by utility ──
   if (portfolioConsChart) { portfolioConsChart.destroy(); portfolioConsChart = null; }
   const consDatasets = [];
-  for (const [ut, info] of Object.entries(byUtil)) {
+  for (const [ut, info] of filteredUtils) {
     consDatasets.push({
       label: capitalise(ut),
       data: months.map(m => Math.round((info.monthly || {})[m]?.consumption || 0)),
@@ -432,7 +481,7 @@ function renderPortfolioCharts() {
     data: { labels, datasets: consDatasets },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'top' }, title: { display: true, text: 'Monthly Consumption by Utility' }, datalabels: { display: false } },
+      plugins: { legend: { position: 'top' }, title: { display: true, text: 'Consumption by Service Month' }, datalabels: { display: false } },
       scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Consumption' }, ticks: { callback: v => v.toLocaleString() } } }
     }
   });
@@ -440,7 +489,7 @@ function renderPortfolioCharts() {
   // ── Cost Chart: stacked bar by utility ──
   if (portfolioCostChart) { portfolioCostChart.destroy(); portfolioCostChart = null; }
   const costDatasets = [];
-  for (const [ut, info] of Object.entries(byUtil)) {
+  for (const [ut, info] of filteredUtils) {
     costDatasets.push({
       label: capitalise(ut),
       data: months.map(m => Math.round((info.monthly || {})[m]?.cost || 0)),
@@ -453,7 +502,7 @@ function renderPortfolioCharts() {
     data: { labels, datasets: costDatasets },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'top' }, title: { display: true, text: 'Monthly Cost by Utility' }, datalabels: { display: false } },
+      plugins: { legend: { position: 'top' }, title: { display: true, text: 'Cost by Service Month' }, datalabels: { display: false } },
       scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Cost ($)' }, ticks: { callback: v => '$' + v.toLocaleString() } } }
     }
   });
@@ -461,32 +510,47 @@ function renderPortfolioCharts() {
 
 function renderPortfolioGrid() {
   const months = _getAllMonths();
-  const filterUt = (document.getElementById('gridUtilityFilter').value || '').toLowerCase();
   const filterProp = (document.getElementById('gridPropSearch').value || '').toLowerCase();
   const props = DATA.properties || {};
 
-  // Build rows: property x month with cost, consumption, rate
+  // Build rows: property x month with cost, consumption
   const rows = [];
   for (const [pid, prop] of Object.entries(props)) {
     if (filterProp && !(prop.property_name || '').toLowerCase().includes(filterProp)) continue;
     const byUtil = prop.by_utility || {};
     const monthData = {};
     let totalCost = 0;
+    const monthSet = new Set(months);
     for (const [ut, utData] of Object.entries(byUtil)) {
-      if (filterUt && ut !== filterUt && !(filterUt === 'electric' && ut === 'electricity')) continue;
+      if (!_matchesUtilityFilter(ut)) continue;
       for (const [mk, vals] of Object.entries(utData.monthly || {})) {
+        if (!monthSet.has(mk)) continue;
         if (!monthData[mk]) monthData[mk] = { cost: 0, consumption: 0 };
         monthData[mk].cost += vals.cost || 0;
         monthData[mk].consumption += vals.consumption || 0;
         totalCost += vals.cost || 0;
       }
     }
-    rows.push({ pid, name: prop.property_name || pid, meters: prop.meter_count || 0, issues: (prop.issues || []).length, totalCost, monthData });
+    if (totalCost > 0 || !selectedUtility) {
+      rows.push({ pid, name: prop.property_name || pid, meters: prop.meter_count || 0, issues: (prop.issues || []).length, totalCost, monthData });
+    }
   }
   rows.sort((a, b) => b.totalCost - a.totalCost);
 
+  // Find max monthly for heatmap scaling
+  let maxMonthly = 1;
+  for (const r of rows) {
+    for (const m of months) {
+      const c = r.monthData[m]?.cost || 0;
+      if (c > maxMonthly) maxMonthly = c;
+    }
+  }
+
   // Header
-  let html = '<table style="font-size:12px"><thead><tr><th style="position:sticky;left:0;background:#f9fafb;z-index:2">Property</th><th>Meters</th><th>Total</th>';
+  let html = '<table style="font-size:12px"><thead><tr>'
+    + '<th style="position:sticky;left:0;background:#f9fafb;z-index:2">Property</th>'
+    + '<th style="text-align:center">Meters</th>'
+    + '<th style="text-align:right">Total</th>';
   for (const m of months) {
     const [y, mo] = m.split('-');
     html += '<th style="text-align:right;min-width:80px">' + mo + '/' + y.slice(2) + '</th>';
@@ -496,18 +560,21 @@ function renderPortfolioGrid() {
   for (const r of rows) {
     html += '<tr class="clickable" onclick="navigateTo(\'property\',\'' + escAttr(r.pid) + '\')">'
       + '<td style="position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap;font-weight:600">' + escHtml(r.name) + '</td>'
-      + '<td>' + r.meters + '</td>'
+      + '<td style="text-align:center">' + r.meters + '</td>'
       + '<td style="text-align:right;font-weight:600">' + fmtMoney(r.totalCost) + '</td>';
     for (const m of months) {
-      const d = r.monthData[m];
-      const cost = d ? d.cost : 0;
-      // Color-code: higher spend = deeper shade
-      const bg = cost > 0 ? 'rgba(14,165,233,' + Math.min(0.25, cost / (rows[0].totalCost / months.length) * 0.15) + ')' : '';
+      const cost = r.monthData[m]?.cost || 0;
+      const alpha = cost > 0 ? Math.min(0.3, (cost / maxMonthly) * 0.3) : 0;
+      const bg = alpha > 0 ? 'rgba(14,165,233,' + alpha.toFixed(3) + ')' : '';
       html += '<td style="text-align:right;background:' + bg + '">' + (cost > 0 ? fmtMoney(cost) : '-') + '</td>';
     }
     html += '</tr>';
   }
   html += '</tbody></table>';
+
+  if (!rows.length) {
+    html = '<div style="color:#64748b;padding:16px;text-align:center">No data for selected filters.</div>';
+  }
   document.getElementById('portfolioGrid').innerHTML = html;
 }
 
