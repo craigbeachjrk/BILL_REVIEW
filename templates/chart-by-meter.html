@@ -949,70 +949,100 @@ async function renderMeter(meterId) {
   }
 }
 
+function _parseDateForCalc(s) {
+  if (!s) return null;
+  try {
+    if (s.includes('/') && s.split('/').length === 3) {
+      const [mo, dy, yr] = s.split('/');
+      return new Date(yr + '-' + mo.padStart(2,'0') + '-' + dy.padStart(2,'0'));
+    }
+    return new Date(s);
+  } catch(e) { return null; }
+}
+
 function renderReadingsTable(readings) {
-  const rows = Array.isArray(readings) ? readings : (readings.readings || readings.data || []);
-  if (!rows.length) {
+  const raw = Array.isArray(readings) ? readings : (readings.readings || readings.data || []);
+  if (!raw.length) {
     document.getElementById('meterReadingsTable').innerHTML = '<div style="color:#64748b;padding:12px">No readings found.</div>';
     return;
   }
-  // Sort newest first
-  rows.sort((a, b) => {
-    const da = a.service_end || a.reading_date || '';
-    const db = b.service_end || b.reading_date || '';
-    return db.localeCompare(da);
-  });
-  let html = '<div style="max-height:600px;overflow-y:auto"><table><thead><tr>'
-    + '<th>Service Period</th><th>Consumption</th><th>UOM</th><th>Charge</th>'
-    + '<th>$/Unit</th><th>Daily Rate</th><th>Days</th><th>Vendor</th><th>Flags</th><th>PDF</th>'
-    + '</tr></thead><tbody>';
-  for (const r of rows) {
-    // Service period
+
+  // Dedupe: group by service_start+service_end, aggregate charges, keep max consumption
+  const grouped = {};
+  for (const r of raw) {
     const sStart = r.service_start || '';
     const sEnd = r.service_end || r.reading_date || '';
-    const period = sStart && sEnd ? escHtml(sStart) + ' &rarr; ' + escHtml(sEnd) : escHtml(sEnd || '-');
-
-    // Consumption + UOM
+    const key = sStart + '|' + sEnd;
     const cons = r.enriched_consumption || r.normalized_consumption || r.consumption || 0;
-    const uom = r.canonical_uom || r.normalized_uom || r.raw_uom || '';
-
-    // Charge
     const charge = r.amount || r.charge_amount || 0;
 
-    // Effective rate ($/unit)
-    const effRate = r.effective_rate || (cons > 0 && charge > 0 ? charge / cons : 0);
-
-    // Daily rate
-    let days = 0;
-    if (sStart && sEnd) {
-      try {
-        const d1 = new Date(sStart.includes('/') ? sStart.split('/').length === 3 ? sStart.split('/')[2] + '-' + sStart.split('/')[0] + '-' + sStart.split('/')[1] : sStart : sStart);
-        const d2 = new Date(sEnd.includes('/') ? sEnd.split('/').length === 3 ? sEnd.split('/')[2] + '-' + sEnd.split('/')[0] + '-' + sEnd.split('/')[1] : sEnd : sEnd);
-        days = Math.max(1, Math.round((d2 - d1) / 86400000));
-      } catch(e) { days = 0; }
+    if (!grouped[key]) {
+      grouped[key] = {
+        service_start: sStart,
+        service_end: sEnd,
+        consumption: cons,
+        charge: charge,
+        uom: r.canonical_uom || r.normalized_uom || r.raw_uom || '',
+        vendor: r.vendor || r.vendor_name || '',
+        source_pdf_id: r.source_pdf_id || '',
+        flagged: r.flagged,
+        flag_reason: r.flag_reason,
+        line_count: 1
+      };
+    } else {
+      grouped[key].charge += charge;
+      if (cons > grouped[key].consumption) grouped[key].consumption = cons;
+      if (!grouped[key].source_pdf_id && r.source_pdf_id) grouped[key].source_pdf_id = r.source_pdf_id;
+      if (r.flagged && r.flag_reason) { grouped[key].flagged = true; grouped[key].flag_reason = r.flag_reason; }
+      grouped[key].line_count++;
     }
-    const dailyRate = days > 0 && cons > 0 ? (cons / days) : 0;
+  }
 
-    // Flags
+  const rows = Object.values(grouped);
+  // Sort newest first
+  rows.sort((a, b) => {
+    const da = a.service_end || '';
+    const db = b.service_end || '';
+    return db.localeCompare(da);
+  });
+
+  let html = '<div style="max-height:600px;overflow-y:auto"><table><thead><tr>'
+    + '<th>Service Period</th><th style="text-align:right">Consumption</th><th>UOM</th><th style="text-align:right">Total Charge</th>'
+    + '<th style="text-align:right">$/Unit</th><th style="text-align:right">Daily Rate</th><th style="text-align:center">Days</th><th>Vendor</th><th>Flags</th><th>PDF</th>'
+    + '</tr></thead><tbody>';
+
+  for (const r of rows) {
+    const period = r.service_start && r.service_end
+      ? escHtml(r.service_start) + ' &rarr; ' + escHtml(r.service_end)
+      : escHtml(r.service_end || '-');
+
+    const cons = r.consumption;
+    const charge = r.charge;
+    const effRate = cons > 0 && charge > 0 ? charge / cons : 0;
+
+    const d1 = _parseDateForCalc(r.service_start);
+    const d2 = _parseDateForCalc(r.service_end);
+    const days = d1 && d2 ? Math.max(1, Math.round((d2 - d1) / 86400000)) : 0;
+    const dailyRate = days > 0 && cons > 0 ? cons / days : 0;
+
     let flagHtml = '';
     if (r.flagged && r.flag_reason) {
       flagHtml = '<span class="flag-badge volume_spike">' + escHtml(r.flag_reason) + '</span>';
     }
 
-    // PDF link
-    const pdfId = r.source_pdf_id || '';
-    const pdfLink = pdfId
-      ? '<a href="/invoices?pdf_id=' + encodeURIComponent(pdfId) + '" target="_blank" class="btn small" style="padding:3px 8px;font-size:11px">View PDF</a>'
+    const pdfLink = r.source_pdf_id
+      ? '<a href="/invoices?pdf_id=' + encodeURIComponent(r.source_pdf_id) + '" target="_blank" class="btn small" style="padding:3px 8px;font-size:11px">View PDF</a>'
       : '-';
 
     html += '<tr>'
       + '<td style="white-space:nowrap">' + period + '</td>'
-      + '<td style="text-align:right">' + fmtNum(cons) + '</td>'
-      + '<td>' + escHtml(uom) + '</td>'
+      + '<td style="text-align:right">' + fmtNum(Math.round(cons * 100) / 100) + '</td>'
+      + '<td>' + escHtml(r.uom) + '</td>'
       + '<td style="text-align:right">' + fmtMoney(charge) + '</td>'
-      + '<td style="text-align:right">' + fmtRate(effRate) + '</td>'
-      + '<td style="text-align:right">' + (dailyRate > 0 ? fmtNum(Math.round(dailyRate * 100) / 100) : '-') + '/' + escHtml(uom ? uom + '/d' : 'd') + '</td>'
+      + '<td style="text-align:right">' + (effRate > 0 ? '$' + effRate.toFixed(4) : '-') + '</td>'
+      + '<td style="text-align:right">' + (dailyRate > 0 ? fmtNum(Math.round(dailyRate * 100) / 100) + ' ' + escHtml(r.uom || '') + '/d' : '-') + '</td>'
       + '<td style="text-align:center">' + (days || '-') + '</td>'
-      + '<td>' + escHtml(r.vendor || r.vendor_name || '-') + '</td>'
+      + '<td>' + escHtml(r.vendor || '-') + '</td>'
       + '<td>' + flagHtml + '</td>'
       + '<td>' + pdfLink + '</td>'
       + '</tr>';
