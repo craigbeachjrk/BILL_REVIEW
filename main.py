@@ -479,6 +479,31 @@ _lambda_client = boto3.client("lambda", region_name=AWS_REGION, config=_boto_con
 _ses = boto3.client("ses", region_name=AWS_REGION, config=_boto_config)
 _ecs = boto3.client("ecs", region_name=AWS_REGION, config=_boto_config)
 
+# -------- Audit Trail --------
+def _record_audit_event(event_type: str, user: str, details: dict):
+    """Record an audit event to DynamoDB for daily digest emails.
+    Event types: ACCOUNT_EDIT, DUPLICATE_REPOST
+    TTL: 90 days auto-expire.
+    """
+    import uuid
+    now = dt.datetime.utcnow()
+    sk = f"{now.strftime('%Y-%m-%dT%H:%M:%S')}Z#{uuid.uuid4().hex[:12]}"
+    ttl = int(now.timestamp()) + 90 * 86400
+    item = {
+        "pk": {"S": "AUDIT_EVENT"},
+        "sk": {"S": sk},
+        "event_type": {"S": event_type},
+        "user": {"S": user},
+        "timestamp_utc": {"S": now.isoformat() + "Z"},
+        "details": {"S": json.dumps(details)},
+        "ttl": {"N": str(ttl)},
+    }
+    try:
+        ddb.put_item(TableName=CONFIG_TABLE, Item=item)
+        print(f"[AUDIT] Recorded {event_type} by {user}: {sk}")
+    except Exception as e:
+        print(f"[AUDIT] Failed to record {event_type}: {e}")
+
 # Global thread pool for general parallel S3/DDB operations
 _GLOBAL_EXECUTOR = ThreadPoolExecutor(max_workers=20)
 # Dedicated high-concurrency pool for CHECK REVIEW bulk S3 reads (I/O-bound)
@@ -1269,6 +1294,9 @@ async def startup_prewarm_caches():
             except Exception:
                 pass
     threading.Thread(target=_invoice_history_refresh_loop, daemon=True).start()
+
+    # Audit digest: daily email at 5PM Pacific
+    threading.Thread(target=_audit_digest_loop, daemon=True, name="audit-digest").start()
 
     # Search index: load from S3 (instant), then index only new dates
     def _search_index_backfill():
@@ -2730,6 +2758,21 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
             _update_post_lock(key, "POSTED")
             print(f"[POST] _update_post_lock returned for {file_name}")
             updated += 1
+
+            # Record audit event for duplicate reposts (suffix indicates repost)
+            if inv_suffix:
+                try:
+                    _record_audit_event("DUPLICATE_REPOST", user, {
+                        "s3_key": key,
+                        "suffix": inv_suffix,
+                        "account_number": str(rows[0].get("Account Number") or rows[0].get("AccountNumber") or "").strip() if rows else "",
+                        "vendor_name": str(rows[0].get("EnrichedVendorName") or rows[0].get("Vendor Name") or "").strip() if rows else "",
+                        "property_name": str(rows[0].get("EnrichedPropertyName") or rows[0].get("Property") or "").strip() if rows else "",
+                        "bill_date": str(rows[0].get("Bill Date") or rows[0].get("Invoice Date") or "").strip() if rows else "",
+                        "total_amount": str(sum(float(r.get("Line Item Charge") or 0) for r in rows)),
+                    })
+                except Exception as audit_err:
+                    print(f"[AUDIT] Non-fatal error recording repost: {audit_err}")
 
             # Archive PDF to organized folder structure in S3 (for sync to file server)
             try:
@@ -22485,6 +22528,240 @@ def _build_improve_email_html(report_type: str, title: str, description: str,
     """
 
 
+# -------- Audit Trail: Daily Digest Email --------
+
+def _fetch_audit_events_for_date(date_str: str) -> list[dict]:
+    """Query all AUDIT_EVENT records for a given date (YYYY-MM-DD)."""
+    events = []
+    sk_start = f"{date_str}T00:00:00Z"
+    sk_end = f"{date_str}T23:59:59Z#zzzzzzzzzzzz"
+    kwargs = {
+        "TableName": CONFIG_TABLE,
+        "KeyConditionExpression": "pk = :pk AND sk BETWEEN :start AND :end",
+        "ExpressionAttributeValues": {
+            ":pk": {"S": "AUDIT_EVENT"},
+            ":start": {"S": sk_start},
+            ":end": {"S": sk_end},
+        },
+    }
+    while True:
+        resp = ddb.query(**kwargs)
+        for item in resp.get("Items", []):
+            try:
+                events.append({
+                    "sk": item["sk"]["S"],
+                    "event_type": item.get("event_type", {}).get("S", ""),
+                    "user": item.get("user", {}).get("S", ""),
+                    "timestamp_utc": item.get("timestamp_utc", {}).get("S", ""),
+                    "details": json.loads(item.get("details", {}).get("S", "{}")),
+                })
+            except Exception:
+                pass
+        if "LastEvaluatedKey" in resp:
+            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+        else:
+            break
+    return events
+
+
+def _build_audit_digest_html(date_str: str, events: list[dict]) -> str:
+    """Build professional HTML email for the daily audit digest."""
+    from zoneinfo import ZoneInfo
+    pacific = ZoneInfo("America/Los_Angeles")
+
+    account_edits = [e for e in events if e["event_type"] == "ACCOUNT_EDIT"]
+    duplicate_reposts = [e for e in events if e["event_type"] == "DUPLICATE_REPOST"]
+
+    # Format date for display
+    try:
+        d = dt.datetime.strptime(date_str, "%Y-%m-%d")
+        display_date = d.strftime("%B %d, %Y")
+    except Exception:
+        display_date = date_str
+
+    def _utc_to_pt(ts_str):
+        try:
+            utc_dt = dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            pt_dt = utc_dt.astimezone(pacific)
+            return pt_dt.strftime("%-I:%M %p")
+        except Exception:
+            return ts_str[:16] if ts_str else ""
+
+    def _esc_h(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+    # Summary banner
+    html = f"""<div style="font-family:Inter,system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto;background:#fff">
+  <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);padding:28px 32px;border-radius:12px 12px 0 0">
+    <h1 style="color:#fff;margin:0;font-size:22px;font-weight:700">Daily Audit Digest</h1>
+    <p style="color:#93c5fd;margin:6px 0 0;font-size:14px">Bill Review App &mdash; {_esc_h(display_date)}</p>
+  </div>
+  <div style="background:#f0f9ff;border-bottom:1px solid #e5e7eb;padding:16px 32px">
+    <table style="width:100%"><tr>
+      <td style="text-align:center;width:50%">
+        <div style="font-size:28px;font-weight:700;color:#1e3a5f">{len(account_edits)}</div>
+        <div style="font-size:12px;color:#64748b;text-transform:uppercase">Account Edits</div>
+      </td>
+      <td style="text-align:center;width:50%">
+        <div style="font-size:28px;font-weight:700;color:#1e3a5f">{len(duplicate_reposts)}</div>
+        <div style="font-size:12px;color:#64748b;text-transform:uppercase">Duplicate Reposts</div>
+      </td>
+    </tr></table>
+  </div>"""
+
+    th_style = 'style="text-align:left;padding:10px 12px;color:#64748b;font-weight:600;border-bottom:2px solid #e5e7eb;font-size:12px"'
+
+    # Section: Account Number Changes
+    if account_edits:
+        html += f"""
+  <div style="padding:24px 32px">
+    <h2 style="margin:0 0 16px;font-size:16px;color:#0f172a;border-bottom:2px solid #f59e0b;padding-bottom:8px">Account Number Changes</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#f8fafc">
+        <th {th_style}>Time</th><th {th_style}>User</th><th {th_style}>Property</th>
+        <th {th_style}>Vendor</th><th {th_style}>Old Account</th><th {th_style}>New Account</th>
+      </tr></thead><tbody>"""
+        for i, evt in enumerate(account_edits):
+            d = evt.get("details", {})
+            bg = "#fff" if i % 2 == 0 else "#f8fafc"
+            td = f'style="padding:10px 12px;border-bottom:1px solid #f1f5f9"'
+            html += f"""<tr style="background:{bg}">
+          <td {td}>{_esc_h(_utc_to_pt(evt.get("timestamp_utc", "")))}</td>
+          <td {td}>{_esc_h(evt.get("user", ""))}</td>
+          <td {td}>{_esc_h(d.get("property_name", ""))}</td>
+          <td {td}>{_esc_h(d.get("vendor_name", ""))}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#dc2626;text-decoration:line-through">{_esc_h(d.get("old_account", ""))}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#16a34a;font-weight:600">{_esc_h(d.get("new_account", ""))}</td>
+        </tr>"""
+        html += "</tbody></table></div>"
+
+    # Section: Duplicate Reposts
+    if duplicate_reposts:
+        html += f"""
+  <div style="padding:0 32px 24px">
+    <h2 style="margin:0 0 16px;font-size:16px;color:#0f172a;border-bottom:2px solid #ef4444;padding-bottom:8px">Duplicate Reposts</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#f8fafc">
+        <th {th_style}>Time</th><th {th_style}>User</th><th {th_style}>Property</th>
+        <th {th_style}>Vendor</th><th {th_style}>Account</th><th {th_style}>Suffix</th><th {th_style}>Amount</th>
+      </tr></thead><tbody>"""
+        for i, evt in enumerate(duplicate_reposts):
+            d = evt.get("details", {})
+            bg = "#fff" if i % 2 == 0 else "#f8fafc"
+            td = f'style="padding:10px 12px;border-bottom:1px solid #f1f5f9"'
+            try:
+                amt = f"${float(d.get('total_amount', 0)):,.2f}"
+            except Exception:
+                amt = d.get("total_amount", "")
+            html += f"""<tr style="background:{bg}">
+          <td {td}>{_esc_h(_utc_to_pt(evt.get("timestamp_utc", "")))}</td>
+          <td {td}>{_esc_h(evt.get("user", ""))}</td>
+          <td {td}>{_esc_h(d.get("property_name", ""))}</td>
+          <td {td}>{_esc_h(d.get("vendor_name", ""))}</td>
+          <td {td}>{_esc_h(d.get("account_number", ""))}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9"><span style="background:#fef2f2;color:#dc2626;font-weight:600;border-radius:4px;padding:2px 8px">{_esc_h(d.get("suffix", ""))}</span></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-weight:600">{_esc_h(amt)}</td>
+        </tr>"""
+        html += "</tbody></table></div>"
+
+    # Footer
+    html += """
+  <div style="background:#f8fafc;padding:16px 32px;border-radius:0 0 12px 12px;border-top:1px solid #e5e7eb">
+    <p style="margin:0;font-size:12px;color:#94a3b8;text-align:center">Automated audit report from Bill Review App &middot; JRK Residential</p>
+  </div>
+</div>"""
+    return html
+
+
+def _send_audit_digest(date_str: str):
+    """Send the daily audit digest email for a given date. Skips if no events."""
+    events = _fetch_audit_events_for_date(date_str)
+    if not events:
+        print(f"[AUDIT DIGEST] No events for {date_str}, skipping email")
+        return
+    html = _build_audit_digest_html(date_str, events)
+    try:
+        _ses.send_email(
+            Source="noreply@jrkanalytics.com",
+            Destination={"ToAddresses": ["mpastrana@jrk.com", "tdavies@jrk.com"]},
+            Message={
+                "Subject": {"Data": f"Bill Review Audit Digest — {date_str}", "Charset": "UTF-8"},
+                "Body": {"Html": {"Data": html, "Charset": "UTF-8"}},
+            },
+        )
+        print(f"[AUDIT DIGEST] Email sent for {date_str}")
+    except Exception as e:
+        print(f"[AUDIT DIGEST] Failed to send email: {e}")
+
+
+_AUDIT_DIGEST_SENT_TODAY = False
+
+def _audit_digest_loop():
+    """Background loop that sends the audit digest email at 5PM Pacific daily."""
+    global _AUDIT_DIGEST_SENT_TODAY
+    from zoneinfo import ZoneInfo
+    pacific = ZoneInfo("America/Los_Angeles")
+    last_date_sent = None
+    while True:
+        time.sleep(60)
+        try:
+            now_pt = dt.datetime.now(pacific)
+            today_str = now_pt.strftime("%Y-%m-%d")
+            # Reset flag at midnight
+            if last_date_sent and last_date_sent != today_str:
+                _AUDIT_DIGEST_SENT_TODAY = False
+            if now_pt.hour == 17 and not _AUDIT_DIGEST_SENT_TODAY:
+                # Use DynamoDB conditional put to prevent duplicate sends from 2 AppRunner instances
+                lock_sk = f"audit-digest-lock#{today_str}"
+                try:
+                    ddb.put_item(
+                        TableName=CONFIG_TABLE,
+                        Item={
+                            "pk": {"S": "AUDIT_DIGEST_LOCK"},
+                            "sk": {"S": lock_sk},
+                            "sent_at": {"S": now_pt.isoformat()},
+                            "ttl": {"N": str(int(now_pt.timestamp()) + 7 * 86400)},
+                        },
+                        ConditionExpression="attribute_not_exists(pk)",
+                    )
+                except ddb.exceptions.ConditionalCheckFailedException:
+                    print(f"[AUDIT DIGEST] Lock already held for {today_str}, skipping")
+                    _AUDIT_DIGEST_SENT_TODAY = True
+                    last_date_sent = today_str
+                    continue
+                except Exception as lock_err:
+                    # ClientError with ConditionalCheckFailedException
+                    if "ConditionalCheckFailedException" in str(lock_err):
+                        print(f"[AUDIT DIGEST] Lock already held for {today_str}, skipping")
+                        _AUDIT_DIGEST_SENT_TODAY = True
+                        last_date_sent = today_str
+                        continue
+                    raise
+                _send_audit_digest(today_str)
+                _AUDIT_DIGEST_SENT_TODAY = True
+                last_date_sent = today_str
+        except Exception as e:
+            print(f"[AUDIT DIGEST] Loop error: {e}")
+
+
+@app.get("/api/audit/test-digest")
+def api_test_audit_digest(date: str = "", user: str = Depends(require_admin)):
+    """Admin-only endpoint to manually trigger an audit digest for a given date."""
+    if not date:
+        date = dt.datetime.utcnow().strftime("%Y-%m-%d")
+    # Validate date format
+    try:
+        dt.datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format. Use YYYY-MM-DD."}, status_code=400)
+    events = _fetch_audit_events_for_date(date)
+    if not events:
+        return {"ok": True, "message": f"No audit events found for {date}", "event_count": 0}
+    html = _build_audit_digest_html(date, events)
+    _send_audit_digest(date)
+    return {"ok": True, "message": f"Digest sent for {date}", "event_count": len(events)}
+
+
 @app.post("/api/debug/upload-screenshot")
 async def api_upload_screenshot(request: Request, user: str = Depends(require_user)):
     """Upload a screenshot image (base64) to S3 for an IMPROVE report."""
@@ -25200,6 +25477,25 @@ def api_put_draft(payload: Dict[str, Any] = Body(...), user: str = Depends(requi
     if not pdf_id or not line_id:
         return JSONResponse({"error":"missing pdf_id/line_id"}, status_code=400)
     put_draft(pdf_id, line_id, user, fields, date, invoice)
+
+    # Audit trail: record account number changes on header drafts
+    if line_id == "__header__":
+        original_account = payload.get("original_account")
+        new_account = (fields.get("Account Number") or "").strip()
+        if original_account is not None and new_account and str(original_account).strip() != new_account:
+            try:
+                _record_audit_event("ACCOUNT_EDIT", user, {
+                    "pdf_id": pdf_id,
+                    "old_account": str(original_account).strip(),
+                    "new_account": new_account,
+                    "vendor_name": fields.get("EnrichedVendorName", ""),
+                    "property_name": fields.get("EnrichedPropertyName", ""),
+                    "bill_date": fields.get("Bill Date", ""),
+                    "invoice": invoice,
+                })
+            except Exception as audit_err:
+                print(f"[AUDIT] Non-fatal error recording account edit: {audit_err}")
+
     return {"ok": True}
 
 

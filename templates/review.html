@@ -310,9 +310,9 @@
             <div id="hdr_bill_from_view">{{ header['Bill From'] }}</div>
             <input id="billFrom" type="text" name="Bill From" value="{{ header['Bill From'] }}" />
           </div>
-          <div class="field"><div class="lbl">Account Number</div>
+          <div class="field"><div class="lbl">Account Number <span style="font-size:10px;color:#d97706" title="Changes are audited and reported to management">&#9888; audited</span></div>
             <div id="hdr_account_view">{{ header['Account Number'] }}</div>
-            <input type="text" name="Account Number" value="{{ header['Account Number'] }}" readonly style="background:#f1f5f9;color:#64748b;cursor:not-allowed" title="Account Number cannot be edited" />
+            <input type="text" name="Account Number" value="{{ header['Account Number'] }}" data-original-account="{{ header['Account Number'] }}" style="border:1.5px solid #f59e0b" title="Changes to Account Number are audited" />
           </div>
           <div class="field"><div class="lbl">Bill Period Start <span style="color:#ef4444">*</span></div>
             <div id="hdr_bps_view">{{ header['Bill Period Start'] }}</div>
@@ -1120,6 +1120,13 @@
             invoice: invoiceVal,
             fields: collectHeader()
           };
+          // Include original_account for audit trail if Account Number changed
+          const acctInput = headerBox?.querySelector('input[name="Account Number"]');
+          if (acctInput && acctInput.dataset.originalAccount !== undefined) {
+            const orig = acctInput.dataset.originalAccount;
+            const cur = (acctInput.value || '').trim();
+            if (orig !== cur) headerPayload.original_account = orig;
+          }
           tasks.push(fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(headerPayload)}));
         }
       }catch(_){ }
@@ -2197,10 +2204,23 @@
           invoice: invoiceVal,
           fields: collectHeader()
         };
+        // Include original_account for audit trail if Account Number changed
+        const acctInput = headerBox?.querySelector('input[name="Account Number"]');
+        if (acctInput && acctInput.dataset.originalAccount !== undefined) {
+          const orig = acctInput.dataset.originalAccount;
+          const cur = (acctInput.value || '').trim();
+          if (orig !== cur) payload.original_account = orig;
+        }
         const sig = JSON.stringify(payload.fields);
         if (sig === lastHeaderSig) return; // no change
         const resp = await fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-        if (resp.ok) lastHeaderSig = sig;
+        if (resp.ok) {
+          lastHeaderSig = sig;
+          // Update the original-account baseline after successful save
+          if (acctInput && payload.original_account !== undefined) {
+            acctInput.dataset.originalAccount = (acctInput.value || '').trim();
+          }
+        }
       }catch(_){ }
     }
 
@@ -2218,9 +2238,20 @@
           invoice: invoiceVal,
           fields: collectHeader()
         };
+        // Include original_account for audit trail if Account Number changed
+        const acctInput = headerBox?.querySelector('input[name="Account Number"]');
+        if (acctInput && acctInput.dataset.originalAccount !== undefined) {
+          const orig = acctInput.dataset.originalAccount;
+          const cur = (acctInput.value || '').trim();
+          if (orig !== cur) payload.original_account = orig;
+        }
         const resp = await fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
         if (resp.ok) {
           lastHeaderSig = JSON.stringify(payload.fields);
+          // Update the original-account baseline after successful save
+          if (acctInput && payload.original_account !== undefined) {
+            acctInput.dataset.originalAccount = (acctInput.value || '').trim();
+          }
           status.textContent = 'Saved!';
           status.style.color = '#28a745';
           setTimeout(() => { status.textContent = ''; }, 2000);
