@@ -3636,6 +3636,10 @@ def api_upload_input(file: UploadFile = File(...), user: str = Depends(require_u
         y = now.strftime('%Y'); m = now.strftime('%m'); d = now.strftime('%d')
         ts = now.strftime('%Y%m%dT%H%M%SZ')
         base = os.path.basename(fname).replace("\\", "_").replace("/", "_")
+        # Normalize extension to lowercase so S3 event trigger fires (trigger matches *.pdf not *.PDF)
+        if '.' in base:
+            _bname, _bext = base.rsplit('.', 1)
+            base = f"{_bname}.{_bext.lower()}"
         # Always write flat (no yyyy/mm/dd) to trigger Bill Parser 1 S3 event rules
         key = f"{INPUT_PREFIX}{ts}_{base}"
         body = file.file.read()
@@ -3954,8 +3958,11 @@ async def api_scraper_import(request: Request, user: str = Depends(require_user)
                 # Generate destination key in bill parser input
                 now = dt.datetime.utcnow()
                 ts = now.strftime('%Y%m%dT%H%M%SZ')
-                # Use original filename from the key
+                # Use original filename from the key, normalizing extension to lowercase
                 orig_filename = src_key.split('/')[-1]
+                if '.' in orig_filename:
+                    _oname, _oext = orig_filename.rsplit('.', 1)
+                    orig_filename = f"{_oname}.{_oext.lower()}"
                 dest_key = f"{INPUT_PREFIX}{ts}_scraper_{orig_filename}"
 
                 # Upload to bill parser input bucket
