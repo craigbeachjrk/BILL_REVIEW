@@ -355,7 +355,7 @@ def run_cmd(cmd: list[str], cwd: str | None = None, env: dict | None = None,
     log(f"$ {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, env=merged_env,
                             capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", timeout=1200)
+                            errors="replace", timeout=3600)
     if result.stdout:
         # Truncate long output for logging
         out = result.stdout[:2000]
