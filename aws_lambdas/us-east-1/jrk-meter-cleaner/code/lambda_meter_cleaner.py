@@ -919,6 +919,372 @@ def _apply_auto_fixes(meter_data: dict, gemini_suggestions: dict, auto_apply: bo
     return report
 
 
+# ---------------------------------------------------------------------------
+# Analytics cache builder
+# ---------------------------------------------------------------------------
+
+DEFAULT_UTILITY_RATES = {
+    "electricity": 0.12, "electric": 0.12,
+    "gas": 1.50,
+    "water": 0.005,
+    "sewer": 0.006,
+}
+
+
+def _build_analytics_cache(meter_data: dict) -> dict:
+    """Build a pre-computed analytics cache and write it to S3.
+
+    Returns the cache dict so callers can inspect totals.
+    """
+    meters = meter_data.get("meters", {})
+    all_readings = meter_data.get("readings", [])
+
+    # --- Step 1: Deduplicate readings by invoice base name (keep latest) ---
+    invoice_versions = {}  # {base_name: {timestamp, readings[]}}
+    for r in all_readings:
+        s3_key = r.get("source_s3_key", "")
+        base_name = _get_invoice_base_name(s3_key)
+        timestamp = _get_invoice_timestamp(s3_key)
+
+        if base_name not in invoice_versions:
+            invoice_versions[base_name] = {"timestamp": timestamp, "readings": []}
+
+        if timestamp >= invoice_versions[base_name]["timestamp"]:
+            if timestamp > invoice_versions[base_name]["timestamp"]:
+                invoice_versions[base_name] = {"timestamp": timestamp, "readings": []}
+            invoice_versions[base_name]["readings"].append(r)
+
+    latest_readings = []
+    for inv in invoice_versions.values():
+        latest_readings.extend(inv["readings"])
+
+    # --- Step 2: Group readings by meter, compute monthly rollups ---
+    meter_monthly = {}  # meter_id -> {YYYY-MM -> {consumption, cost, days, ...}}
+    for r in latest_readings:
+        meter_id = r.get("canonical_meter_id") or r.get("meter_id")
+        if not meter_id:
+            continue
+        if meter_id not in meter_monthly:
+            meter_monthly[meter_id] = {}
+
+        consumption = r.get("enriched_consumption") or r.get("normalized_consumption") or 0
+        amount = r.get("amount", 0) or 0
+        service_start = r.get("service_start", "") or ""
+        service_end = r.get("service_end", "") or r.get("reading_date", "") or ""
+
+        end_dt = _parse_date(service_end)
+        if not end_dt:
+            continue
+        month_key = end_dt.strftime("%Y-%m")
+
+        start_dt = _parse_date(service_start)
+        days = (end_dt - start_dt).days if start_dt and end_dt else 0
+        if days <= 0:
+            days = 1
+
+        bucket = meter_monthly[meter_id].get(month_key)
+        if not bucket:
+            bucket = {"consumption": 0.0, "cost": 0.0, "days": 0, "_day_sum": 0}
+            meter_monthly[meter_id][month_key] = bucket
+        bucket["consumption"] += consumption
+        bucket["cost"] += amount
+        # Track days as max across readings in same month (they overlap)
+        if days > bucket["days"]:
+            bucket["days"] = days
+        bucket["_day_sum"] += days
+
+    # Finalize rate / daily_rate per bucket
+    for mid, months in meter_monthly.items():
+        for mk, b in months.items():
+            b["rate"] = round(b["cost"] / b["consumption"], 6) if b["consumption"] else 0.0
+            b["daily_rate"] = round(b["consumption"] / b["days"], 4) if b["days"] else 0.0
+            b["consumption"] = round(b["consumption"], 4)
+            b["cost"] = round(b["cost"], 2)
+            del b["_day_sum"]
+
+    # --- Step 3: Build per-meter cache entries + flag detection ---
+    meter_cache = {}
+    for meter_id, m_info in meters.items():
+        monthly = meter_monthly.get(meter_id, {})
+        sorted_months = sorted(monthly.keys())
+        last_12 = sorted_months[-12:] if sorted_months else []
+
+        sparkline = [monthly[mk]["daily_rate"] for mk in last_12]
+        sparkline_dates = list(last_12)
+        latest_date = last_12[-1] if last_12 else ""
+        latest_daily = monthly[last_12[-1]]["daily_rate"] if last_12 else 0.0
+        reading_count = m_info.get("reading_count", 0)
+
+        # --- Flag detection ---
+        flags = _detect_meter_flags(meter_id, monthly, m_info)
+
+        meter_cache[meter_id] = {
+            "meter_number": m_info.get("meter_number") or m_info.get("display_name", ""),
+            "property_id": m_info.get("property_id", ""),
+            "property_name": m_info.get("property_name", ""),
+            "building": m_info.get("building", ""),
+            "utility_type": m_info.get("utility_type", ""),
+            "uom": m_info.get("canonical_uom", ""),
+            "reading_count": reading_count,
+            "latest_date": latest_date,
+            "latest_daily_rate": round(latest_daily, 4),
+            "sparkline": sparkline,
+            "sparkline_dates": sparkline_dates,
+            "flags": flags,
+            "monthly": {mk: monthly[mk] for mk in sorted_months},
+        }
+
+    # --- Step 4: Aggregate to property level ---
+    properties_cache = {}
+    for meter_id, mc in meter_cache.items():
+        pid = mc["property_id"]
+        if pid not in properties_cache:
+            properties_cache[pid] = {
+                "property_name": mc["property_name"],
+                "state": meters.get(meter_id, {}).get("state", ""),
+                "meter_count": 0,
+                "by_utility": {},
+                "issues": [],
+                "buildings": set(),
+            }
+        prop = properties_cache[pid]
+        prop["meter_count"] += 1
+        if mc["building"]:
+            prop["buildings"].add(mc["building"])
+
+        # Aggregate issues from meter flags
+        for f in mc["flags"]:
+            prop["issues"].append({
+                "meter_id": meter_id,
+                "meter_number": mc["meter_number"],
+                "type": f["type"],
+                "severity": f["severity"],
+                "message": f["message"],
+                "date": f.get("date", ""),
+                "cost_impact": f.get("cost_impact", 0),
+                "category": f.get("category", ""),
+            })
+
+        # Per-utility aggregation
+        ut = mc["utility_type"] or "unknown"
+        if ut not in prop["by_utility"]:
+            prop["by_utility"][ut] = {"meters": 0, "monthly": {}}
+        prop["by_utility"][ut]["meters"] += 1
+        for mk, vals in mc["monthly"].items():
+            if mk not in prop["by_utility"][ut]["monthly"]:
+                prop["by_utility"][ut]["monthly"][mk] = {
+                    "consumption": 0.0, "cost": 0.0, "meter_count": 0,
+                }
+            agg = prop["by_utility"][ut]["monthly"][mk]
+            agg["consumption"] = round(agg["consumption"] + vals["consumption"], 4)
+            agg["cost"] = round(agg["cost"] + vals["cost"], 2)
+            agg["meter_count"] += 1
+
+    # Compute per-utility monthly rate
+    for pid, prop in properties_cache.items():
+        for ut, ut_data in prop["by_utility"].items():
+            for mk, agg in ut_data["monthly"].items():
+                agg["rate"] = round(agg["cost"] / agg["consumption"], 6) if agg["consumption"] else 0.0
+
+    # Convert sets to sorted lists for JSON
+    for pid, prop in properties_cache.items():
+        prop["buildings"] = sorted(prop["buildings"])
+
+    # --- Step 5: Aggregate to portfolio level ---
+    portfolio_by_utility = {}
+    all_issues = []
+    for pid, prop in properties_cache.items():
+        all_issues.extend(prop["issues"])
+        for ut, ut_data in prop["by_utility"].items():
+            if ut not in portfolio_by_utility:
+                portfolio_by_utility[ut] = {"meters": 0, "monthly": {}}
+            portfolio_by_utility[ut]["meters"] += ut_data["meters"]
+            for mk, agg in ut_data["monthly"].items():
+                if mk not in portfolio_by_utility[ut]["monthly"]:
+                    portfolio_by_utility[ut]["monthly"][mk] = {
+                        "consumption": 0.0, "cost": 0.0, "rate": 0.0, "meter_count": 0,
+                    }
+                pagg = portfolio_by_utility[ut]["monthly"][mk]
+                pagg["consumption"] = round(pagg["consumption"] + agg["consumption"], 4)
+                pagg["cost"] = round(pagg["cost"] + agg["cost"], 2)
+                pagg["meter_count"] += agg["meter_count"]
+
+    for ut, ut_data in portfolio_by_utility.items():
+        for mk, pagg in ut_data["monthly"].items():
+            pagg["rate"] = round(pagg["cost"] / pagg["consumption"], 6) if pagg["consumption"] else 0.0
+
+    # Issues summary by category
+    issues_summary = {
+        "rate_increases": {"count": 0, "est_monthly_impact": 0.0},
+        "volume_spikes": {"count": 0, "est_monthly_impact": 0.0},
+        "data_issues": {"count": 0, "est_monthly_impact": 0.0},
+    }
+    for iss in all_issues:
+        cat = iss.get("category", "")
+        impact = iss.get("cost_impact", 0) or 0
+        if cat == "rate":
+            issues_summary["rate_increases"]["count"] += 1
+            issues_summary["rate_increases"]["est_monthly_impact"] += impact
+        elif cat == "volume":
+            if iss.get("type") == "volume_spike":
+                issues_summary["volume_spikes"]["count"] += 1
+                issues_summary["volume_spikes"]["est_monthly_impact"] += impact
+            elif iss.get("type") == "drop":
+                issues_summary["volume_spikes"]["count"] += 1
+                issues_summary["volume_spikes"]["est_monthly_impact"] += impact
+            else:
+                issues_summary["volume_spikes"]["count"] += 1
+                issues_summary["volume_spikes"]["est_monthly_impact"] += impact
+        elif cat == "data":
+            issues_summary["data_issues"]["count"] += 1
+            issues_summary["data_issues"]["est_monthly_impact"] += impact
+
+    for k in issues_summary:
+        issues_summary[k]["est_monthly_impact"] = round(issues_summary[k]["est_monthly_impact"], 2)
+
+    # Top 20 issues by cost_impact
+    top_issues = sorted(all_issues, key=lambda x: abs(x.get("cost_impact", 0) or 0), reverse=True)[:20]
+
+    cache = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "portfolio": {
+            "total_meters": len(meter_cache),
+            "total_properties": len(properties_cache),
+            "total_readings": len(latest_readings),
+            "by_utility": portfolio_by_utility,
+            "issues_summary": issues_summary,
+            "top_issues": top_issues,
+        },
+        "properties": properties_cache,
+        "meters": meter_cache,
+    }
+
+    # --- Write to S3 ---
+    body = json.dumps(cache, default=str).encode('utf-8')
+    compressed = io.BytesIO()
+    with gzip.GzipFile(fileobj=compressed, mode='wb') as gz:
+        gz.write(body)
+    compressed.seek(0)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=METER_DATA_PREFIX + "meter_analytics_cache.json.gz",
+        Body=compressed.read(),
+        ContentType='application/json',
+        ContentEncoding='gzip',
+    )
+    print(f"[METER CLEANER] Analytics cache written: {len(meter_cache)} meters, "
+          f"{len(properties_cache)} properties, {len(latest_readings)} readings, "
+          f"{len(all_issues)} issues")
+
+    return cache
+
+
+def _detect_meter_flags(meter_id: str, monthly: dict, meter_info: dict) -> list:
+    """Run flag detection on a single meter's monthly rollups.
+
+    Returns a list of flag dicts.
+    """
+    sorted_months = sorted(monthly.keys())
+    if len(sorted_months) < 2:
+        return []
+
+    # Build list of periods with daily_rate > 0
+    periods = []
+    for mk in sorted_months:
+        b = monthly[mk]
+        dr = b.get("daily_rate", 0)
+        er = b.get("rate", 0)  # effective rate = cost / consumption
+        if dr > 0:
+            periods.append({
+                "month": mk,
+                "daily_rate": dr,
+                "effective_rate": er,
+                "consumption": b.get("consumption", 0),
+                "cost": b.get("cost", 0),
+                "days": b.get("days", 0),
+            })
+
+    if len(periods) < 2:
+        return []
+
+    # Compute averages
+    avg_daily = sum(p["daily_rate"] for p in periods) / len(periods)
+    avg_eff_rate = sum(p["effective_rate"] for p in periods) / len(periods)
+
+    utility_type = (meter_info.get("utility_type") or "").lower()
+    default_rate = DEFAULT_UTILITY_RATES.get(utility_type, 0.10)
+
+    flags = []
+
+    # Check last 3 periods for rate/volume anomalies
+    recent = periods[-3:]
+    for p in recent:
+        # Rate increase: effective_rate > 20% above average
+        if avg_eff_rate > 0 and p["effective_rate"] > avg_eff_rate * 1.2:
+            excess_rate = p["effective_rate"] - avg_eff_rate
+            cost_impact = excess_rate * (avg_daily * 30)
+            flag = {
+                "type": "rate_increase",
+                "severity": "high" if p["effective_rate"] > avg_eff_rate * 1.5 else "medium",
+                "message": (f"Rate {p['effective_rate']:.4f} is "
+                            f"{((p['effective_rate'] / avg_eff_rate) - 1) * 100:.0f}% above "
+                            f"average ({avg_eff_rate:.4f})"),
+                "date": p["month"],
+                "category": "rate",
+            }
+            if abs(cost_impact) > 10:
+                flag["cost_impact"] = round(cost_impact, 2)
+            flags.append(flag)
+
+        # Volume spike: daily_rate > 50% above average
+        if avg_daily > 0 and p["daily_rate"] > avg_daily * 1.5:
+            excess_daily = p["daily_rate"] - avg_daily
+            unit_rate = p["effective_rate"] if p["effective_rate"] > 0 else default_rate
+            cost_impact = (excess_daily * 30) * unit_rate
+            flag = {
+                "type": "volume_spike",
+                "severity": "high" if p["daily_rate"] > avg_daily * 2 else "medium",
+                "message": (f"Daily rate {p['daily_rate']:.2f} is "
+                            f"{((p['daily_rate'] / avg_daily) - 1) * 100:.0f}% above "
+                            f"average ({avg_daily:.2f})"),
+                "date": p["month"],
+                "category": "volume",
+            }
+            if abs(cost_impact) > 10:
+                flag["cost_impact"] = round(cost_impact, 2)
+            flags.append(flag)
+
+        # Drop: daily_rate > 50% below average
+        if avg_daily > 0 and p["daily_rate"] < avg_daily * 0.5:
+            flag = {
+                "type": "drop",
+                "severity": "medium",
+                "message": (f"Daily rate {p['daily_rate']:.2f} is "
+                            f"{(1 - (p['daily_rate'] / avg_daily)) * 100:.0f}% below "
+                            f"average ({avg_daily:.2f})"),
+                "date": p["month"],
+                "category": "volume",
+            }
+            flags.append(flag)
+
+    # Check all periods for gaps > 45 days
+    for i in range(1, len(sorted_months)):
+        prev_dt = _parse_date(sorted_months[i - 1] + "-15")  # mid-month approx
+        curr_dt = _parse_date(sorted_months[i] + "-15")
+        if prev_dt and curr_dt:
+            gap_days = (curr_dt - prev_dt).days
+            if gap_days > 45:
+                flags.append({
+                    "type": "gap",
+                    "severity": "low" if gap_days < 90 else "medium",
+                    "message": f"{gap_days}-day gap between {sorted_months[i-1]} and {sorted_months[i]}",
+                    "date": sorted_months[i],
+                    "category": "data",
+                })
+
+    return flags
+
+
 def lambda_handler(event, context):
     """
     Lambda handler for meter data cleaning.
@@ -928,6 +1294,7 @@ def lambda_handler(event, context):
     - action: "apply" - Apply pending fixes
     - action: "rescan" - Full rescan of all Stage 7/8 files (bulk cleanup)
     - action: "scan" - Incremental scan of new files
+    - action: "build_analytics" - Build analytics cache from current meter data
     - mode: "incremental" or "full" - For analyze action
     - days_back: Number of days to look back for incremental scan (default 1)
     - auto_apply_uom: True/False - Auto-apply UOM corrections (default False)
@@ -945,6 +1312,13 @@ def lambda_handler(event, context):
         force_fresh = event.get("force_fresh", True)  # Default to fresh rescan
         meter_data = _full_rescan(context=context, batch_size=batch_size, force_fresh=force_fresh)
         _save_meter_data(meter_data)
+
+        # Auto-build analytics cache after rescan
+        try:
+            _build_analytics_cache(meter_data)
+            print("[METER CLEANER] Analytics cache auto-built after rescan")
+        except Exception as e:
+            print(f"[METER CLEANER] Analytics cache build failed: {e}")
 
         scan_meta = meter_data.get("scan_metadata", {})
         status = scan_meta.get("status", "complete")
@@ -970,6 +1344,13 @@ def lambda_handler(event, context):
         new_data = _scan_new_files(days_back=days_back)
         meter_data = _merge_meter_data(existing_data, new_data)
         _save_meter_data(meter_data)
+
+        # Auto-build analytics cache after scan
+        try:
+            _build_analytics_cache(meter_data)
+            print("[METER CLEANER] Analytics cache auto-built after scan")
+        except Exception as e:
+            print(f"[METER CLEANER] Analytics cache build failed: {e}")
 
         return {
             "statusCode": 200,
@@ -1001,6 +1382,18 @@ def lambda_handler(event, context):
         return {
             "statusCode": 200,
             "body": json.dumps({"message": "No meter data to clean", "meters": 0, "readings": 0})
+        }
+
+    if action == "build_analytics":
+        cache = _build_analytics_cache(meter_data)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Analytics cache built",
+                "total_meters": cache.get("portfolio", {}).get("total_meters", 0),
+                "total_properties": cache.get("portfolio", {}).get("total_properties", 0),
+                "total_issues": len(cache.get("portfolio", {}).get("top_issues", []))
+            })
         }
 
     if action == "analyze":

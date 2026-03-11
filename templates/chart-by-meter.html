@@ -24,7 +24,6 @@
     .wrap{max-width:1600px;margin:40px auto;padding:0 40px}
     h1{margin:0 0 20px 0}
     .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px;margin-bottom:20px}
-    .controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
     select,input{padding:8px 12px;border-radius:8px;border:1px solid #e5e7eb;font-size:14px;font-family:inherit}
     .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px}
     .stat-card{background:#fff;border-radius:12px;padding:16px;text-align:center}
@@ -34,7 +33,6 @@
     th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
     th{background:#f9fafb;font-weight:600;position:sticky;top:0;z-index:10}
     tr:hover{background:#f9fafb}
-    tr.clickable{cursor:pointer}
     .badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600}
     .badge.electric{background:#fef3c7;color:#92400e}
     .badge.gas{background:#dbeafe;color:#1e40af}
@@ -62,12 +60,54 @@
     .modal-overlay.show{display:flex}
     .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:1000px;width:calc(100% - 80px);padding:24px;max-height:85vh;overflow-y:auto}
     .modal-box h2{margin:0 0 16px 0;font-size:18px}
-    .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
     .tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:2px solid #e5e7eb;padding-bottom:0}
     .tab{padding:8px 16px;cursor:pointer;border-radius:8px 8px 0 0;font-weight:600;color:#64748b}
     .tab.active{background:#0ea5e9;color:#fff}
     .tab-content{display:none}
     .tab-content.active{display:block}
+
+    .breadcrumb{display:flex;gap:8px;align-items:center;padding:10px 0;font-size:14px;color:#64748b}
+    .breadcrumb a{color:#0ea5e9;text-decoration:none;cursor:pointer}
+    .breadcrumb a:hover{text-decoration:underline}
+    .breadcrumb .sep{color:#cbd5e1}
+    .utility-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:20px}
+    .utility-card{background:#fff;border-radius:12px;padding:16px;border-left:4px solid #e5e7eb}
+    .utility-card.electric{border-left-color:#f59e0b}
+    .utility-card.gas{border-left-color:#3b82f6}
+    .utility-card.water{border-left-color:#10b981}
+    .utility-card.sewer{border-left-color:#6366f1}
+    .utility-card h4{margin:0 0 8px 0;font-size:14px}
+    .utility-card .big-num{font-size:24px;font-weight:700}
+    .issue-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px}
+    .issue-card{background:#fff;border-radius:12px;padding:16px;cursor:pointer;transition:all .2s}
+    .issue-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1)}
+    .issue-card h4{margin:0 0 4px 0;font-size:13px;color:#64748b}
+    .issue-card .count{font-size:28px;font-weight:700}
+    .issue-card .impact{font-size:13px;color:#64748b}
+    .issue-card.rate .count{color:#ef4444}
+    .issue-card.volume .count{color:#f59e0b}
+    .issue-card.data .count{color:#6366f1}
+    .property-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+    .property-card{background:#fff;border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;border:1px solid #e5e7eb}
+    .property-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1);transform:translateY(-2px)}
+    .property-card h3{margin:0 0 4px 0;font-size:15px}
+    .property-card .state{font-size:12px;color:#64748b}
+    .property-card .prop-stats{display:flex;gap:16px;margin-top:8px;font-size:13px}
+    .property-card .issue-badge{background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
+    .top-issues{margin-top:20px}
+    .top-issues table{font-size:13px}
+    .admin-menu{position:relative;display:inline-block}
+    .admin-dropdown{display:none;position:absolute;right:0;top:100%;background:#fff;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:200px;z-index:200;overflow:hidden}
+    .admin-dropdown.show{display:block}
+    .admin-dropdown button{display:block;width:100%;padding:10px 16px;border:none;background:none;text-align:left;cursor:pointer;font-size:13px;font-family:inherit}
+    .admin-dropdown button:hover{background:#f1f5f9}
+    .view-section{display:none}
+    .view-section.active{display:block}
+    .flag-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin:1px}
+    .flag-badge.rate_increase{background:#fee2e2;color:#991b1b}
+    .flag-badge.volume_spike{background:#fef3c7;color:#92400e}
+    .flag-badge.drop{background:#dbeafe;color:#1e40af}
+    .flag-badge.gap{background:#e0e7ff;color:#3730a3}
   </style>
 </head>
 <body>
@@ -82,1381 +122,622 @@
   <div class="wrap">
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h1 style="margin:0">Chart by Meter</h1>
         <div>
-          <button class="btn" onclick="runScan()" id="scanBtn">Scan for New Data</button>
-        </div>
-      </div>
-
-      <!-- Stats -->
-      <div class="stats-grid" id="statsGrid">
-        <div class="stat-card">
-          <div class="stat-value" id="statMeters">-</div>
-          <div class="stat-label">Meters</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statReadings">-</div>
-          <div class="stat-label">Readings</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statProperties">-</div>
-          <div class="stat-label">Properties</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statFlagged">-</div>
-          <div class="stat-label">Flagged</div>
-        </div>
-      </div>
-
-      <!-- Tabs -->
-      <div class="tabs">
-        <div class="tab active" onclick="switchTab('executive')">Executive Summary</div>
-        <div class="tab" onclick="switchTab('meters')">Meters</div>
-        <div class="tab" onclick="switchTab('trends')">Trends</div>
-        <div class="tab" onclick="switchTab('flagged')">Flagged Readings</div>
-        <div class="tab" onclick="switchTab('cleaning')">Data Cleaning</div>
-      </div>
-
-      <!-- Executive Summary Tab -->
-      <div class="tab-content active" id="tab-executive">
-        <div id="execDataFreshness" style="margin-bottom:16px;padding:12px 16px;background:#f0f9ff;border-radius:8px;border-left:4px solid #0ea5e9;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-          <div>
-            <span style="font-weight:600">Data through:</span> <span id="execLatestDate">Loading...</span>
-            <span style="color:#64748b;margin-left:16px">Last scan: <span id="execLastScan">-</span></span>
-          </div>
-          <button class="btn small" onclick="refreshExecutiveSummary()" id="execRefreshBtn">Refresh</button>
-        </div>
-
-        <!-- Issue Summary Cards - responsive grid -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px">
-          <div class="stat-card" style="background:linear-gradient(135deg,#fef2f2,#fee2e2);border-left:4px solid #dc2626">
-            <div style="font-size:12px;color:#991b1b;font-weight:600;margin-bottom:4px">💲 RATE INCREASES</div>
-            <div class="stat-value" style="color:#dc2626" id="execRateCount">-</div>
-            <div class="stat-label">Est. Impact: <span id="execRateImpact">$0</span>/mo</div>
-          </div>
-          <div class="stat-card" style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border-left:4px solid #f97316">
-            <div style="font-size:12px;color:#9a3412;font-weight:600;margin-bottom:4px">📈 VOLUME SPIKES</div>
-            <div class="stat-value" style="color:#f97316" id="execVolumeCount">-</div>
-            <div class="stat-label">Est. Impact: <span id="execVolumeImpact">$0</span>/mo</div>
-          </div>
-          <div class="stat-card" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-left:4px solid #22c55e">
-            <div style="font-size:12px;color:#166534;font-weight:600;margin-bottom:4px">⏳ DATA ISSUES</div>
-            <div class="stat-value" style="color:#22c55e" id="execDataCount">-</div>
-            <div class="stat-label">Billing gaps detected</div>
+          <h1 style="margin:0">Chart by Meter</h1>
+          <div class="breadcrumb" id="breadcrumb">
+            <span class="current">Portfolio</span>
           </div>
         </div>
-
-        <!-- Portfolio Summary -->
-        <div class="card" style="margin-bottom:20px">
-          <h3 style="margin:0 0 16px 0">Portfolio Summary (<span id="execPeriodMonths">Last 3</span> Months)</h3>
-          <div class="stats-grid">
-            <div class="stat-card">
-              <div class="stat-value" id="execTotalSpend">-</div>
-              <div class="stat-label">Total Spend</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-value" id="execTotalConsumption">-</div>
-              <div class="stat-label">Total Consumption</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-value" id="execElectricRate">-</div>
-              <div class="stat-label">Avg Electric Rate</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-value" id="execGasRate">-</div>
-              <div class="stat-label">Avg Gas Rate</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Top Issues Table -->
-        <div class="card" style="margin-bottom:20px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-            <h3 style="margin:0">Top Issues by Cost Impact</h3>
-            <span style="color:#64748b;font-size:13px">Click row to drill down to meter</span>
-          </div>
-          <div style="max-height:300px;overflow-y:auto">
-            <table id="execTopIssuesTable">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Property</th>
-                  <th>Meter</th>
-                  <th>Issue</th>
-                  <th style="text-align:right">Est. Impact</th>
-                </tr>
-              </thead>
-              <tbody id="execTopIssuesBody">
-                <tr><td colspan="5" class="loading"><span class="spinner"></span>Loading...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Property Rankings -->
-        <div class="card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-            <h3 style="margin:0">Properties with Most Issues</h3>
-            <span style="color:#64748b;font-size:13px">Sorted by estimated monthly impact</span>
-          </div>
-          <div style="max-height:300px;overflow-y:auto">
-            <table id="execPropertyTable">
-              <thead>
-                <tr>
-                  <th>Property</th>
-                  <th style="text-align:center">Rate Issues</th>
-                  <th style="text-align:center">Volume Issues</th>
-                  <th style="text-align:center">Data Issues</th>
-                  <th style="text-align:right">Est. Monthly Impact</th>
-                </tr>
-              </thead>
-              <tbody id="execPropertyBody">
-                <tr><td colspan="5" class="loading"><span class="spinner"></span>Loading...</td></tr>
-              </tbody>
-            </table>
+        <div class="admin-menu">
+          <button class="btn secondary" onclick="toggleAdminMenu()">Actions &#9662;</button>
+          <div class="admin-dropdown" id="adminDropdown">
+            <button onclick="adminAction('scan')">Scan for New Data</button>
+            <button onclick="adminAction('rescan')">Full Rescan</button>
+            <button onclick="adminAction('rebuild')">Rebuild Analytics</button>
+            <button onclick="adminAction('ai-clean')">AI Analysis</button>
           </div>
         </div>
       </div>
+      <div id="lastUpdated" style="font-size:12px;color:#64748b;margin-bottom:16px"></div>
 
-      <!-- Meters Tab -->
-      <div class="tab-content" id="tab-meters">
-        <div class="controls">
-          <select id="filterState" onchange="filterMetersLocal()">
-            <option value="">All States</option>
-          </select>
-          <select id="filterProperty" onchange="filterMetersLocal()">
-            <option value="">All Properties</option>
-          </select>
-          <select id="filterUtility" onchange="filterMetersLocal()">
-            <option value="">All Utilities</option>
-            <option value="electric">Electricity</option>
-            <option value="gas">Gas</option>
-            <option value="water">Water</option>
-            <option value="sewer">Sewer</option>
-          </select>
-          <input type="text" id="searchMeter" placeholder="Search meter..." onkeyup="filterMeterCards()" style="min-width:200px" />
+      <div id="loadingView" class="loading"><span class="spinner"></span> Loading analytics...</div>
+
+      <!-- Portfolio View -->
+      <div id="portfolioView" class="view-section">
+        <div class="stats-grid" id="portfolioStats"></div>
+        <div class="utility-cards" id="utilityCards"></div>
+        <div class="issue-cards" id="issueCards"></div>
+        <h3>Properties</h3>
+        <div style="margin-bottom:12px">
+          <input type="text" id="propSearch" placeholder="Search properties..." oninput="filterProperties()" style="width:300px">
         </div>
-        <div id="meterGrid" class="meter-grid">
-          <div class="loading"><span class="spinner"></span>Loading meters...</div>
+        <div class="property-grid" id="propertyGrid"></div>
+        <div class="top-issues card" id="topIssuesSection" style="margin-top:20px">
+          <h3>Top Issues by Cost Impact</h3>
+          <div id="topIssuesTable"></div>
         </div>
       </div>
 
-      <!-- Flagged Tab -->
-      <div class="tab-content" id="tab-flagged">
-        <div id="flaggedContainer">
-          <div class="loading"><span class="spinner"></span>Loading flagged readings...</div>
-        </div>
+      <!-- Property View -->
+      <div id="propertyView" class="view-section">
+        <div class="stats-grid" id="propStats"></div>
+        <div class="chart-container" id="propChartContainer"><canvas id="propConsumptionChart"></canvas></div>
+        <div class="chart-container" id="propRateContainer"><canvas id="propRateChart"></canvas></div>
+        <div id="propIssues" style="margin-bottom:20px"></div>
+        <h3>Meters</h3>
+        <div class="meter-grid" id="propMeterGrid"></div>
       </div>
 
-      <!-- Cleaning Tab -->
-      <div class="tab-content" id="tab-cleaning">
-        <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg,#fef3c7,#fde68a)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <h3 style="margin:0">🔄 Bulk Data Rescan</h3>
-            <div style="display:flex;gap:8px">
-              <button class="btn secondary" onclick="runBulkRescan('scan')" id="incrementalScanBtn">Incremental Scan (1 day)</button>
-              <button class="btn danger" onclick="runBulkRescan('rescan')" id="fullRescanBtn">Full Rescan</button>
-            </div>
-          </div>
-          <p style="font-size:13px;color:#78350f;margin:0 0 12px 0">
-            <strong>Incremental Scan:</strong> Process new files from the last day. <strong>Full Rescan:</strong> Rebuild meter data from all Stage 7 & 8 files (may take several minutes).
-          </p>
-          <div id="rescanResultsContainer">
-            <div style="color:#78350f">Daily incremental scans run automatically at 6 AM UTC via EventBridge.</div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg,#f0f9ff,#e0f2fe)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <h3 style="margin:0">AI-Powered Analysis</h3>
-            <button class="btn success" onclick="runAiClean()" id="aiCleanBtn">Run AI Analysis</button>
-          </div>
-          <p style="font-size:13px;color:#64748b;margin:0 0 12px 0">
-            Use Gemini AI to analyze meter data and suggest corrections for UOM issues and duplicates.
-          </p>
-          <div id="aiResultsContainer">
-            <div class="loading" style="color:#64748b">Click "Run AI Analysis" to get AI-powered suggestions</div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-bottom:16px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <h3 style="margin:0">Potential Duplicate Meters</h3>
-            <button class="btn small" onclick="loadDuplicates()">Refresh</button>
-          </div>
-          <p style="font-size:13px;color:#64748b;margin:0 0 12px 0">
-            Meters at the same property with similar numbers that may need to be merged.
-          </p>
-          <div id="duplicatesContainer">
-            <div class="loading"><span class="spinner"></span>Loading duplicates...</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <h3 style="margin:0">Bulk Flag Management</h3>
-            <button class="btn small danger" onclick="dismissAllFlags()" id="dismissAllBtn" disabled>Dismiss All Flagged</button>
-          </div>
-          <p style="font-size:13px;color:#64748b;margin:0 0 12px 0">
-            Select flagged readings to dismiss or dismiss all at once.
-          </p>
-          <div id="bulkFlagContainer">
-            <div class="loading">Select readings from the Flagged Readings tab to manage them here.</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Trends Tab -->
-      <div class="tab-content" id="tab-trends">
-        <div class="controls">
-          <select id="trendUtility" onchange="loadTrends()">
-            <option value="">All Utilities</option>
-            <option value="electric">Electricity</option>
-            <option value="gas">Gas</option>
-            <option value="water">Water</option>
-          </select>
-          <span style="color:#64748b;font-size:13px;margin-left:12px">Portfolio consumption trends (last 12 months)</span>
-        </div>
-        <div class="chart-container" style="height:300px">
-          <canvas id="trendsChart"></canvas>
-        </div>
-        <div id="trendsSummary" style="margin-top:16px"></div>
+      <!-- Meter View -->
+      <div id="meterView" class="view-section">
+        <div class="stats-grid" id="meterStats"></div>
+        <div class="chart-container" style="height:350px"><canvas id="meterChart"></canvas></div>
+        <div id="meterFlags" style="margin-bottom:20px"></div>
+        <h3>Readings</h3>
+        <div id="meterReadingsTable"></div>
       </div>
     </div>
   </div>
 
-  <!-- Meter Detail Modal -->
-  <div class="modal-overlay" id="meterModal">
-    <div class="modal-box">
-      <h2 id="modalTitle">Meter Details</h2>
-      <div class="chart-container">
-        <canvas id="meterChart"></canvas>
-      </div>
-      <div id="readingsTable"></div>
-      <div class="modal-actions">
-        <button class="btn secondary" onclick="closeModal()">Close</button>
-      </div>
-    </div>
-  </div>
+<script>
+/* ── Global State ─────────────────────────────────────── */
+let DATA = null;
+let currentView = 'portfolio';
+let currentPropertyId = null;
+let currentMeterId = null;
+let propChartInstance = null;
+let propRateChartInstance = null;
+let meterChartInstance = null;
 
-  <script>
-    // Register datalabels plugin
-    Chart.register(ChartDataLabels);
+const UTILITY_COLORS = {
+  electric: '#f59e0b', electricity: '#f59e0b',
+  gas: '#3b82f6',
+  water: '#10b981',
+  sewer: '#6366f1'
+};
 
-    let allMeters = [];
-    let meterChart = null;
+const UTILITY_CLASS = {
+  electric: 'electric', electricity: 'electric',
+  gas: 'gas', water: 'water', sewer: 'sewer'
+};
 
-    function showToast(msg, type) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.className = 'toast ' + (type === 'err' ? 'err' : 'ok');
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 3000);
+/* ── Formatting helpers ───────────────────────────────── */
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return '-';
+  return Number(n).toLocaleString('en-US');
+}
+function fmtMoney(n) {
+  if (n == null || isNaN(n)) return '-';
+  return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+}
+function fmtRate(n) {
+  if (n == null || isNaN(n)) return '-';
+  return Number(n).toFixed(4);
+}
+function utilColor(ut) {
+  return UTILITY_COLORS[(ut || '').toLowerCase()] || '#94a3b8';
+}
+function utilClass(ut) {
+  return UTILITY_CLASS[(ut || '').toLowerCase()] || '';
+}
+function capitalise(s) {
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/* ── Toast ────────────────────────────────────────────── */
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type === 'error' ? 'err' : 'ok');
+  setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+/* ── Admin menu ───────────────────────────────────────── */
+function toggleAdminMenu() {
+  document.getElementById('adminDropdown').classList.toggle('show');
+}
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.admin-menu')) {
+    document.getElementById('adminDropdown').classList.remove('show');
+  }
+});
+
+async function adminAction(action) {
+  document.getElementById('adminDropdown').classList.remove('show');
+  try {
+    let resp;
+    if (action === 'scan') {
+      resp = await fetch('/api/meters/bulk-rescan', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'scan'})});
+    } else if (action === 'rescan') {
+      resp = await fetch('/api/meters/bulk-rescan', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'rescan'})});
+    } else if (action === 'rebuild') {
+      resp = await fetch('/api/meters/rebuild', {method:'POST'});
+    } else if (action === 'ai-clean') {
+      resp = await fetch('/api/meters/ai-clean', {method:'POST'});
     }
-
-    function switchTab(tabId) {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-      document.querySelector(`.tab[onclick*="${tabId}"]`).classList.add('active');
-      document.getElementById(`tab-${tabId}`).classList.add('active');
-
-      if (tabId === 'executive') loadExecutiveSummary();
-      if (tabId === 'flagged') loadFlagged();
-      if (tabId === 'cleaning') loadDuplicates();
-      if (tabId === 'trends') loadTrends();
-    }
-
-    async function loadStats() {
-      try {
-        const resp = await fetch('/api/meters/stats');
-        const data = await resp.json();
-        document.getElementById('statMeters').textContent = data.total_meters || 0;
-        document.getElementById('statReadings').textContent = data.total_readings || 0;
-        document.getElementById('statProperties').textContent = data.total_properties || 0;
-        document.getElementById('statFlagged').textContent = data.flagged_count || 0;
-      } catch (e) {
-        console.error('Error loading stats:', e);
-      }
-    }
-
-    let execDataLoaded = false;
-    async function loadExecutiveSummary(forceRefresh = false) {
-      if (execDataLoaded && !forceRefresh) return;  // Only load once per session unless forced
-
-      const refreshBtn = document.getElementById('execRefreshBtn');
-      if (refreshBtn) refreshBtn.disabled = true;
-
-      try {
-        const resp = await fetch('/api/meters/executive-summary?months=3');
-        const data = await resp.json();
-
-        if (data.error) {
-          throw new Error(data.error);
-        }
-
-        execDataLoaded = true;
-
-        // Data freshness
-        const freshness = data.data_freshness || {};
-        document.getElementById('execLatestDate').textContent = freshness.latest_reading_date || 'Unknown';
-        document.getElementById('execLastScan').textContent = freshness.last_scan || 'Unknown';
-
-        // Issue counts
-        const issues = data.issues_by_category || {};
-        document.getElementById('execRateCount').textContent = issues.rate_increases?.count || 0;
-        document.getElementById('execRateImpact').textContent = '$' + formatNumber(issues.rate_increases?.est_monthly_impact || 0);
-        document.getElementById('execVolumeCount').textContent = issues.volume_spikes?.count || 0;
-        document.getElementById('execVolumeImpact').textContent = '$' + formatNumber(issues.volume_spikes?.est_monthly_impact || 0);
-        document.getElementById('execDataCount').textContent = issues.data_issues?.count || 0;
-
-        // Portfolio summary
-        const summary = data.portfolio_summary || {};
-        document.getElementById('execTotalSpend').textContent = '$' + formatNumber(summary.total_spend || 0);
-        document.getElementById('execTotalConsumption').textContent = formatNumber(summary.total_consumption || 0);
-        document.getElementById('execPeriodMonths').textContent = 'Last ' + (summary.period_months || 3);
-        const avgRates = summary.avg_rates || {};
-        document.getElementById('execElectricRate').textContent = avgRates.electric ? '$' + avgRates.electric.toFixed(4) + '/kWh' : '-';
-        document.getElementById('execGasRate').textContent = avgRates.gas ? '$' + avgRates.gas.toFixed(2) + '/therm' : '-';
-
-        // Top issues table
-        const topIssues = data.top_issues || [];
-        const topIssuesBody = document.getElementById('execTopIssuesBody');
-        if (topIssues.length === 0) {
-          topIssuesBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px">No significant issues detected</td></tr>';
-        } else {
-          topIssuesBody.innerHTML = topIssues.map(issue => `
-            <tr class="clickable" data-meter-id="${escapeHtml(issue.meter_id)}" onclick="drillDownToMeter(this.dataset.meterId)">
-              <td>
-                <span class="badge ${issue.type === 'rate_increase' ? 'flagged' : 'warning'}">
-                  ${issue.type === 'rate_increase' ? '💲 Rate' : issue.type === 'volume_spike' ? '📈 Volume' : '⏳ Data'}
-                </span>
-              </td>
-              <td>${escapeHtml(issue.property_name) || '-'}</td>
-              <td>${escapeHtml(issue.meter_number) || '-'}</td>
-              <td>${escapeHtml(issue.message) || '-'}</td>
-              <td style="text-align:right;font-weight:600;color:${issue.cost_impact > 0 ? '#dc2626' : '#64748b'}">
-                ${issue.cost_impact ? '+$' + formatNumber(issue.cost_impact) + '/mo' : '-'}
-              </td>
-            </tr>
-          `).join('');
-        }
-
-        // Property rankings table
-        const properties = data.property_rankings || [];
-        const propBody = document.getElementById('execPropertyBody');
-        if (properties.length === 0) {
-          propBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px">No properties with issues</td></tr>';
-        } else {
-          propBody.innerHTML = properties.map(p => `
-            <tr class="clickable" data-property-id="${escapeHtml(p.property_id)}" onclick="filterToProperty(this.dataset.propertyId)">
-              <td style="font-weight:600">${escapeHtml(p.property_name) || '-'}</td>
-              <td style="text-align:center">${p.rate_issues > 0 ? `<span class="badge flagged">${p.rate_issues}</span>` : '-'}</td>
-              <td style="text-align:center">${p.volume_issues > 0 ? `<span class="badge warning">${p.volume_issues}</span>` : '-'}</td>
-              <td style="text-align:center">${p.data_issues > 0 ? `<span class="badge" style="background:#f0fdf4;color:#166534">${p.data_issues}</span>` : '-'}</td>
-              <td style="text-align:right;font-weight:600;color:${p.est_monthly_impact > 0 ? '#dc2626' : '#64748b'}">
-                ${p.est_monthly_impact > 0 ? '+$' + formatNumber(p.est_monthly_impact) + '/mo' : '-'}
-              </td>
-            </tr>
-          `).join('');
-        }
-      } catch (e) {
-        console.error('Error loading executive summary:', e);
-        document.getElementById('execTopIssuesBody').innerHTML = '<tr><td colspan="5" style="color:#dc2626">Error loading data: ' + escapeHtml(e.message || 'Unknown error') + '</td></tr>';
-      } finally {
-        const refreshBtn = document.getElementById('execRefreshBtn');
-        if (refreshBtn) refreshBtn.disabled = false;
-      }
-    }
-
-    function refreshExecutiveSummary() {
-      execDataLoaded = false;
-      // Reset UI to loading state
-      document.getElementById('execLatestDate').textContent = 'Loading...';
-      document.getElementById('execTopIssuesBody').innerHTML = '<tr><td colspan="5" class="loading"><span class="spinner"></span>Loading...</td></tr>';
-      document.getElementById('execPropertyBody').innerHTML = '<tr><td colspan="5" class="loading"><span class="spinner"></span>Loading...</td></tr>';
-      loadExecutiveSummary(true);
-    }
-
-    function drillDownToMeter(meterId) {
-      // Switch to meters tab and filter to the specific meter
-      switchTab('meters');
-      document.getElementById('searchMeter').value = meterId;
-      filterMeterCards();
-    }
-
-    function filterToProperty(propertyId) {
-      // Switch to meters tab and filter to the specific property
-      switchTab('meters');
-      document.getElementById('filterProperty').value = propertyId;
-      filterMetersLocal();
-    }
-
-    async function loadProperties() {
-      try {
-        const resp = await fetch('/api/meters/properties');
-        const data = await resp.json();
-        const select = document.getElementById('filterProperty');
-        select.innerHTML = '<option value="">All Properties</option>';
-        (data.properties || []).forEach(p => {
-          select.innerHTML += `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.meter_count})</option>`;
-        });
-      } catch (e) {
-        console.error('Error loading properties:', e);
-      }
-    }
-
-    async function loadMeters() {
-      document.getElementById('meterGrid').innerHTML = '<div class="loading"><span class="spinner"></span>Loading meters...</div>';
-
-      try {
-        // Load all meters (no server-side filtering for faster client-side filtering)
-        const resp = await fetch('/api/meters/list');
-        const data = await resp.json();
-        allMeters = data.meters || [];
-
-        // Populate state dropdown from loaded data
-        const states = [...new Set(allMeters.map(m => m.state).filter(s => s))].sort();
-        const stateSelect = document.getElementById('filterState');
-        stateSelect.innerHTML = '<option value="">All States</option>' +
-          states.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
-
-        // Populate property dropdown from loaded data
-        const properties = {};
-        allMeters.forEach(m => {
-          if (m.property_id && m.property_name) {
-            if (!properties[m.property_id]) {
-              properties[m.property_id] = { name: m.property_name, count: 0 };
-            }
-            properties[m.property_id].count++;
-          }
-        });
-        const propSelect = document.getElementById('filterProperty');
-        const sortedProps = Object.entries(properties).sort((a, b) => a[1].name.localeCompare(b[1].name));
-        propSelect.innerHTML = '<option value="">All Properties</option>' +
-          sortedProps.map(([id, p]) => `<option value="${escapeHtml(id)}">${escapeHtml(p.name)} (${p.count})</option>`).join('');
-
-        renderMeterCards(allMeters);
-      } catch (e) {
-        console.error('Error loading meters:', e);
-        document.getElementById('meterGrid').innerHTML = '<div class="loading">Error loading meters</div>';
-      }
-    }
-
-    function renderMeterCards(meters) {
-      const grid = document.getElementById('meterGrid');
-      if (!meters.length) {
-        grid.innerHTML = '<div class="loading">No meters found. Click "Scan for New Data" to import meter readings.</div>';
-        return;
-      }
-
-      grid.innerHTML = meters.map((m, idx) => `
-        <div class="meter-card" onclick="openMeterDetail('${encodeURIComponent(m.canonical_meter_id)}')" style="${(m.flags && m.flags.some(f => f.severity === 'high')) ? 'border-left:4px solid #ef4444' : (m.flags && m.flags.length > 0) ? 'border-left:4px solid #f59e0b' : ''}">
-          <div style="display:flex;justify-content:space-between;align-items:start">
-            <div>
-              <h3>${escapeHtml(m.normalized_meter_number || m.display_name) || 'Unknown'}</h3>
-              <div class="meta">
-                <span class="badge ${escapeHtml(m.utility_type)}">${formatUtilityType(m.utility_type)}</span>
-                ${m.state ? `<span style="color:#64748b;margin-right:4px">[${escapeHtml(m.state)}]</span>` : ''}${escapeHtml(m.property_name) || ''}
-              </div>
-              ${m.flags && m.flags.length > 0 ? `<div style="margin-top:4px">${m.flags.slice(0, 2).map(f => `<span class="badge ${f.severity === 'high' ? 'flagged' : 'warning'}" style="margin-right:4px">${f.type === 'volume_spike' ? '📈' : f.type === 'rate_increase' ? '💲' : f.type === 'drop' ? '📉' : f.type === 'gap' ? '⏳' : '⚠️'} ${escapeHtml(f.message)}</span>`).join('')}</div>` : ''}
-            </div>
-            <div style="text-align:right">
-              <div class="consumption">${m.latest_daily_rate != null ? formatNumber(m.latest_daily_rate) : (m.latest_consumption ? formatNumber(m.latest_consumption) : '-')}</div>
-              <div class="meta">${escapeHtml(m.canonical_uom && m.canonical_uom !== 'Unknown' ? m.canonical_uom : 'Units')}/day</div>
-            </div>
-          </div>
-          <div class="sparkline" id="sparkline-${idx}"><canvas id="spark-${idx}" height="50"></canvas></div>
-          <div class="readings">${m.reading_count} periods${m.latest_date ? ' • Last: ' + escapeHtml(m.latest_date) : ''}</div>
-        </div>
-      `).join('');
-
-      // Render sparklines with error handling
-      console.log('Rendering sparklines for', meters.length, 'meters');
-      meters.forEach((m, idx) => {
-        const container = document.getElementById(`sparkline-${idx}`);
-        const ctx = document.getElementById(`spark-${idx}`);
-
-        if (!container) {
-          console.error('No container for meter', idx);
-          return;
-        }
-
-        if (!m.sparkline || m.sparkline.length === 0) {
-          container.innerHTML = '<div style="color:#94a3b8;font-size:11px;text-align:center;padding:10px 0">No data</div>';
-          return;
-        }
-
-        const hasData = m.sparkline.some(v => v > 0);
-        if (!hasData) {
-          container.innerHTML = '<div style="color:#94a3b8;font-size:11px;text-align:center;padding:10px 0">Zero usage</div>';
-          return;
-        }
-
-        if (!ctx) {
-          console.error('No canvas for meter', idx);
-          return;
-        }
-
-        try {
-          const data = m.sparkline;
-          const isSinglePoint = data.length === 1;
-
-          // For single point, show a dot with value
-          if (isSinglePoint) {
-            container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column">
-              <div style="width:12px;height:12px;border-radius:50%;background:${getUtilityColor(m.utility_type)}"></div>
-              <div style="font-size:11px;color:#64748b;margin-top:4px">${Math.round(data[0])}/day</div>
-            </div>`;
-            return;
-          }
-
-          // Always show proportional values to reveal actual trend shape
-          const minVal = Math.min(...data);
-          const maxVal = Math.max(...data);
-          const range = maxVal - minVal || 1;
-          // Map to 20-80 range so there's always visible variation
-          const normalizedData = data.map(v => 20 + ((v - minVal) / range) * 60);
-
-          new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: m.sparkline_dates || m.sparkline.map((_, i) => ''),
-              datasets: [{
-                data: normalizedData,
-                borderColor: m.has_discrepancies ? '#ef4444' : getUtilityColor(m.utility_type),
-                backgroundColor: m.has_discrepancies ? 'rgba(239,68,68,0.15)' : getUtilityBgColor(m.utility_type),
-                borderWidth: 2,
-                pointRadius: 0,
-                fill: true,
-                tension: 0.4
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              animation: false,
-              plugins: { legend: { display: false }, tooltip: { enabled: false }, datalabels: { display: false } },
-              scales: {
-                x: { display: false },
-                y: { display: false, min: 0, max: 100 }
-              }
-            }
-          });
-        } catch (e) {
-          console.error('Chart error for meter', idx, e);
-          container.innerHTML = '<div style="color:#ef4444;font-size:10px">Chart error</div>';
-        }
-      });
-      console.log('Sparklines rendered');
-    }
-
-    function formatNumber(n) {
-      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-      return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
-    }
-
-    function escapeHtml(str) {
-      if (!str) return '';
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    // Get PDF key from reading
-    function getPdfKey(reading) {
-      // source_input_key is the direct path to the PDF in S3
-      return reading.source_input_key || '';
-    }
-
-    function getUtilityColor(type) {
-      const colors = { electric: '#f59e0b', gas: '#3b82f6', water: '#10b981', sewer: '#6366f1' };
-      return colors[type] || '#0ea5e9';
-    }
-
-    function getUtilityBgColor(type) {
-      const colors = { electric: 'rgba(245,158,11,0.1)', gas: 'rgba(59,130,246,0.1)', water: 'rgba(16,185,129,0.1)', sewer: 'rgba(99,102,241,0.1)' };
-      return colors[type] || 'rgba(14,165,233,0.1)';
-    }
-
-    function filterMeterCards() {
-      filterMetersLocal();
-    }
-
-    function filterMetersLocal() {
-      const search = document.getElementById('searchMeter').value.toLowerCase();
-      const utilityFilter = document.getElementById('filterUtility').value;
-      const stateFilter = document.getElementById('filterState').value;
-      const propertyFilter = document.getElementById('filterProperty').value;
-
-      const filtered = allMeters.filter(m => {
-        // Search filter
-        const matchesSearch = !search ||
-          (m.normalized_meter_number || '').toLowerCase().includes(search) ||
-          (m.property_name || '').toLowerCase().includes(search);
-
-        // Utility filter - handle variant names (electric/electricity, vacant variants)
-        const matchesUtility = !utilityFilter ||
-          (utilityFilter === 'electric' && ['electric', 'electricity', 'vacant electricity'].includes(m.utility_type)) ||
-          (utilityFilter === 'gas' && ['gas', 'vacant gas'].includes(m.utility_type)) ||
-          (utilityFilter === 'water' && ['water', 'vacant water'].includes(m.utility_type)) ||
-          m.utility_type === utilityFilter;
-
-        // State filter
-        const matchesState = !stateFilter || m.state === stateFilter;
-
-        // Property filter
-        const matchesProperty = !propertyFilter || m.property_id === propertyFilter;
-
-        return matchesSearch && matchesUtility && matchesState && matchesProperty;
-      });
-
-      renderMeterCards(filtered);
-    }
-
-    function formatUtilityType(type) {
-      const labels = { electric: 'Electricity', gas: 'Gas', water: 'Water', sewer: 'Sewer' };
-      return labels[type] || type || 'Unknown';
-    }
-
-    async function openMeterDetail(meterId) {
-      try {
-        const resp = await fetch(`/api/meters/${meterId}/readings`);
-        const data = await resp.json();
-
-        document.getElementById('modalTitle').textContent = data.meter.display_name;
-
-        // Build chart with daily rates - ONLY include non-zero consumption
-        const allReadings = data.readings || [];
-        const readings = allReadings.filter(r => {
-          const consumption = r.enriched_consumption || r.normalized_consumption || 0;
-          return consumption > 0;
-        });
-
-        // Deduplicate by service period (start+end) - keep highest consumption per period
-        const byPeriod = {};
-        readings.forEach(r => {
-          const start = r.service_start || '';
-          const end = r.service_end || r.reading_date || '';
-          const consumption = r.enriched_consumption || r.normalized_consumption || 0;
-          let days = 1;
-          if (start && end) {
-            const s = new Date(start), e = new Date(end);
-            if (!isNaN(s) && !isNaN(e)) {
-              days = Math.max(1, Math.round((e - s) / (1000*60*60*24)));
-            }
-          }
-          const dailyRate = consumption / days;
-          const periodKey = `${start}|${end}`;
-
-          // Keep highest consumption per period
-          if (!byPeriod[periodKey] || consumption > byPeriod[periodKey].consumption) {
-            byPeriod[periodKey] = {
-              ...r,
-              start,
-              end,
-              days,
-              consumption,
-              dailyRate
-            };
-          }
-        });
-
-        // Sort by end date and convert to arrays
-        const dedupedReadings = Object.values(byPeriod).sort((a, b) => {
-          const da = new Date(a.end), db = new Date(b.end);
-          return da - db;
-        });
-        const labels = dedupedReadings.map(d => d.end || 'Unknown');
-        const dailyRates = dedupedReadings.map(d => Math.round(d.dailyRate));
-
-        if (meterChart) meterChart.destroy();
-        const ctx = document.getElementById('meterChart').getContext('2d');
-        const uomDisplay = data.meter.canonical_uom && data.meter.canonical_uom !== 'Unknown' ? data.meter.canonical_uom : 'Units';
-
-        // Smart Y-axis scaling based on data range
-        const minRate = dailyRates.length > 0 ? Math.min(...dailyRates) : 0;
-        const maxRate = dailyRates.length > 0 ? Math.max(...dailyRates) : 100;
-        const range = maxRate - minRate || 1;
-        const padding = range * 0.15;
-        const yAxisMin = minRate < range * 0.3 ? 0 : Math.max(0, minRate - padding);
-        const yAxisMax = maxRate + padding;
-
-        meterChart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: labels,
-            datasets: [{
-              label: `Daily Rate (${uomDisplay}/day)`,
-              data: dailyRates,
-              borderColor: getUtilityColor(data.meter.utility_type),
-              backgroundColor: getUtilityBgColor(data.meter.utility_type),
-              borderWidth: 3,
-              pointRadius: 6,
-              pointBackgroundColor: getUtilityColor(data.meter.utility_type),
-              pointBorderColor: '#fff',
-              pointBorderWidth: 2,
-              fill: true,
-              tension: 0.3
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            layout: {
-              padding: { left: 20, right: 20, top: 30, bottom: 10 }
-            },
-            plugins: {
-              legend: { display: true, position: 'top' },
-              tooltip: {
-                callbacks: {
-                  label: (ctx) => `${Math.round(ctx.parsed.y)} ${uomDisplay}/day`
-                }
-              },
-              datalabels: {
-                display: (ctx) => ctx.dataset.data.length <= 12,  // Hide labels if too many points
-                align: (ctx) => {
-                  const idx = ctx.dataIndex;
-                  const total = ctx.dataset.data.length;
-                  if (idx === 0) return 'right';      // First point: push label right
-                  if (idx === total - 1) return 'left';  // Last point: push label left
-                  return 'top';
-                },
-                offset: 8,
-                color: '#374151',
-                font: { weight: 'bold', size: 11 },
-                formatter: (value) => Math.round(value)
-              }
-            },
-            scales: {
-              y: {
-                min: yAxisMin,
-                suggestedMax: yAxisMax,
-                title: { display: true, text: `${uomDisplay}/day` }
-              },
-              x: { title: { display: true, text: 'Service End Date' } }
-            }
-          }
-        });
-
-        // Build cost impact analysis using ACTUAL rates from invoices
-        const effectiveRates = dedupedReadings.map(r => r.effective_rate || 0).filter(r => r > 0);
-        const avgEffectiveRate = effectiveRates.length > 0 ? effectiveRates.reduce((a, b) => a + b, 0) / effectiveRates.length : 0;
-        const currentEffectiveRate = dedupedReadings.length > 0 ? (dedupedReadings[dedupedReadings.length - 1].effective_rate || 0) : 0;
-        let costHtml = '';
-
-        if (dailyRates.length >= 3) {
-          const avgDailyUsage = dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length;
-          const currentDailyUsage = dailyRates[dailyRates.length - 1];
-          const usageVariance = currentDailyUsage - avgDailyUsage;
-          const monthlyUsageVariance = usageVariance * 30;
-
-          // Calculate cost impact using actual rate
-          const rateForCalc = currentEffectiveRate > 0 ? currentEffectiveRate : avgEffectiveRate;
-          const costImpact = monthlyUsageVariance * rateForCalc;
-
-          // Also calculate rate impact (if rate changed)
-          const rateChange = currentEffectiveRate > 0 && avgEffectiveRate > 0 ? currentEffectiveRate - avgEffectiveRate : 0;
-          const rateImpact = rateChange * avgDailyUsage * 30;
-
-          costHtml = `
-            <div style="background:${costImpact > 0 || rateImpact > 0 ? '#fef2f2' : '#f0fdf4'};padding:16px;border-radius:12px;margin-bottom:16px">
-              <h4 style="margin:0 0 12px 0">Cost Impact Analysis</h4>
-              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:12px">
-                <div style="background:rgba(255,255,255,0.7);padding:12px;border-radius:8px">
-                  <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">VOLUME</div>
-                  <div style="display:flex;justify-content:space-between;align-items:baseline">
-                    <div>
-                      <div style="font-size:12px;color:#64748b">Avg: ${Math.round(avgDailyUsage)} ${uomDisplay}/day</div>
-                      <div style="font-size:12px;color:#64748b">Current: ${Math.round(currentDailyUsage)} ${uomDisplay}/day</div>
-                    </div>
-                    <div style="font-size:18px;font-weight:600;color:${costImpact > 0 ? '#dc2626' : costImpact < 0 ? '#059669' : '#64748b'}">
-                      ${rateForCalc > 0 ? (costImpact > 0 ? '+' : '') + '$' + Math.abs(costImpact).toFixed(0) + '/mo' : '-'}
-                    </div>
-                  </div>
-                </div>
-                <div style="background:rgba(255,255,255,0.7);padding:12px;border-radius:8px">
-                  <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">RATE</div>
-                  <div style="display:flex;justify-content:space-between;align-items:baseline">
-                    <div>
-                      <div style="font-size:12px;color:#64748b">Avg: ${avgEffectiveRate > 0 ? '$' + avgEffectiveRate.toFixed(4) : '-'}/unit</div>
-                      <div style="font-size:12px;color:#64748b">Current: ${currentEffectiveRate > 0 ? '$' + currentEffectiveRate.toFixed(4) : '-'}/unit</div>
-                    </div>
-                    <div style="font-size:18px;font-weight:600;color:${rateImpact > 0 ? '#dc2626' : rateImpact < 0 ? '#059669' : '#64748b'}">
-                      ${rateImpact !== 0 ? (rateImpact > 0 ? '+' : '') + '$' + Math.abs(rateImpact).toFixed(0) + '/mo' : '-'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              ${avgEffectiveRate === 0 ? '<div style="font-size:11px;color:#92400e;background:#fef3c7;padding:8px;border-radius:4px">Note: Rate data not available for older invoices</div>' : ''}
-            </div>
-          `;
-        }
-
-        // Build readings table with deduplicated data
-        document.getElementById('readingsTable').innerHTML = costHtml + `
-          <table>
-            <thead>
-              <tr>
-                <th>Service Period</th>
-                <th>Days</th>
-                <th>Consumption</th>
-                <th>Daily Rate</th>
-                <th>UOM</th>
-                <th>Vendor</th>
-                <th>PDF</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${dedupedReadings.map(r => {
-                const period = r.start && r.end ? r.start + ' → ' + r.end : (r.end || '-');
-                return `
-                <tr>
-                  <td style="font-size:12px">${escapeHtml(period)}</td>
-                  <td>${r.days}</td>
-                  <td style="font-weight:600;color:#0ea5e9">${r.consumption > 0 ? Math.round(r.consumption).toLocaleString() : '-'}</td>
-                  <td style="font-weight:600;color:#10b981">${Math.round(r.dailyRate)}</td>
-                  <td>${escapeHtml((r.canonical_uom && r.canonical_uom !== 'Unknown') ? r.canonical_uom : ((r.normalized_uom && r.normalized_uom !== 'Unknown') ? r.normalized_uom : '')) || '-'}</td>
-                  <td>${escapeHtml(r.vendor_name || r.vendor) || '-'}</td>
-                  <td>${(() => { const pk = getPdfKey(r); return pk ? '<a href="/pdf?k=' + encodeURIComponent(pk) + '" target="_blank" class="btn small">View</a>' : '-'; })()}</td>
-                </tr>
-              `}).join('')}
-            </tbody>
-          </table>
-        `;
-
-        document.getElementById('meterModal').classList.add('show');
-      } catch (e) {
-        console.error('Error loading meter detail:', e);
-        showToast('Error loading meter details', 'err');
-      }
-    }
-
-    function closeModal() {
-      document.getElementById('meterModal').classList.remove('show');
-    }
-
-    let allFlaggedReadings = [];
-
-    async function loadFlagged() {
-      document.getElementById('flaggedContainer').innerHTML = '<div class="loading"><span class="spinner"></span>Loading flagged readings...</div>';
-
-      try {
-        const resp = await fetch('/api/meters/flagged');
-        const data = await resp.json();
-
-        allFlaggedReadings = data.flagged || [];
-
-        if (!allFlaggedReadings.length) {
-          document.getElementById('flaggedContainer').innerHTML = '<div class="loading">No flagged readings</div>';
-          document.getElementById('dismissAllBtn').disabled = true;
-          return;
-        }
-
-        document.getElementById('dismissAllBtn').disabled = false;
-
-        document.getElementById('flaggedContainer').innerHTML = `
-          <div style="margin-bottom:12px">
-            <button class="btn small" onclick="selectAllFlagged()">Select All</button>
-            <button class="btn small secondary" onclick="deselectAllFlagged()">Deselect All</button>
-            <button class="btn small danger" onclick="dismissSelected()" id="dismissSelectedBtn" disabled>Dismiss Selected</button>
-            <span id="selectedCount" style="margin-left:12px;color:#64748b;font-size:13px"></span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width:40px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" /></th>
-                <th>Property</th>
-                <th>Meter</th>
-                <th>Utility</th>
-                <th>Date</th>
-                <th>Consumption</th>
-                <th>Flag Reason</th>
-                <th>PDF</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${allFlaggedReadings.map((r, i) => `
-                <tr>
-                  <td onclick="event.stopPropagation()"><input type="checkbox" class="flag-checkbox" data-index="${i}" onchange="updateSelectedCount()" /></td>
-                  <td>${escapeHtml(r.property_name) || '-'}</td>
-                  <td>${escapeHtml(r.meter_display) || '-'}</td>
-                  <td><span class="badge ${escapeHtml(r.utility_type)}">${formatUtilityType(r.utility_type)}</span></td>
-                  <td>${escapeHtml(r.reading_date) || '-'}</td>
-                  <td>${r.consumption?.toLocaleString() || '-'}</td>
-                  <td><span class="badge flagged">${escapeHtml(r.flag_reason) || '-'}</span></td>
-                  <td>${(() => { const pk = getPdfKey(r); return pk ? `<a href="/pdf?k=${encodeURIComponent(pk)}" target="_blank" class="btn small">View PDF</a>` : '-'; })()}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `;
-      } catch (e) {
-        console.error('Error loading flagged:', e);
-        document.getElementById('flaggedContainer').innerHTML = '<div class="loading">Error loading flagged readings</div>';
-      }
-    }
-
-    function toggleSelectAll(checkbox) {
-      document.querySelectorAll('.flag-checkbox').forEach(cb => cb.checked = checkbox.checked);
-      updateSelectedCount();
-    }
-
-    function selectAllFlagged() {
-      document.querySelectorAll('.flag-checkbox').forEach(cb => cb.checked = true);
-      document.getElementById('selectAllCheckbox').checked = true;
-      updateSelectedCount();
-    }
-
-    function deselectAllFlagged() {
-      document.querySelectorAll('.flag-checkbox').forEach(cb => cb.checked = false);
-      document.getElementById('selectAllCheckbox').checked = false;
-      updateSelectedCount();
-    }
-
-    function updateSelectedCount() {
-      const count = document.querySelectorAll('.flag-checkbox:checked').length;
-      const countEl = document.getElementById('selectedCount');
-      const btn = document.getElementById('dismissSelectedBtn');
-      if (countEl) countEl.textContent = count > 0 ? `${count} selected` : '';
-      if (btn) btn.disabled = count === 0;
-    }
-
-    async function dismissSelected() {
-      const checkboxes = document.querySelectorAll('.flag-checkbox:checked');
-      if (checkboxes.length === 0) return;
-
-      const readingKeys = [];
-      checkboxes.forEach(cb => {
-        const idx = parseInt(cb.dataset.index);
-        const r = allFlaggedReadings[idx];
-        if (r) {
-          readingKeys.push({ source_s3_key: r.source_s3_key, line_index: r.line_index });
-        }
-      });
-
-      try {
-        const resp = await fetch('/api/meters/bulk-dismiss', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reading_keys: readingKeys })
-        });
-        const data = await resp.json();
-
-        if (data.ok) {
-          showToast(`Dismissed ${data.dismissed} flagged readings`, 'ok');
-          loadFlagged();
-          loadStats();
-        } else {
-          showToast(data.error || 'Failed to dismiss', 'err');
-        }
-      } catch (e) {
-        console.error('Error dismissing:', e);
-        showToast('Error dismissing readings', 'err');
-      }
-    }
-
-    async function dismissAllFlags() {
-      if (!allFlaggedReadings.length) return;
-      if (!confirm(`Dismiss all ${allFlaggedReadings.length} flagged readings?`)) return;
-
-      const readingKeys = allFlaggedReadings.map(r => ({
-        source_s3_key: r.source_s3_key,
-        line_index: r.line_index
-      }));
-
-      try {
-        const resp = await fetch('/api/meters/bulk-dismiss', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reading_keys: readingKeys })
-        });
-        const data = await resp.json();
-
-        if (data.ok) {
-          showToast(`Dismissed all ${data.dismissed} flagged readings`, 'ok');
-          loadFlagged();
-          loadStats();
-        } else {
-          showToast(data.error || 'Failed to dismiss', 'err');
-        }
-      } catch (e) {
-        console.error('Error dismissing all:', e);
-        showToast('Error dismissing readings', 'err');
-      }
-    }
-
-    async function loadDuplicates() {
-      document.getElementById('duplicatesContainer').innerHTML = '<div class="loading"><span class="spinner"></span>Finding duplicates...</div>';
-
-      try {
-        const resp = await fetch('/api/meters/duplicates');
-        const data = await resp.json();
-
-        if (!data.duplicates?.length) {
-          document.getElementById('duplicatesContainer').innerHTML = '<div class="loading">No potential duplicates found</div>';
-          return;
-        }
-
-        document.getElementById('duplicatesContainer').innerHTML = `
-          <table>
-            <thead>
-              <tr>
-                <th>Property</th>
-                <th>Utility</th>
-                <th>Meter 1</th>
-                <th>Readings</th>
-                <th>Meter 2</th>
-                <th>Readings</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${data.duplicates.map((d, i) => `
-                <tr>
-                  <td>${escapeHtml(d.property_name) || '-'}</td>
-                  <td><span class="badge ${escapeHtml(d.utility_type)}">${formatUtilityType(d.utility_type)}</span></td>
-                  <td><strong>${escapeHtml(d.meter_1.display_name)}</strong></td>
-                  <td>${d.meter_1.reading_count}</td>
-                  <td><strong>${escapeHtml(d.meter_2.display_name)}</strong></td>
-                  <td>${d.meter_2.reading_count}</td>
-                  <td>
-                    <button class="btn small" data-target="${escapeHtml(d.meter_1.id)}" data-source="${escapeHtml(d.meter_2.id)}" data-name="${escapeHtml(d.meter_1.display_name)}" onclick="mergeDuplicateFromBtn(this)">Merge &rarr; 1</button>
-                    <button class="btn small secondary" data-target="${escapeHtml(d.meter_2.id)}" data-source="${escapeHtml(d.meter_1.id)}" data-name="${escapeHtml(d.meter_2.display_name)}" onclick="mergeDuplicateFromBtn(this)">Merge &rarr; 2</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `;
-      } catch (e) {
-        console.error('Error loading duplicates:', e);
-        document.getElementById('duplicatesContainer').innerHTML = '<div class="loading">Error loading duplicates</div>';
-      }
-    }
-
-    function mergeDuplicateFromBtn(btn) {
-      const targetId = btn.dataset.target;
-      const sourceId = btn.dataset.source;
-      const targetName = btn.dataset.name;
-      mergeDuplicate(targetId, sourceId, targetName);
-    }
-
-    async function mergeDuplicate(targetId, sourceId, targetName) {
-      if (!confirm('Merge readings into "' + targetName + '"? This will combine all readings and remove the other meter.')) return;
-
-      try {
-        const resp = await fetch('/api/meters/merge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target_meter_id: targetId, source_meter_ids: [sourceId] })
-        });
-        const data = await resp.json();
-
-        if (data.ok) {
-          showToast(`Merged ${data.readings_moved} readings into ${targetName}`, 'ok');
-          loadDuplicates();
-          loadMeters();
-          loadStats();
-        } else {
-          showToast(data.error || 'Merge failed', 'err');
-        }
-      } catch (e) {
-        console.error('Error merging:', e);
-        showToast('Error merging meters', 'err');
-      }
-    }
-
-    async function runBulkRescan(action) {
-      const incrementalBtn = document.getElementById('incrementalScanBtn');
-      const fullBtn = document.getElementById('fullRescanBtn');
-      incrementalBtn.disabled = true;
-      fullBtn.disabled = true;
-
-      const isFullRescan = action === 'rescan';
-      const container = document.getElementById('rescanResultsContainer');
-      container.innerHTML = `<div class="loading"><span class="spinner"></span>${isFullRescan ? 'Running full rescan of all Stage 7 & 8 files (processing in batches)...' : 'Running incremental scan...'}</div>`;
-
-      try {
-        const resp = await fetch('/api/meters/bulk-rescan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: action, days_back: 1 })
-        });
-        const data = await resp.json();
-
-        if (data.ok) {
-          const isInProgress = data.status === 'in_progress';
-          const filesRemaining = data.files_remaining || 0;
-
-          let html = `
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px">
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:20px;font-weight:700;color:#10b981">${data.meters || data.total_meters || 0}</div>
-                <div style="font-size:11px;color:#64748b">Total Meters</div>
-              </div>
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:20px;font-weight:700;color:#0ea5e9">${data.readings || data.total_readings || 0}</div>
-                <div style="font-size:11px;color:#64748b">Total Readings</div>
-              </div>
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:20px;font-weight:700;color:#8b5cf6">${data.files_scanned || data.new_readings || 0}</div>
-                <div style="font-size:11px;color:#64748b">${isFullRescan ? 'Files Scanned' : 'New Readings'}</div>
-              </div>
-              ${isInProgress ? `
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:20px;font-weight:700;color:#f59e0b">${filesRemaining}</div>
-                <div style="font-size:11px;color:#64748b">Files Remaining</div>
-              </div>
-              ` : ''}
-            </div>
-            <div style="margin-top:8px;font-size:12px;color:#78350f;display:flex;align-items:center;gap:8px">
-              ${data.message || 'Scan complete'}
-              ${isInProgress ? `<button class="btn small success" onclick="runBulkRescan('rescan')" style="margin-left:auto">Continue Rescan</button>` : ''}
-            </div>
-          `;
-          container.innerHTML = html;
-          showToast(data.message || 'Scan complete', isInProgress ? 'ok' : 'ok');
-          loadStats();
-          loadMeters();
-        } else {
-          container.innerHTML = `<div style="color:#b91c1c">${escapeHtml(data.error) || 'Rescan failed'}</div>`;
-          showToast(data.error || 'Rescan failed', 'err');
-        }
-      } catch (e) {
-        console.error('Error during rescan:', e);
-        container.innerHTML = `<div style="color:#b91c1c">Error: ${escapeHtml(e.message)}</div>`;
-        showToast('Error during rescan', 'err');
-      } finally {
-        incrementalBtn.disabled = false;
-        fullBtn.disabled = false;
-      }
-    }
-
-    async function runAiClean() {
-      const btn = document.getElementById('aiCleanBtn');
-      btn.disabled = true;
-      btn.textContent = 'Analyzing...';
-      document.getElementById('aiResultsContainer').innerHTML = '<div class="loading"><span class="spinner"></span>Running AI analysis...</div>';
-
-      try {
-        const resp = await fetch('/api/meters/ai-clean', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
-        });
-        const data = await resp.json();
-
-        if (data.ok) {
-          let html = `
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px">
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:24px;font-weight:700;color:#f59e0b">${data.duplicate_candidates || 0}</div>
-                <div style="font-size:11px;color:#64748b">Duplicate Candidates</div>
-              </div>
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:24px;font-weight:700;color:#ef4444">${data.uom_issues || 0}</div>
-                <div style="font-size:11px;color:#64748b">UOM Issues</div>
-              </div>
-              <div style="background:#fff;padding:12px;border-radius:8px;text-align:center">
-                <div style="font-size:24px;font-weight:700;color:${data.gemini_available ? '#10b981' : '#64748b'}">${data.gemini_available ? 'Yes' : 'No'}</div>
-                <div style="font-size:11px;color:#64748b">Gemini AI</div>
-              </div>
-            </div>
-          `;
-
-          if (data.observations) {
-            html += `
-              <div style="background:#fff;padding:12px;border-radius:8px">
-                <div style="font-weight:600;margin-bottom:6px">AI Observations:</div>
-                <div style="font-size:13px;color:#475569">${escapeHtml(data.observations)}</div>
-              </div>
-            `;
-          }
-
-          document.getElementById('aiResultsContainer').innerHTML = html;
-          showToast('AI analysis complete', 'ok');
-
-          // Refresh duplicates after AI analysis
-          loadDuplicates();
-        } else {
-          document.getElementById('aiResultsContainer').innerHTML = `<div class="loading" style="color:#ef4444">Error: ${escapeHtml(data.error)}</div>`;
-          showToast(data.error || 'AI analysis failed', 'err');
-        }
-      } catch (e) {
-        console.error('Error running AI clean:', e);
-        document.getElementById('aiResultsContainer').innerHTML = `<div class="loading" style="color:#ef4444">Error: ${escapeHtml(e.message)}</div>`;
-        showToast('AI analysis error: ' + e.message, 'err');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Run AI Analysis';
-      }
-    }
-
-    async function runScan() {
-      const btn = document.getElementById('scanBtn');
-      btn.disabled = true;
-      btn.textContent = 'Scanning...';
-
-      try {
-        const resp = await fetch('/api/meters/scan');
-        const data = await resp.json();
-
-        if (data.ok) {
-          showToast(`Scan complete: ${data.new_meters} new meters, ${data.new_readings} new readings`, 'ok');
-          loadStats();
-          loadMeters();
-          loadProperties();
-        } else {
-          showToast(data.error || 'Scan failed', 'err');
-        }
-      } catch (e) {
-        console.error('Error running scan:', e);
-        showToast('Scan error: ' + e.message, 'err');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Scan for New Data';
-      }
-    }
-
-    // ============== TRENDS TAB ==============
-    let trendsChart = null;
-
-    async function loadTrends() {
-      const utility = document.getElementById('trendUtility').value;
-      const params = new URLSearchParams();
-      if (utility) params.append('utility_type', utility);
-      params.append('months', '12');
-
-      document.getElementById('trendsSummary').innerHTML = '<div class="loading"><span class="spinner"></span>Loading trends...</div>';
-
-      try {
-        const resp = await fetch('/api/meters/trends?' + params.toString());
-        const data = await resp.json();
-        renderTrendsChart(data.trends || []);
-        renderTrendsSummary(data.trends || []);
-      } catch (e) {
-        console.error('Error loading trends:', e);
-        document.getElementById('trendsSummary').innerHTML = '<div class="loading">Error loading trends</div>';
-      }
-    }
-
-    function renderTrendsChart(trends) {
-      if (trendsChart) trendsChart.destroy();
-      const ctx = document.getElementById('trendsChart').getContext('2d');
-
-      if (!trends.length) {
-        ctx.canvas.parentElement.innerHTML = '<div class="loading">No trend data available</div>';
-        return;
-      }
-
-      trendsChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: trends.map(t => t.month),
-          datasets: [{
-            label: 'Avg Consumption per Meter',
-            data: trends.map(t => t.avg_per_meter || t.consumption),
-            backgroundColor: trends.map(t =>
-              t.mom_change_pct > 10 ? 'rgba(239,68,68,0.7)' :
-              t.mom_change_pct < -10 ? 'rgba(16,185,129,0.7)' :
-              'rgba(14,165,233,0.7)'
-            ),
-            borderRadius: 4
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: (ctx) => {
-                  const t = trends[ctx.dataIndex];
-                  if (!t) return '';
-                  return [
-                    `Avg per meter: ${formatNumber(t.avg_per_meter || 0)}`,
-                    `Total: ${formatNumber(t.consumption || 0)}`,
-                    `Meters: ${t.meter_count || 0}`,
-                    `Cost: $${formatNumber(t.amount || 0)}`
-                  ];
-                }
-              }
-            },
-            datalabels: {
-              display: true,
-              anchor: 'end',
-              align: 'top',
-              formatter: (v, ctx) => {
-                const t = trends[ctx.dataIndex];
-                if (!t) return '';
-                if (t.mom_change_pct > 0) return '+' + t.mom_change_pct + '%';
-                if (t.mom_change_pct < 0) return t.mom_change_pct + '%';
-                return '';
-              },
-              color: (ctx) => {
-                const t = trends[ctx.dataIndex];
-                return t && t.mom_change_pct > 0 ? '#dc2626' : '#059669';
-              },
-              font: { size: 10, weight: 'bold' }
-            }
-          },
-          scales: {
-            y: { beginAtZero: true, title: { display: true, text: 'Avg Consumption per Meter' } },
-            x: { title: { display: true, text: 'Month' } }
-          }
-        }
-      });
-    }
-
-    function renderTrendsSummary(trends) {
-      if (trends.length < 2) {
-        document.getElementById('trendsSummary').innerHTML = '<div class="loading">Not enough data for trend analysis</div>';
-        return;
-      }
-
-      const recent = trends.slice(-3);
-      const avgChange = recent.reduce((a, t) => a + t.mom_change_pct, 0) / recent.length;
-      const totalAmount = trends.reduce((a, t) => a + (t.amount || 0), 0);
-      const totalConsumption = trends.reduce((a, t) => a + t.consumption, 0);
-      const latestMeters = trends[trends.length - 1].meter_count || 0;
-      const latestMonth = trends[trends.length - 1];
-
-      document.getElementById('trendsSummary').innerHTML = `
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-value">$${formatNumber(totalAmount)}</div>
-            <div class="stat-label">Total Spend (12mo)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">${formatNumber(totalConsumption)}</div>
-            <div class="stat-label">Total Consumption (12mo)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" style="color:${avgChange > 0 ? '#dc2626' : '#059669'}">
-              ${avgChange > 0 ? '+' : ''}${avgChange.toFixed(1)}%
-            </div>
-            <div class="stat-label">Avg MoM Change (per meter, 3mo)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">${latestMeters}</div>
-            <div class="stat-label">Active Meters (${latestMonth ? latestMonth.month : 'latest'})</div>
-          </div>
-        </div>
-      `;
-    }
-
-    // Close modal on background click
-    document.getElementById('meterModal').addEventListener('click', (e) => {
-      if (e.target.id === 'meterModal') closeModal();
+    const data = await resp.json();
+    showToast(data.message || data.status || 'Action completed', resp.ok ? 'ok' : 'error');
+  } catch (err) {
+    showToast('Action failed: ' + err.message, 'error');
+  }
+}
+
+/* ── Navigation ───────────────────────────────────────── */
+function navigateTo(view, id) {
+  currentView = view;
+  if (view === 'portfolio') {
+    currentPropertyId = null;
+    currentMeterId = null;
+  } else if (view === 'property') {
+    currentPropertyId = id;
+    currentMeterId = null;
+  } else if (view === 'meter') {
+    currentMeterId = id;
+  }
+  document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+  const target = view === 'portfolio' ? 'portfolioView' : view === 'property' ? 'propertyView' : 'meterView';
+  document.getElementById(target).classList.add('active');
+  updateBreadcrumb();
+  if (view === 'portfolio') renderPortfolio();
+  else if (view === 'property') renderProperty(id);
+  else if (view === 'meter') renderMeter(id);
+}
+
+function updateBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  let html = '';
+  if (currentView === 'portfolio') {
+    html = '<span class="current">Portfolio</span>';
+  } else if (currentView === 'property') {
+    const prop = DATA.properties[currentPropertyId];
+    const name = prop ? prop.property_name : currentPropertyId;
+    html = '<a onclick="navigateTo(\'portfolio\')">Portfolio</a><span class="sep">/</span><span class="current">' + escHtml(name) + '</span>';
+  } else if (currentView === 'meter') {
+    const meter = DATA.meters[currentMeterId];
+    const propId = meter ? meter.property_id : currentPropertyId;
+    const prop = DATA.properties[propId];
+    const propName = prop ? prop.property_name : propId;
+    const meterNum = meter ? meter.meter_number : currentMeterId;
+    html = '<a onclick="navigateTo(\'portfolio\')">Portfolio</a><span class="sep">/</span>'
+         + '<a onclick="navigateTo(\'property\',\'' + escAttr(propId) + '\')">' + escHtml(propName) + '</a>'
+         + '<span class="sep">/</span><span class="current">Meter ' + escHtml(meterNum) + '</span>';
+  }
+  bc.innerHTML = html;
+}
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function escAttr(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+/* ── Portfolio View ───────────────────────────────────── */
+function renderPortfolio() {
+  if (!DATA) return;
+  const p = DATA.portfolio;
+
+  // Stats
+  document.getElementById('portfolioStats').innerHTML =
+    statCard(fmtNum(p.total_properties), 'Properties') +
+    statCard(fmtNum(p.total_meters), 'Meters') +
+    statCard(fmtNum(p.total_readings), 'Readings') +
+    statCard(DATA.generated_at ? new Date(DATA.generated_at).toLocaleDateString() : '-', 'Last Updated');
+
+  // Utility cards
+  const byUtil = p.by_utility || {};
+  let ucHtml = '';
+  for (const [ut, info] of Object.entries(byUtil)) {
+    const months = Object.keys(info.monthly || {}).sort();
+    const latest = months.length ? info.monthly[months[months.length - 1]] : {};
+    ucHtml += '<div class="utility-card ' + utilClass(ut) + '">'
+      + '<h4>' + capitalise(ut) + '</h4>'
+      + '<div class="big-num">' + fmtNum(info.meters) + ' meters</div>'
+      + '<div style="font-size:13px;color:#64748b;margin-top:4px">'
+      + 'Latest: ' + fmtNum(latest.consumption) + ' consumption &middot; ' + fmtMoney(latest.cost)
+      + '</div></div>';
+  }
+  document.getElementById('utilityCards').innerHTML = ucHtml;
+
+  // Issue cards
+  const iss = p.issues_summary || {};
+  const ri = iss.rate_increases || {count:0, est_monthly_impact:0};
+  const vs = iss.volume_spikes || {count:0, est_monthly_impact:0};
+  const di = iss.data_issues || {count:0, est_monthly_impact:0};
+  document.getElementById('issueCards').innerHTML =
+    '<div class="issue-card rate"><h4>Rate Increases</h4><div class="count">' + fmtNum(ri.count) + '</div><div class="impact">Est. ' + fmtMoney(ri.est_monthly_impact) + '/mo</div></div>'
+    + '<div class="issue-card volume"><h4>Volume Spikes</h4><div class="count">' + fmtNum(vs.count) + '</div><div class="impact">Est. ' + fmtMoney(vs.est_monthly_impact) + '/mo</div></div>'
+    + '<div class="issue-card data"><h4>Data Issues</h4><div class="count">' + fmtNum(di.count) + '</div><div class="impact">Est. ' + fmtMoney(di.est_monthly_impact) + '/mo</div></div>';
+
+  // Property grid
+  renderPropertyGrid();
+
+  // Top issues table
+  renderTopIssues();
+}
+
+function renderPropertyGrid() {
+  const props = DATA.properties || {};
+  const search = (document.getElementById('propSearch').value || '').toLowerCase();
+  const entries = Object.entries(props)
+    .filter(([id, p]) => {
+      if (!search) return true;
+      return (p.property_name || '').toLowerCase().includes(search) || id.toLowerCase().includes(search) || (p.state || '').toLowerCase().includes(search);
+    })
+    .sort((a, b) => {
+      const aIss = (a[1].issues || []).length;
+      const bIss = (b[1].issues || []).length;
+      return bIss - aIss;
     });
 
-    // Initialize
-    loadStats();
-    loadProperties();
-    loadMeters();
-    loadExecutiveSummary();  // Load executive dashboard by default
-  </script>
+  let html = '';
+  for (const [propId, prop] of entries) {
+    const issCount = (prop.issues || []).length;
+    html += '<div class="property-card" onclick="navigateTo(\'property\',\'' + escAttr(propId) + '\')">'
+      + '<h3>' + escHtml(prop.property_name || propId) + '</h3>'
+      + '<div class="state">' + escHtml(prop.state || '') + '</div>'
+      + '<div class="prop-stats">'
+      + '<span>' + fmtNum(prop.meter_count) + ' meters</span>'
+      + (issCount > 0 ? '<span class="issue-badge">' + issCount + ' issue' + (issCount !== 1 ? 's' : '') + '</span>' : '')
+      + '</div></div>';
+  }
+  document.getElementById('propertyGrid').innerHTML = html || '<div style="color:#64748b">No properties found.</div>';
+}
+
+function filterProperties() {
+  renderPropertyGrid();
+}
+
+function renderTopIssues() {
+  const issues = (DATA.portfolio.top_issues || []).slice(0, 20);
+  if (!issues.length) {
+    document.getElementById('topIssuesTable').innerHTML = '<div style="color:#64748b;padding:12px">No issues found.</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Property</th><th>Meter</th><th>Type</th><th>Issue</th><th>Est. Impact</th></tr></thead><tbody>';
+  for (const iss of issues) {
+    html += '<tr><td>' + escHtml(iss.property_name || iss.property) + '</td>'
+      + '<td>' + escHtml(iss.meter_id) + '</td>'
+      + '<td><span class="flag-badge ' + (iss.type || '') + '">' + escHtml(iss.type) + '</span></td>'
+      + '<td>' + escHtml(iss.message) + '</td>'
+      + '<td>' + fmtMoney(iss.cost_impact) + '</td></tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('topIssuesTable').innerHTML = html;
+}
+
+function statCard(value, label) {
+  return '<div class="stat-card"><div class="stat-value">' + value + '</div><div class="stat-label">' + label + '</div></div>';
+}
+
+/* ── Property View ────────────────────────────────────── */
+function renderProperty(propId) {
+  const prop = DATA.properties[propId];
+  if (!prop) { showToast('Property not found', 'error'); return; }
+
+  // Get meters for this property
+  const propMeters = Object.entries(DATA.meters || {}).filter(([k, m]) => m.property_id === propId);
+
+  // Stats
+  const issCount = (prop.issues || []).length;
+  const byUtil = prop.by_utility || {};
+  const months = new Set();
+  for (const u of Object.values(byUtil)) {
+    for (const m of Object.keys(u.monthly || {})) months.add(m);
+  }
+  const sortedMonths = [...months].sort();
+  const latestMonth = sortedMonths.length ? sortedMonths[sortedMonths.length - 1] : null;
+  let latestSpend = 0;
+  if (latestMonth) {
+    for (const u of Object.values(byUtil)) {
+      latestSpend += (u.monthly[latestMonth] || {}).cost || 0;
+    }
+  }
+
+  document.getElementById('propStats').innerHTML =
+    statCard(escHtml(prop.property_name || propId), 'Property') +
+    statCard(fmtNum(prop.meter_count), 'Meters') +
+    statCard(fmtNum(issCount), 'Issues') +
+    statCard(fmtMoney(latestSpend), 'Latest Month Spend');
+
+  // Consumption chart (stacked bar by utility)
+  if (propChartInstance) { propChartInstance.destroy(); propChartInstance = null; }
+  const last12 = sortedMonths.slice(-12);
+  const utilTypes = Object.keys(byUtil);
+  const datasets = utilTypes.map(ut => ({
+    label: capitalise(ut),
+    data: last12.map(m => (byUtil[ut].monthly[m] || {}).consumption || 0),
+    backgroundColor: utilColor(ut),
+    borderRadius: 4
+  }));
+  const ctx1 = document.getElementById('propConsumptionChart').getContext('2d');
+  propChartInstance = new Chart(ctx1, {
+    type: 'bar',
+    data: { labels: last12, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { title: { display: true, text: 'Monthly Consumption by Utility' }, datalabels: { display: false } },
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
+    }
+  });
+
+  // Rate chart (line per utility)
+  if (propRateChartInstance) { propRateChartInstance.destroy(); propRateChartInstance = null; }
+  const rateDatasets = utilTypes.map(ut => ({
+    label: capitalise(ut),
+    data: last12.map(m => (byUtil[ut].monthly[m] || {}).rate || 0),
+    borderColor: utilColor(ut),
+    backgroundColor: utilColor(ut) + '33',
+    tension: 0.3,
+    fill: false,
+    pointRadius: 3
+  }));
+  const ctx2 = document.getElementById('propRateChart').getContext('2d');
+  propRateChartInstance = new Chart(ctx2, {
+    type: 'line',
+    data: { labels: last12, datasets: rateDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { title: { display: true, text: 'Monthly Rate Trend by Utility' }, datalabels: { display: false } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+
+  // Issues
+  const issues = prop.issues || [];
+  if (issues.length) {
+    let iHtml = '<h3>Issues (' + issues.length + ')</h3>';
+    for (const iss of issues) {
+      iHtml += '<div style="background:#fff;border-radius:8px;padding:10px 14px;margin-bottom:6px;font-size:13px">'
+        + '<span class="flag-badge ' + (iss.type || '') + '">' + escHtml(iss.type) + '</span> '
+        + escHtml(iss.message)
+        + (iss.cost_impact ? ' &mdash; ' + fmtMoney(iss.cost_impact) : '')
+        + '</div>';
+    }
+    document.getElementById('propIssues').innerHTML = iHtml;
+  } else {
+    document.getElementById('propIssues').innerHTML = '';
+  }
+
+  // Meter cards
+  let mHtml = '';
+  const sortedMeters = propMeters.sort((a, b) => (b[1].flags || []).length - (a[1].flags || []).length);
+  for (const [meterId, meter] of sortedMeters) {
+    const flags = meter.flags || [];
+    let flagHtml = '';
+    for (const f of flags.slice(0, 3)) {
+      flagHtml += '<span class="flag-badge ' + (f.type || '') + '">' + escHtml(f.type) + '</span> ';
+    }
+    if (flags.length > 3) flagHtml += '<span style="font-size:11px;color:#64748b">+' + (flags.length - 3) + ' more</span>';
+
+    mHtml += '<div class="meter-card" onclick="navigateTo(\'meter\',\'' + escAttr(meterId) + '\')">'
+      + '<div style="display:flex;justify-content:space-between;align-items:start">'
+      + '<h3>' + escHtml(meter.meter_number) + '</h3>'
+      + '<span class="badge ' + utilClass(meter.utility_type) + '">' + capitalise(meter.utility_type || '') + '</span>'
+      + '</div>'
+      + '<div class="meta">' + escHtml(meter.uom || '') + (meter.building ? ' &middot; Bldg ' + escHtml(meter.building) : '') + '</div>'
+      + '<div class="readings">' + fmtNum(meter.reading_count) + ' readings &middot; Latest: ' + escHtml(meter.latest_date || '-') + '</div>'
+      + '<div class="sparkline"><canvas id="spark_' + meterId.replace(/[^a-zA-Z0-9]/g, '_') + '"></canvas></div>'
+      + '<div>' + flagHtml + '</div>'
+      + '</div>';
+  }
+  document.getElementById('propMeterGrid').innerHTML = mHtml || '<div style="color:#64748b">No meters found.</div>';
+
+  // Draw sparklines after DOM update
+  requestAnimationFrame(() => {
+    for (const [meterId, meter] of sortedMeters) {
+      const canvasId = 'spark_' + meterId.replace(/[^a-zA-Z0-9]/g, '_');
+      const canvas = document.getElementById(canvasId);
+      if (canvas && meter.sparkline && meter.sparkline.length > 1) {
+        drawSparkline(canvas, meter.sparkline, utilColor(meter.utility_type));
+      }
+    }
+  });
+}
+
+/* ── Meter View ───────────────────────────────────────── */
+async function renderMeter(meterId) {
+  const meter = DATA.meters[meterId];
+  if (!meter) { showToast('Meter not found', 'error'); return; }
+
+  // Stats
+  document.getElementById('meterStats').innerHTML =
+    statCard(escHtml(meter.meter_number), 'Meter') +
+    statCard('<span class="badge ' + utilClass(meter.utility_type) + '">' + capitalise(meter.utility_type || '') + '</span>', 'Utility') +
+    statCard(escHtml(meter.uom || '-'), 'UOM') +
+    statCard(fmtNum(meter.reading_count), 'Readings') +
+    statCard(fmtRate(meter.latest_daily_rate), 'Latest Rate') +
+    statCard(escHtml(meter.latest_date || '-'), 'Latest Date');
+
+  // Dual-axis chart
+  if (meterChartInstance) { meterChartInstance.destroy(); meterChartInstance = null; }
+  const monthly = meter.monthly || {};
+  const months = Object.keys(monthly).sort().slice(-12);
+  const consumption = months.map(m => monthly[m].consumption || 0);
+  const cost = months.map(m => monthly[m].cost || 0);
+  const rate = months.map(m => monthly[m].daily_rate || monthly[m].rate || 0);
+
+  const ctx = document.getElementById('meterChart').getContext('2d');
+  meterChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: months,
+      datasets: [
+        {
+          label: 'Consumption',
+          data: consumption,
+          backgroundColor: utilColor(meter.utility_type) + 'aa',
+          borderRadius: 4,
+          yAxisID: 'y',
+          order: 2
+        },
+        {
+          label: 'Daily Rate',
+          data: rate,
+          type: 'line',
+          borderColor: '#ef4444',
+          backgroundColor: '#ef444433',
+          tension: 0.3,
+          pointRadius: 4,
+          yAxisID: 'y1',
+          order: 1
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { title: { display: true, text: 'Consumption & Rate' }, datalabels: { display: false } },
+      scales: {
+        y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Consumption' } },
+        y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Rate' } }
+      }
+    }
+  });
+
+  // Flags
+  const flags = meter.flags || [];
+  if (flags.length) {
+    let fHtml = '<h3>Flags (' + flags.length + ')</h3>';
+    for (const f of flags) {
+      fHtml += '<div style="background:#fff;border-radius:8px;padding:10px 14px;margin-bottom:6px;font-size:13px">'
+        + '<span class="flag-badge ' + (f.type || '') + '">' + escHtml(f.type) + '</span> '
+        + escHtml(f.message)
+        + (f.cost_impact ? ' &mdash; ' + fmtMoney(f.cost_impact) : '')
+        + (f.date ? ' <span style="color:#64748b">(' + escHtml(f.date) + ')</span>' : '')
+        + '</div>';
+    }
+    document.getElementById('meterFlags').innerHTML = fHtml;
+  } else {
+    document.getElementById('meterFlags').innerHTML = '';
+  }
+
+  // Fetch readings
+  document.getElementById('meterReadingsTable').innerHTML = '<div class="loading"><span class="spinner"></span> Loading readings...</div>';
+  try {
+    const resp = await fetch('/api/meters/' + encodeURIComponent(meterId) + '/readings');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const readings = await resp.json();
+    renderReadingsTable(readings);
+  } catch (err) {
+    document.getElementById('meterReadingsTable').innerHTML = '<div style="color:#ef4444;padding:12px">Failed to load readings: ' + escHtml(err.message) + '</div>';
+  }
+}
+
+function renderReadingsTable(readings) {
+  const rows = Array.isArray(readings) ? readings : (readings.readings || readings.data || []);
+  if (!rows.length) {
+    document.getElementById('meterReadingsTable').innerHTML = '<div style="color:#64748b;padding:12px">No readings found.</div>';
+    return;
+  }
+  // Sort newest first
+  rows.sort((a, b) => {
+    const da = a.service_end || a.reading_date || '';
+    const db = b.service_end || b.reading_date || '';
+    return db.localeCompare(da);
+  });
+  let html = '<div style="max-height:600px;overflow-y:auto"><table><thead><tr>'
+    + '<th>Service Period</th><th>Consumption</th><th>UOM</th><th>Charge</th>'
+    + '<th>$/Unit</th><th>Daily Rate</th><th>Days</th><th>Vendor</th><th>Flags</th><th>PDF</th>'
+    + '</tr></thead><tbody>';
+  for (const r of rows) {
+    // Service period
+    const sStart = r.service_start || '';
+    const sEnd = r.service_end || r.reading_date || '';
+    const period = sStart && sEnd ? escHtml(sStart) + ' &rarr; ' + escHtml(sEnd) : escHtml(sEnd || '-');
+
+    // Consumption + UOM
+    const cons = r.enriched_consumption || r.normalized_consumption || r.consumption || 0;
+    const uom = r.canonical_uom || r.normalized_uom || r.raw_uom || '';
+
+    // Charge
+    const charge = r.amount || r.charge_amount || 0;
+
+    // Effective rate ($/unit)
+    const effRate = r.effective_rate || (cons > 0 && charge > 0 ? charge / cons : 0);
+
+    // Daily rate
+    let days = 0;
+    if (sStart && sEnd) {
+      try {
+        const d1 = new Date(sStart.includes('/') ? sStart.split('/').length === 3 ? sStart.split('/')[2] + '-' + sStart.split('/')[0] + '-' + sStart.split('/')[1] : sStart : sStart);
+        const d2 = new Date(sEnd.includes('/') ? sEnd.split('/').length === 3 ? sEnd.split('/')[2] + '-' + sEnd.split('/')[0] + '-' + sEnd.split('/')[1] : sEnd : sEnd);
+        days = Math.max(1, Math.round((d2 - d1) / 86400000));
+      } catch(e) { days = 0; }
+    }
+    const dailyRate = days > 0 && cons > 0 ? (cons / days) : 0;
+
+    // Flags
+    let flagHtml = '';
+    if (r.flagged && r.flag_reason) {
+      flagHtml = '<span class="flag-badge volume_spike">' + escHtml(r.flag_reason) + '</span>';
+    }
+
+    // PDF link
+    const pdfId = r.source_pdf_id || '';
+    const pdfLink = pdfId
+      ? '<a href="/invoices?pdf_id=' + encodeURIComponent(pdfId) + '" target="_blank" class="btn small" style="padding:3px 8px;font-size:11px">View PDF</a>'
+      : '-';
+
+    html += '<tr>'
+      + '<td style="white-space:nowrap">' + period + '</td>'
+      + '<td style="text-align:right">' + fmtNum(cons) + '</td>'
+      + '<td>' + escHtml(uom) + '</td>'
+      + '<td style="text-align:right">' + fmtMoney(charge) + '</td>'
+      + '<td style="text-align:right">' + fmtRate(effRate) + '</td>'
+      + '<td style="text-align:right">' + (dailyRate > 0 ? fmtNum(Math.round(dailyRate * 100) / 100) : '-') + '/' + escHtml(uom ? uom + '/d' : 'd') + '</td>'
+      + '<td style="text-align:center">' + (days || '-') + '</td>'
+      + '<td>' + escHtml(r.vendor || r.vendor_name || '-') + '</td>'
+      + '<td>' + flagHtml + '</td>'
+      + '<td>' + pdfLink + '</td>'
+      + '</tr>';
+  }
+  html += '</tbody></table></div>';
+  document.getElementById('meterReadingsTable').innerHTML = html;
+}
+
+/* ── Sparkline ────────────────────────────────────────── */
+function drawSparkline(canvas, values, color) {
+  if (!values || values.length < 2) return;
+  new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: values.map((_, i) => i),
+      datasets: [{
+        data: values,
+        borderColor: color || '#0ea5e9',
+        backgroundColor: (color || '#0ea5e9') + '22',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 1.5
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false }, datalabels: { display: false } },
+      scales: { x: { display: false }, y: { display: false } },
+      elements: { point: { radius: 0 } },
+      animation: false
+    }
+  });
+}
+
+/* ── Init ─────────────────────────────────────────────── */
+async function init() {
+  try {
+    const resp = await fetch('/api/meters/analytics');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    DATA = await resp.json();
+    document.getElementById('loadingView').style.display = 'none';
+    if (DATA.generated_at) {
+      document.getElementById('lastUpdated').textContent = 'Analytics generated: ' + new Date(DATA.generated_at).toLocaleString();
+    }
+    navigateTo('portfolio');
+  } catch (err) {
+    document.getElementById('loadingView').innerHTML = '<span style="color:#ef4444">Failed to load analytics: ' + escHtml(err.message) + '</span>';
+    showToast('Failed to load analytics', 'error');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
 </body>
 </html>
