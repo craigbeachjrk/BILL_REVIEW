@@ -1010,6 +1010,12 @@ def _build_analytics_cache(meter_data: dict) -> dict:
             # SUM cost (each charge line has a different amount)
             entry["cost"] += amount
 
+    # Count unique periods per meter for accurate reading_count
+    _dedup_meter_counts = {}
+    for entry in period_dedup.values():
+        mid = entry["meter_id"]
+        _dedup_meter_counts[mid] = _dedup_meter_counts.get(mid, 0) + 1
+
     print(f"[METER CLEANER] Analytics dedup: {len(latest_readings)} readings -> {len(period_dedup)} unique meter-periods")
 
     # --- Step 2: Group readings by meter, compute monthly rollups ---
@@ -1065,7 +1071,7 @@ def _build_analytics_cache(meter_data: dict) -> dict:
         sparkline_dates = list(last_12)
         latest_date = last_12[-1] if last_12 else ""
         latest_daily = monthly[last_12[-1]]["daily_rate"] if last_12 else 0.0
-        reading_count = m_info.get("reading_count", 0)
+        reading_count = _dedup_meter_counts.get(meter_id, m_info.get("reading_count", 0))
 
         # --- Flag detection ---
         flags = _detect_meter_flags(meter_id, monthly, m_info)

@@ -27437,10 +27437,17 @@ def api_meter_readings(meter_id: str, user: str = Depends(require_user)):
 
     readings = [r for r in meter_data.get("readings", []) if r.get("canonical_meter_id") == meter_id]
 
-    # Ensure source_pdf_id is set for each reading (compute from source_s3_key if missing)
+    # Ensure source_pdf_id and source_date are set for each reading
     for r in readings:
-        if not r.get("source_pdf_id") and r.get("source_s3_key"):
-            r["source_pdf_id"] = pdf_id_from_key(r["source_s3_key"])
+        s3_key = r.get("source_s3_key", "")
+        if not r.get("source_pdf_id") and s3_key:
+            r["source_pdf_id"] = pdf_id_from_key(s3_key)
+        if not r.get("source_date") and s3_key:
+            try:
+                y, m, d = _extract_ymd_from_key(s3_key)
+                r["source_date"] = f"{y}-{m}-{d}"
+            except Exception:
+                pass
 
     # Sort by date
     readings.sort(key=lambda r: r.get("reading_date", ""))
