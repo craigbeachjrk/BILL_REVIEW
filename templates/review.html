@@ -412,9 +412,23 @@
             <button class="btn small secondary" type="button" onclick="resetSelected()">Reset Selected to Original</button>
             <button class="btn small danger" type="button" onclick="deleteSelectedLines()">Delete Selected</button>
           </div>
-          <div class="line-items-total">
-            <div class="label">Total Line Items:</div>
-            <div class="amount" id="lineItemsTotal">$0.00</div>
+          <div class="line-items-total" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:6px">
+              <div class="label">Total Line Items:</div>
+              <div class="amount" id="lineItemsTotal">$0.00</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div class="label">Lines:</div>
+              <div class="amount" id="lineCount">0</div>
+            </div>
+            {% if invoice_total is defined and invoice_total is not none %}
+            <div style="display:flex;align-items:center;gap:6px">
+              <div class="label">Invoice Total:</div>
+              <div class="amount">${{ "%.2f"|format(invoice_total) }}</div>
+              <input type="hidden" id="invoiceTotalRef" value="{{ invoice_total }}" />
+            </div>
+            <div id="totalMismatchWarning" style="display:none;color:#dc2626;font-weight:600;font-size:12px">&#9888; Line total does not match invoice total</div>
+            {% endif %}
           </div>
           <div class="lines" id="lines">
           {% for ln in lines %}
@@ -1717,6 +1731,23 @@
       const display = document.getElementById('lineItemsTotal');
       if (display){
         display.textContent = '$' + total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      }
+      // Update line count
+      const countDisplay = document.getElementById('lineCount');
+      if (countDisplay){
+        countDisplay.textContent = lines.length;
+      }
+      // Check mismatch with invoice total if available
+      const refEl = document.getElementById('invoiceTotalRef');
+      const warnEl = document.getElementById('totalMismatchWarning');
+      if (refEl && warnEl){
+        const invTotal = parseFloat(refEl.value);
+        if (!isNaN(invTotal) && Math.abs(total - invTotal) > 0.01){
+          warnEl.style.display = '';
+          warnEl.textContent = '\u26A0 Line total ($' + total.toFixed(2) + ') does not match invoice total ($' + invTotal.toFixed(2) + ') — difference: $' + Math.abs(total - invTotal).toFixed(2);
+        } else {
+          warnEl.style.display = 'none';
+        }
       }
     }
 

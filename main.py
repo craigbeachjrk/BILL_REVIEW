@@ -3393,10 +3393,10 @@ def _index_one_day(y: str, m: str, d: str) -> List[Dict]:
     date_str = f"{y}-{m}-{d}"
     for pid, data in by_pdf.items():
         first = data["rows"][0]
-        acct = str(
+        acct = _clean_account_number(str(
             first.get("Account Number") or first.get("ACCOUNT_ID") or first.get("account_id") or
             first.get("Account ID") or first.get("ACCOUNT_NUMBER") or ""
-        )
+        ))
         vend = str(
             first.get("EnrichedVendorName") or first.get("Vendor Name") or first.get("VENDOR") or
             first.get("vendor") or first.get("Vendor") or first.get("VENDOR_NAME") or ""
@@ -23160,7 +23160,8 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
     pdf_accounts: Dict[str, set] = {}
     for r in rows:
         # Fall back from Account Number to Line Item Account Number for consistency
-        account_no = str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "") or "(unknown)"
+        # Clean the account number so it displays consistently with what gets written to Stage 6 and Entrata
+        account_no = _clean_account_number(str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "")) or "(unknown)"
         # Use a stable unique id for the bill: hash of the source s3 key (pdf_id)
         pdf_id = pdf_id_from_key(r.get("__s3_key__", "")) if r.get("__s3_key__") else "(unknown)"
         invoice_no = str(r.get("Invoice Number", "")) or "(unknown)"  # retained only for display if needed
@@ -23952,11 +23953,11 @@ def api_split_bill(date: str = Form(...), pdf_id: str = Form(...), user: str = D
         if not target_rows:
             return JSONResponse({"error": "No rows found for pdf_id"}, status_code=404)
 
-        # Group rows by account number (use same fallback logic as multi-account detection)
+        # Group rows by cleaned account number (consistent with display and Stage 6)
         from collections import defaultdict
         rows_by_account: Dict[str, List[Dict]] = defaultdict(list)
         for r in target_rows:
-            acct = str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "") or "(unknown)"
+            acct = _clean_account_number(str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "")) or "(unknown)"
             rows_by_account[acct].append(r)
 
         if len(rows_by_account) < 2:
@@ -24386,7 +24387,8 @@ def day_status_counts(y: str, m: str, d: str) -> Dict[str, int]:
         hdr = header_by_pdf.get(pid, {})
         # Use row's Account Number directly (NOT header override) to preserve multi-account grouping
         # Use Line Item Account Number as fallback when Account Number is blank (for subtotals/taxes)
-        account_no = str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "") or "(unknown)"
+        # Clean the account number for consistent display with Stage 6 / Entrata
+        account_no = _clean_account_number(str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "")) or "(unknown)"
         vendor = (
             str(hdr.get("EnrichedVendorName", ""))
             or str(r.get("EnrichedVendorName", ""))
@@ -24461,6 +24463,9 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
         "Bill From",
     ]
     header: Dict[str, Any] = {k: (rows[0].get(k, "") if rows else "") for k in header_fields}
+    # Normalize Account Number so the review page shows the same value that gets written to Stage 6 / Entrata
+    if header.get("Account Number"):
+        header["Account Number"] = _clean_account_number(header["Account Number"])
 
     # Merge saved header draft (user edits) over JSONL defaults for initial render
     # This prevents flash of empty fields while JS loads the draft
@@ -24476,6 +24481,10 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             for k, v in draft_fields.items():
                 if k in header_fields and v:  # Only overwrite if draft has non-empty value
                     header[k] = v
+
+    # Re-normalize Account Number after draft merge (draft may have old uncleaned value)
+    if header.get("Account Number"):
+        header["Account Number"] = _clean_account_number(header["Account Number"])
 
     # Backfill 'Bill From' if missing using common source fields (vendor/billing name lines)
     if not (header.get("Bill From") or ""):
@@ -24549,6 +24558,16 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
                 "Rate": r.get("Rate",""),
             }
         })
+    # Compute invoice total from all line charges (for mismatch detection in UI)
+    invoice_total = 0.0
+    for r in rows:
+        try:
+            charge_str = str(r.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+            if charge_str:
+                invoice_total += float(charge_str)
+        except (ValueError, TypeError):
+            pass
+
     return templates.TemplateResponse(
         "review.html",
         {
@@ -24559,6 +24578,7 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             "header": header,
             "lines": lines,
             "user": user,
+            "invoice_total": round(invoice_total, 2),
         },
     )
 
@@ -25220,7 +25240,8 @@ def api_invoices_status(date: str, user: str = Depends(require_user), response: 
         hdr = header_by_pdf.get(pdf_id, {})
         # Use row's Account Number directly (NOT header override) to preserve multi-account grouping
         # Use Line Item Account Number as fallback when Account Number is blank (for subtotals/taxes)
-        account_no = str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "") or "(unknown)"
+        # Clean the account number for consistent display with Stage 6 / Entrata
+        account_no = _clean_account_number(str(r.get("Account Number", "") or r.get("Line Item Account Number", "") or "")) or "(unknown)"
         invoice_no = str(r.get("Invoice Number", "")) or "(unknown)"
         vendor = (
             str(hdr.get("EnrichedVendorName", ""))
@@ -26266,6 +26287,10 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                                 for k in header_edit_fields:
                                     if k in header_fields and header_fields[k] != "":
                                         rec[k] = header_fields[k]
+                                # Normalize account numbers in Stage 4 to match Stage 6 / Entrata
+                                for acct_field in ("Account Number", "AccountNumber", "Line Item Account Number"):
+                                    if acct_field in rec and rec[acct_field]:
+                                        rec[acct_field] = _clean_account_number(rec[acct_field])
                                 # Apply line-level edits from draft (per-line)
                                 _lid = f"{_s4_pid}#{row_idx}"
                                 _line_draft = get_draft(_s4_pid, _lid, user)

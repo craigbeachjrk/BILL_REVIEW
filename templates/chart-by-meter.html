@@ -166,9 +166,10 @@
         </div>
 
         <!-- Portfolio Charts -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px">
           <div class="chart-container" style="height:350px"><canvas id="portfolioConsumptionChart"></canvas></div>
           <div class="chart-container" style="height:350px"><canvas id="portfolioCostChart"></canvas></div>
+          <div class="chart-container" style="height:350px"><canvas id="portfolioRateChart"></canvas></div>
         </div>
 
         <!-- Utility summary cards -->
@@ -247,6 +248,7 @@ let propRateChartInstance = null;
 let meterChartInstance = null;
 let portfolioConsChart = null;
 let portfolioCostChart = null;
+let portfolioRateChart = null;
 let selectedMonths = 3;
 let selectedUtility = '';
 
@@ -576,6 +578,38 @@ function renderPortfolioCharts() {
         x: { stacked: true, ticks: { font: { size: 12, weight: 'bold' } }, grid: { display: false } },
         y: { stacked: true, title: { display: true, text: 'Dollars ($)', font: { size: 12 } },
           ticks: { font: { size: 11 }, callback: v => fmtMoneyAbbrev(v) } }
+      }
+    }
+  });
+
+  // ── Rate Chart ($/unit line per utility) ──
+  if (portfolioRateChart) { portfolioRateChart.destroy(); portfolioRateChart = null; }
+  const rateDatasets = [];
+  for (const [ut, info] of filteredUtils) {
+    rateDatasets.push({
+      label: capitalise(ut),
+      data: months.map(m => (info.monthly || {})[m]?.rate || 0),
+      borderColor: utilColor(ut),
+      backgroundColor: utilColor(ut) + '33',
+      tension: 0.3,
+      fill: false,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+    });
+  }
+  portfolioRateChart = new Chart(document.getElementById('portfolioRateChart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: rateDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 12 } } },
+        title: { display: true, text: 'Rate by Service Month ($/unit)', font: { size: 14 } },
+        tooltip: { callbacks: { label: ctx => capitalise(ctx.dataset.label) + ': $' + Number(ctx.raw).toFixed(4) } },
+        datalabels: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 12, weight: 'bold' } }, grid: { display: false } },
+        y: { beginAtZero: true, title: { display: true, text: 'Rate ($/unit)', font: { size: 12 } },
+          ticks: { font: { size: 11 }, callback: v => '$' + v.toFixed(4) } }
       }
     }
   });

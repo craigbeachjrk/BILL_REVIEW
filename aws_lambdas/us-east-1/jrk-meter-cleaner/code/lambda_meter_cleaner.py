@@ -481,18 +481,38 @@ def _add_sparklines_to_meters(meters: dict, all_readings: list) -> dict:
     for inv in invoice_versions.values():
         latest_readings.extend(inv["readings"])
 
-    # Step 2: Group by meter
-    meter_readings = {}
+    # Step 2: Deduplicate charge line items for same meter+period, then group by meter
+    # A bill often has multiple charge lines (energy, delivery, etc.) that all report
+    # the same consumption. Take MAX consumption per meter+period.
+    period_dedup = {}  # key: meter_id|start|end -> best reading
     for r in latest_readings:
         meter_id = r.get("canonical_meter_id") or r.get("meter_id")
         if not meter_id:
             continue
-        if meter_id not in meter_readings:
-            meter_readings[meter_id] = []
-
         consumption = r.get("enriched_consumption") or r.get("normalized_consumption") or 0
         service_start = r.get("service_start") or ""
         service_end = r.get("service_end") or r.get("reading_date") or ""
+        dedup_key = f"{meter_id}|{service_start}|{service_end}"
+
+        if dedup_key not in period_dedup or consumption > period_dedup[dedup_key]["_consumption"]:
+            period_dedup[dedup_key] = {
+                "meter_id": meter_id,
+                "_consumption": consumption,
+                "service_start": service_start,
+                "service_end": service_end,
+                "source_s3_key": r.get("source_s3_key"),
+                "line_index": r.get("line_index"),
+            }
+
+    meter_readings = {}
+    for entry in period_dedup.values():
+        meter_id = entry["meter_id"]
+        if meter_id not in meter_readings:
+            meter_readings[meter_id] = []
+
+        consumption = entry["_consumption"]
+        service_start = entry["service_start"]
+        service_end = entry["service_end"]
         daily_rate = _calculate_daily_rate(consumption, service_start, service_end)
 
         end_dt = _parse_date(service_end)
@@ -503,8 +523,8 @@ def _add_sparklines_to_meters(meters: dict, all_readings: list) -> dict:
             "sort_key": sort_key,
             "daily_rate": daily_rate,
             "total_consumption": consumption,
-            "source_s3_key": r.get("source_s3_key"),
-            "line_index": r.get("line_index")
+            "source_s3_key": entry["source_s3_key"],
+            "line_index": entry["line_index"]
         })
 
     # Step 3: For each meter, check for discrepancies (different values for same date)
@@ -958,19 +978,51 @@ def _build_analytics_cache(meter_data: dict) -> dict:
     for inv in invoice_versions.values():
         latest_readings.extend(inv["readings"])
 
-    # --- Step 2: Group readings by meter, compute monthly rollups ---
-    meter_monthly = {}  # meter_id -> {YYYY-MM -> {consumption, cost, days, ...}}
+    # --- Step 1.5: Deduplicate line items for same meter+period ---
+    # A single bill often has multiple charge line items (energy, delivery, etc.)
+    # that all report the same meter consumption. We must take MAX consumption
+    # per meter+service_period (not SUM), while summing the cost/amount.
+    period_dedup = {}  # key: meter_id|service_start|service_end -> {consumption, cost, ...}
     for r in latest_readings:
         meter_id = r.get("canonical_meter_id") or r.get("meter_id")
         if not meter_id:
             continue
-        if meter_id not in meter_monthly:
-            meter_monthly[meter_id] = {}
+        service_start = r.get("service_start", "") or ""
+        service_end = r.get("service_end", "") or r.get("reading_date", "") or ""
+        dedup_key = f"{meter_id}|{service_start}|{service_end}"
 
         consumption = r.get("enriched_consumption") or r.get("normalized_consumption") or 0
         amount = r.get("amount", 0) or 0
-        service_start = r.get("service_start", "") or ""
-        service_end = r.get("service_end", "") or r.get("reading_date", "") or ""
+
+        if dedup_key not in period_dedup:
+            period_dedup[dedup_key] = {
+                "meter_id": meter_id,
+                "service_start": service_start,
+                "service_end": service_end,
+                "consumption": consumption,
+                "cost": amount,
+            }
+        else:
+            entry = period_dedup[dedup_key]
+            # Take MAX consumption (same reading repeated across charge lines)
+            if consumption > entry["consumption"]:
+                entry["consumption"] = consumption
+            # SUM cost (each charge line has a different amount)
+            entry["cost"] += amount
+
+    print(f"[METER CLEANER] Analytics dedup: {len(latest_readings)} readings -> {len(period_dedup)} unique meter-periods")
+
+    # --- Step 2: Group readings by meter, compute monthly rollups ---
+    meter_monthly = {}  # meter_id -> {YYYY-MM -> {consumption, cost, days, ...}}
+    for entry in period_dedup.values():
+        meter_id = entry["meter_id"]
+        if meter_id not in meter_monthly:
+            meter_monthly[meter_id] = {}
+
+        consumption = entry["consumption"]
+        amount = entry["cost"]
+        service_start = entry["service_start"]
+        service_end = entry["service_end"]
 
         end_dt = _parse_date(service_end)
         if not end_dt:
