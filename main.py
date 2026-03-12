@@ -7356,13 +7356,14 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
             return JSONResponse({"error": "S3 key is required"}, status_code=400)
 
         line_hashes_to_archive = set(h.strip() for h in line_hashes_str.split(",") if h.strip())
+        archive_all = form.get("archive_all", "") == "1"
 
         if not line_hashes_to_archive:
             return JSONResponse({"error": "No valid line hashes provided"}, status_code=400)
 
         now_utc = datetime.utcnow().isoformat() + "Z"
 
-        print(f"[UBI ARCHIVE] Archiving {len(line_hashes_to_archive)} line(s) from {s3_key}")
+        print(f"[UBI ARCHIVE] Archiving {len(line_hashes_to_archive)} line(s) from {s3_key} (archive_all={archive_all})")
         print(f"[UBI ARCHIVE] User: {user}")
 
         # Read the JSONL file from S3
@@ -7384,30 +7385,39 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
             except (json.JSONDecodeError, ValueError, TypeError) as e:
                 print(f"[UBI ARCHIVE] Error parsing line: {e}")
 
-        # Try exact hash matching first
         archived_items = []
         remaining_items = []
 
-        for rec in all_recs:
-            line_hash = _compute_stable_line_hash(rec)
-            if line_hash in line_hashes_to_archive:
-                rec["archived_date"] = now_utc
-                rec["archived_by"] = user
-                archived_items.append(rec)
-                print(f"[UBI ARCHIVE] Archived line {line_hash[:16]}...")
-            else:
-                remaining_items.append(rec)
-
-        # If exact hash match failed but user selected ALL lines in the file,
-        # archive everything (the file was likely modified but user's intent is clear)
-        if not archived_items and len(line_hashes_to_archive) == len(all_recs):
-            print(f"[UBI ARCHIVE] Hash mismatch but count matches ({len(all_recs)} lines) - archiving all")
-            archived_items = []
+        # If frontend says "archive entire file" (all visible lines selected), skip hash matching
+        if archive_all:
+            print(f"[UBI ARCHIVE] archive_all=True, archiving all {len(all_recs)} lines in file")
             for rec in all_recs:
                 rec["archived_date"] = now_utc
                 rec["archived_by"] = user
                 archived_items.append(rec)
             remaining_items = []
+        else:
+            # Try exact hash matching
+            for rec in all_recs:
+                line_hash = _compute_stable_line_hash(rec)
+                if line_hash in line_hashes_to_archive:
+                    rec["archived_date"] = now_utc
+                    rec["archived_by"] = user
+                    archived_items.append(rec)
+                    print(f"[UBI ARCHIVE] Archived line {line_hash[:16]}...")
+                else:
+                    remaining_items.append(rec)
+
+            # If exact hash match failed but user selected ALL lines in the file,
+            # archive everything (the file was likely modified but user's intent is clear)
+            if not archived_items and len(line_hashes_to_archive) == len(all_recs):
+                print(f"[UBI ARCHIVE] Hash mismatch but count matches ({len(all_recs)} lines) - archiving all")
+                archived_items = []
+                for rec in all_recs:
+                    rec["archived_date"] = now_utc
+                    rec["archived_by"] = user
+                    archived_items.append(rec)
+                remaining_items = []
 
         if not archived_items:
             # Still no match - file was modified, ask user to reload

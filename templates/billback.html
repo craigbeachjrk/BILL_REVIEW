@@ -2696,8 +2696,13 @@
       selectedCheckboxes.forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         const lineHash = cb.getAttribute('data-line-hash');
-        if (!byS3Key[s3Key]) byS3Key[s3Key] = [];
-        byS3Key[s3Key].push(lineHash);
+        if (!byS3Key[s3Key]) byS3Key[s3Key] = {selected: [], total: 0};
+        byS3Key[s3Key].selected.push(lineHash);
+      });
+      // Count total visible lines per s3_key to detect full-bill selection
+      document.querySelectorAll('.line-checkbox').forEach(cb => {
+        const s3Key = cb.getAttribute('data-s3-key');
+        if (byS3Key[s3Key]) byS3Key[s3Key].total++;
       });
 
       const totalBills = Object.keys(byS3Key).length;
@@ -2710,10 +2715,14 @@
         const successfulS3Keys = new Set();  // Track only successful archives
 
         // Make separate API calls for each s3_key
-        for (const [s3Key, lineHashes] of Object.entries(byS3Key)) {
+        for (const [s3Key, info] of Object.entries(byS3Key)) {
           const fd = new FormData();
-          fd.append('line_hashes', lineHashes.join(','));
+          fd.append('line_hashes', info.selected.join(','));
           fd.append('s3_key', s3Key);
+          // If all visible lines for this bill are selected, tell server to archive the whole file
+          if (info.selected.length === info.total) {
+            fd.append('archive_all', '1');
+          }
 
           const response = await fetch('/api/billback/ubi/archive', {
             method: 'POST',
