@@ -217,8 +217,9 @@
             <button class="btn small secondary util-btn" data-ut="sewer" onclick="setUtility('sewer');if(currentPropertyId)renderProperty(currentPropertyId)">Sewer</button>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px">
           <div class="chart-container" style="height:350px"><canvas id="propConsumptionChart"></canvas></div>
+          <div class="chart-container" style="height:350px"><canvas id="propCostChart"></canvas></div>
           <div class="chart-container" style="height:350px"><canvas id="propRateChart"></canvas></div>
         </div>
         <div id="propIssues" style="margin-bottom:20px"></div>
@@ -244,6 +245,7 @@ let currentView = 'portfolio';
 let currentPropertyId = null;
 let currentMeterId = null;
 let propChartInstance = null;
+let propCostChartInstance = null;
 let propRateChartInstance = null;
 let meterChartInstance = null;
 let portfolioConsChart = null;
@@ -747,15 +749,10 @@ function renderProperty(propId) {
   // Get meters for this property
   const propMeters = Object.entries(DATA.meters || {}).filter(([k, m]) => m.property_id === propId);
 
-  // Stats — compute over visible months
+  // Stats — use portfolio-level months so dates are consistent across views
   const issCount = (prop.issues || []).length;
   const byUtil = prop.by_utility || {};
-  const allMonths = new Set();
-  for (const [ut, u] of Object.entries(byUtil)) {
-    if (!_matchesUtilityFilter(ut)) continue;
-    for (const m of Object.keys(u.monthly || {})) allMonths.add(m);
-  }
-  const sortedMonths = [...allMonths].sort().slice(-selectedMonths);
+  const sortedMonths = _getAllMonths();
   const monthSet = new Set(sortedMonths);
   let totalSpend = 0;
   for (const [ut, u] of Object.entries(byUtil)) {
@@ -794,6 +791,31 @@ function renderProperty(propId) {
         x: { stacked: true, ticks: { font: { size: 12, weight: 'bold' } }, grid: { display: false } },
         y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Consumption (units)', font: { size: 12 } },
           ticks: { font: { size: 11 }, callback: v => fmtAbbrev(v) } }
+      }
+    }
+  });
+
+  // Cost chart (stacked bar by utility)
+  if (propCostChartInstance) { propCostChartInstance.destroy(); propCostChartInstance = null; }
+  const costDatasets = filteredUtils.map(([ut, utd]) => ({
+    label: capitalise(ut),
+    data: sortedMonths.map(m => Math.round((utd.monthly[m] || {}).cost || 0)),
+    backgroundColor: utilColor(ut) + 'cc',
+    borderRadius: 4
+  }));
+  propCostChartInstance = new Chart(document.getElementById('propCostChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: costDatasets },
+    plugins: [_chartDataLabelsPlugin()],
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { title: { display: true, text: 'Cost by Service Month', font: { size: 14 } },
+        tooltip: { callbacks: { label: ctx => capitalise(ctx.dataset.label) + ': ' + fmtMoney(ctx.raw) } },
+        datalabels: { display: false } },
+      scales: {
+        x: { stacked: true, ticks: { font: { size: 12, weight: 'bold' } }, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Dollars ($)', font: { size: 12 } },
+          ticks: { font: { size: 11 }, callback: v => fmtMoneyAbbrev(v) } }
       }
     }
   });
