@@ -65,6 +65,9 @@
     .line[data-minimized="1"] .line-summary{display:block}
     .line-summary{display:none;font-size:13px;color:#64748b;margin-top:6px}
     .minimize-btn{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;margin-left:8px}
+    .page-subtotal-bar{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;margin:4px 0;background:linear-gradient(90deg,#eef2ff,#f0fdf4);border:1px solid #c7d2fe;border-radius:6px;font-size:12px;font-weight:600;color:#4338ca}
+    .page-subtotal-bar .page-label{font-weight:700}
+    .page-subtotal-bar .page-total{font-size:13px}
     /* Bulk GL assignment styles */
     .bulk-gl-item:hover{background:#f5f5f5}
     /* Line items total display */
@@ -409,8 +412,9 @@
             <button class="btn small" type="button" onclick="duplicateSelectedLines()">Duplicate Selected</button>
             <button class="btn small" type="button" onclick="showBulkGLModal()">Assign GL to Selected</button>
             <button class="btn small" type="button" onclick="flipAllHouse()">Flip All H/V</button>
+            <button class="btn small secondary" type="button" onclick="toggleMinimizeSelected()">Expand/Minimize Selected</button>
             <button class="btn small secondary" type="button" onclick="resetSelected()">Reset Selected to Original</button>
-            <button class="btn small danger" type="button" onclick="deleteSelectedLines()">Delete Selected</button>
+            <button class="btn small" type="button" onclick="deleteSelectedLines()" style="background:#dc2626;color:#fff">Delete Selected</button>
           </div>
           <div class="line-items-total" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
             <div style="display:flex;align-items:center;gap:6px">
@@ -1729,6 +1733,8 @@
       if (countDisplay){
         countDisplay.textContent = lines.length;
       }
+      // Update page subtotals
+      insertPageSubtotals();
     }
 
     // Force specific selects in a line to be native and interactive
@@ -2187,6 +2193,75 @@
           btn.textContent = 'Expand';
         }
       }catch(_){ }
+    }
+
+    function toggleMinimizeSelected(){
+      const picks = getSelectedLines();
+      if (!picks.length){ alert('Select at least one line.'); return; }
+      // If any selected is expanded, minimize all; otherwise expand all
+      const anyExpanded = picks.some(l => l.getAttribute('data-minimized') !== '1');
+      picks.forEach(line => {
+        const btn = line.querySelector('.minimize-btn');
+        if (anyExpanded){
+          line.setAttribute('data-minimized', '1');
+          if (btn) btn.textContent = 'Expand';
+        } else {
+          line.removeAttribute('data-minimized');
+          if (btn) btn.textContent = 'Minimize';
+        }
+      });
+      clearAllLineChecks();
+    }
+
+    function insertPageSubtotals(){
+      // Remove existing subtotal bars
+      document.querySelectorAll('.page-subtotal-bar').forEach(el => el.remove());
+      const container = document.getElementById('lines');
+      const lines = Array.from(container.querySelectorAll('.line:not([data-deleted="1"])'));
+      if (!lines.length) return;
+
+      // Group consecutive lines by page
+      let currentPage = null;
+      let pageGroups = []; // [{page, lastLine, total, count}]
+      let runningTotal = 0;
+      let runningCount = 0;
+
+      for (const line of lines){
+        const pg = parseInt(line.getAttribute('data-page-start')) || 0;
+        const pageLabel = pg > 0 ? pg : 0;
+
+        if (currentPage !== null && pageLabel !== currentPage && currentPage > 0){
+          // Page transition — record previous page group
+          pageGroups.push({page: currentPage, lastLine: lines[lines.indexOf(line) - 1], total: runningTotal, count: runningCount});
+          runningTotal = 0;
+          runningCount = 0;
+        }
+        currentPage = pageLabel;
+
+        const chargeInput = line.querySelector('input[name="Line Item Charge"]');
+        if (chargeInput && chargeInput.value){
+          const val = parseFloat(String(chargeInput.value).replace(/[^0-9.-]/g, ''));
+          if (!isNaN(val)) runningTotal += val;
+        }
+        runningCount++;
+      }
+      // Last page group
+      if (currentPage !== null && currentPage > 0){
+        pageGroups.push({page: currentPage, lastLine: lines[lines.length - 1], total: runningTotal, count: runningCount});
+      }
+
+      // Only insert if there are multiple pages
+      if (pageGroups.length < 2) return;
+
+      // Insert subtotal bars after each page group (except the last — it matches the grand total)
+      for (const pg of pageGroups){
+        const bar = document.createElement('div');
+        bar.className = 'page-subtotal-bar';
+        bar.innerHTML = '<span class="page-label">Page ' + pg.page + '</span>'
+          + '<span>' + pg.count + ' line' + (pg.count !== 1 ? 's' : '') + '</span>'
+          + '<span class="page-total">$' + pg.total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</span>';
+        pg.lastLine.insertAdjacentElement('afterend', bar);
+      }
     }
 
     // --- Header draft helpers (ensure defined before used) ---
