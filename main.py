@@ -23154,8 +23154,10 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
     inv: Dict[tuple, Dict[str, Any]] = {}
     group_ids: Dict[tuple, List[str]] = {}
     header_vendor_cache: Dict[str, str] = {}
+    header_property_cache: Dict[str, str] = {}
     # Cache the first valid vendor per pdf_id to ensure consistency across all rows from same PDF
     pdf_vendor_cache: Dict[str, str] = {}
+    pdf_property_cache: Dict[str, str] = {}
     # Track accounts per pdf_id to detect multi-account PDFs
     pdf_accounts: Dict[str, set] = {}
     for r in rows:
@@ -23167,10 +23169,12 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
         invoice_no = str(r.get("Invoice Number", "")) or "(unknown)"  # retained only for display if needed
         # Try to load a header draft for this pdf to get the latest vendor name selected by the user
         vend_override = None
+        prop_override = None
         try:
             if pdf_id and pdf_id != "(unknown)":
                 if pdf_id in header_vendor_cache:
                     vend_override = header_vendor_cache[pdf_id]
+                    prop_override = header_property_cache.get(pdf_id)
                 else:
                     # Use pre-fetched header draft instead of sequential DynamoDB call
                     dft = header_drafts.get(pdf_id)
@@ -23178,7 +23182,11 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
                         vo = str(dft["fields"].get("EnrichedVendorName") or "").strip()
                         if vo:
                             vend_override = vo
+                        po = str(dft["fields"].get("EnrichedPropertyName") or "").strip()
+                        if po:
+                            prop_override = po
                     header_vendor_cache[pdf_id] = vend_override or ""
+                    header_property_cache[pdf_id] = prop_override or ""
         except Exception:
             pass
         # Check if we already have a vendor cached for this pdf_id (ensures all rows from same PDF group together)
@@ -23199,13 +23207,19 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
         key = (vendor, account_no, pdf_id)
         # Track accounts per pdf_id for multi-account detection
         pdf_accounts.setdefault(pdf_id, set()).add(account_no)
-        # Extract property name for display in invoice list
-        property_name = (
-            str(r.get("EnrichedPropertyName", ""))
-            or str(r.get("Property Name", ""))
-            or str(r.get("PropertyName", ""))
-            or ""
-        )
+        # Extract property name for display — prefer header draft override, then cached, then raw
+        if pdf_id in pdf_property_cache and pdf_property_cache[pdf_id]:
+            property_name = pdf_property_cache[pdf_id]
+        else:
+            property_name = (
+                prop_override
+                or str(r.get("EnrichedPropertyName", ""))
+                or str(r.get("Property Name", ""))
+                or str(r.get("PropertyName", ""))
+                or ""
+            )
+            if pdf_id != "(unknown)" and property_name:
+                pdf_property_cache[pdf_id] = property_name
         g = inv.setdefault(key, {
             "vendor": vendor,
             "account": account_no,
