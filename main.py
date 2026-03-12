@@ -24558,16 +24558,6 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
                 "Rate": r.get("Rate",""),
             }
         })
-    # Compute invoice total from all line charges (for mismatch detection in UI)
-    invoice_total = 0.0
-    for r in rows:
-        try:
-            charge_str = str(r.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
-            if charge_str:
-                invoice_total += float(charge_str)
-        except (ValueError, TypeError):
-            pass
-
     return templates.TemplateResponse(
         "review.html",
         {
@@ -24578,7 +24568,6 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             "header": header,
             "lines": lines,
             "user": user,
-            "invoice_total": round(invoice_total, 2),
         },
     )
 
