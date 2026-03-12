@@ -24572,6 +24572,9 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
                 "Rate": r.get("Rate",""),
             }
         })
+    # Extract submitter email from row data for "Email Poster" button
+    submitter = str(rows[0].get("Submitter", "") or rows[0].get("PostedBy", "") or rows[0].get("SubmittedBy", "")).strip()
+
     return templates.TemplateResponse(
         "review.html",
         {
@@ -24582,6 +24585,7 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             "header": header,
             "lines": lines,
             "user": user,
+            "submitter": submitter,
         },
     )
 
