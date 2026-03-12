@@ -427,7 +427,7 @@
               <div class="amount">${{ "%.2f"|format(invoice_total) }}</div>
               <input type="hidden" id="invoiceTotalRef" value="{{ invoice_total }}" />
             </div>
-            <div id="totalMismatchWarning" style="display:none;color:#dc2626;font-weight:600;font-size:12px">&#9888; Line total does not match invoice total</div>
+            <div id="totalMismatchWarning" style="display:none;color:#64748b;font-size:11px"></div>
             {% endif %}
           </div>
           <div class="lines" id="lines">
@@ -1737,14 +1737,16 @@
       if (countDisplay){
         countDisplay.textContent = lines.length;
       }
-      // Check mismatch with invoice total if available
+      // Check mismatch with invoice total if available (subtle info, not a hard warning)
       const refEl = document.getElementById('invoiceTotalRef');
       const warnEl = document.getElementById('totalMismatchWarning');
       if (refEl && warnEl){
         const invTotal = parseFloat(refEl.value);
-        if (!isNaN(invTotal) && Math.abs(total - invTotal) > 0.01){
+        const diff = Math.abs(total - invTotal);
+        if (!isNaN(invTotal) && diff > 0.02){
           warnEl.style.display = '';
-          warnEl.textContent = '\u26A0 Line total ($' + total.toFixed(2) + ') does not match invoice total ($' + invTotal.toFixed(2) + ') — difference: $' + Math.abs(total - invTotal).toFixed(2);
+          const sign = total > invTotal ? '+' : '-';
+          warnEl.textContent = '(' + sign + '$' + diff.toFixed(2) + ' vs parsed total)';
         } else {
           warnEl.style.display = 'none';
         }
