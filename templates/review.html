@@ -2036,12 +2036,14 @@
     // Fallback: if something stops the loadHeader->initOptions path, ensure catalogs still fetch
     document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => { if (!window._catalogsLoaded && !window._optionsInitStarted) try { initOptions(); } catch(_){} }, 800);
-      // Ensure page subtotals render even if main init flow has timing issues
+    });
+    // Ensure page subtotals render — multiple independent triggers
+    window.addEventListener('load', () => {
       setTimeout(() => {
-        if (!document.querySelector('.page-subtotal-bar')) {
-          console.log('[subtotals] fallback trigger — no bars found after 3s, inserting now');
-          try { insertPageSubtotals(); } catch(e) { console.error('[subtotals] fallback error', e); }
-        }
+        try { insertPageSubtotals(); } catch(e) { console.error('[subtotals] window.load error', e); }
+      }, 500);
+      setTimeout(() => {
+        try { insertPageSubtotals(); } catch(e) { console.error('[subtotals] window.load+3s error', e); }
       }, 3000);
     });
 
@@ -2300,9 +2302,11 @@
       // Insert subtotal bar after last line of each page group
       let inserted = 0;
       for (const pg of valid){
-        if (!pg.lastLine) continue;
+        if (!pg.lastLine) { console.warn('[subtotals] null lastLine for page', pg.pageStart); continue; }
+        if (!pg.lastLine.parentNode) { console.warn('[subtotals] detached lastLine for page', pg.pageStart); continue; }
         const bar = document.createElement('div');
         bar.className = 'page-subtotal-bar';
+        bar.setAttribute('data-page', pg.pageStart);
         const label = pg.pageEnd > pg.pageStart
           ? 'Pages ' + pg.pageStart + '-' + pg.pageEnd
           : 'Page ' + pg.pageStart;
@@ -2313,6 +2317,9 @@
         inserted++;
       }
       console.log('[subtotals]', inserted, 'bars for pages', valid.map(g => g.pageStart).join(','));
+      // Verify bars are actually in the DOM
+      const check = document.querySelectorAll('.page-subtotal-bar').length;
+      if (check !== inserted) console.error('[subtotals] MISMATCH: inserted', inserted, 'but found', check, 'in DOM');
     }
 
     // --- Header draft helpers (ensure defined before used) ---
