@@ -2036,6 +2036,13 @@
     // Fallback: if something stops the loadHeader->initOptions path, ensure catalogs still fetch
     document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => { if (!window._catalogsLoaded && !window._optionsInitStarted) try { initOptions(); } catch(_){} }, 800);
+      // Ensure page subtotals render even if main init flow has timing issues
+      setTimeout(() => {
+        if (!document.querySelector('.page-subtotal-bar')) {
+          console.log('[subtotals] fallback trigger — no bars found after 3s, inserting now');
+          try { insertPageSubtotals(); } catch(e) { console.error('[subtotals] fallback error', e); }
+        }
+      }, 3000);
     });
 
     function getSelectedLines(){
@@ -2254,8 +2261,9 @@
       // Remove existing subtotal bars
       document.querySelectorAll('.page-subtotal-bar').forEach(el => el.remove());
       const container = document.getElementById('lines');
+      if (!container) { console.warn('[subtotals] #lines not found'); return; }
       const lines = Array.from(container.querySelectorAll('.line:not([data-deleted="1"])'));
-      if (!lines.length) return;
+      if (!lines.length) { console.log('[subtotals] no visible lines'); return; }
 
       // Group consecutive lines by page-start value
       let pageGroups = []; // [{pageStart, pageEnd, lastLine, total, count}]
@@ -2287,10 +2295,12 @@
 
       // Filter to groups with actual page data (page > 0)
       const valid = pageGroups.filter(g => g.pageStart > 0);
-      if (valid.length < 1) return;
+      if (valid.length < 1) { console.log('[subtotals] no page groups found from', lines.length, 'lines'); return; }
 
       // Insert subtotal bar after last line of each page group
+      let inserted = 0;
       for (const pg of valid){
+        if (!pg.lastLine) continue;
         const bar = document.createElement('div');
         bar.className = 'page-subtotal-bar';
         const label = pg.pageEnd > pg.pageStart
@@ -2300,7 +2310,9 @@
           + '<span>' + pg.count + ' line' + (pg.count !== 1 ? 's' : '') + '</span>'
           + '<span class="page-total">$' + pg.total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</span>';
         pg.lastLine.insertAdjacentElement('afterend', bar);
+        inserted++;
       }
+      console.log('[subtotals]', inserted, 'bars for pages', valid.map(g => g.pageStart).join(','));
     }
 
     // --- Header draft helpers (ensure defined before used) ---
