@@ -7342,6 +7342,7 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
 @app.post("/api/billback/ubi/archive")
 async def api_billback_ubi_archive(request: Request, user: str = Depends(require_user)):
     """Archive line items - moves items from Stage 7/8 to Stage 99 (Historical Archive)."""
+    print(f"[UBI ARCHIVE] === ENDPOINT HIT === user={user}")
     try:
         from datetime import datetime
 

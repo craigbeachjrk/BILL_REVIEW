@@ -2714,8 +2714,11 @@
         const errors = [];
         const successfulS3Keys = new Set();  // Track only successful archives
 
+        console.log('[ARCHIVE] Starting archive for', totalBills, 'bills. Keys:', Object.keys(byS3Key));
+
         // Make separate API calls for each s3_key
         for (const [s3Key, info] of Object.entries(byS3Key)) {
+          console.log(`[ARCHIVE] Processing ${s3Key}: ${info.selected.length} selected, ${info.total} total`);
           const fd = new FormData();
           fd.append('line_hashes', info.selected.join(','));
           fd.append('s3_key', s3Key);
@@ -2724,35 +2727,51 @@
             fd.append('archive_all', '1');
           }
 
-          const response = await fetch('/api/billback/ubi/archive', {
-            method: 'POST',
-            body: fd
-          });
+          try {
+            const response = await fetch('/api/billback/ubi/archive', {
+              method: 'POST',
+              body: fd
+            });
 
-          processedBills++;
-          updateLoadingProgress(processedBills, totalBills);
+            processedBills++;
+            updateLoadingProgress(processedBills, totalBills);
 
-          if (!response.ok) {
-            // Get the actual error message from the response
-            let errorMsg = 'Unknown error';
-            try {
-              const errData = await response.json();
-              errorMsg = errData.error || `HTTP ${response.status}`;
-            } catch {
-              errorMsg = `HTTP ${response.status}`;
+            console.log(`[ARCHIVE] Response for ${s3Key.split('/').pop()}: ${response.status} ${response.statusText} (redirected=${response.redirected}, url=${response.url})`);
+
+            if (!response.ok) {
+              // Get the actual error message from the response
+              let errorMsg = 'Unknown error';
+              try {
+                const errData = await response.json();
+                errorMsg = errData.error || `HTTP ${response.status}`;
+              } catch {
+                errorMsg = `HTTP ${response.status}`;
+              }
+              // Extract filename from s3_key for clearer error
+              const fileName = s3Key.split('/').pop();
+              errors.push(`${fileName}: ${errorMsg}`);
+              console.error(`[ARCHIVE] FAILED ${fileName}: ${errorMsg}`);
+              continue;
             }
-            // Extract filename from s3_key for clearer error
-            const fileName = s3Key.split('/').pop();
-            errors.push(`${fileName}: ${errorMsg}`);
-            continue;
-          }
 
-          const data = await response.json();
-          totalArchived += data.archived || 0;
-          successfulS3Keys.add(s3Key);  // Only mark as successful after API returns ok
+            const data = await response.json();
+            totalArchived += data.archived || 0;
+            successfulS3Keys.add(s3Key);
+            console.log(`[ARCHIVE] SUCCESS ${s3Key.split('/').pop()}: archived ${data.archived} lines`);
+          } catch (fetchErr) {
+            processedBills++;
+            updateLoadingProgress(processedBills, totalBills);
+            const fileName = s3Key.split('/').pop();
+            errors.push(`${fileName}: ${fetchErr.message}`);
+            console.error(`[ARCHIVE] FETCH ERROR ${fileName}:`, fetchErr);
+          }
         }
 
         hideLoading();
+
+        console.log(`[ARCHIVE] Done. totalArchived=${totalArchived}, successfulKeys=${successfulS3Keys.size}, errors=${errors.length}`);
+        console.log('[ARCHIVE] Successful S3 keys:', [...successfulS3Keys]);
+        console.log('[ARCHIVE] Bills before filter:', ubiUnassignedBills.length);
 
         if (errors.length > 0) {
           // Show detailed error messages
@@ -2765,6 +2784,8 @@
 
         // Only remove SUCCESSFULLY archived bills from local cache (not failed ones!)
         ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
+
+        console.log('[ARCHIVE] Bills after filter:', ubiUnassignedBills.length);
 
         // Re-render the list from cache
         renderUnassignedBills();
