@@ -1780,13 +1780,12 @@ _BILL_IDENTITY_FIELDS = {
 # Fields excluded from line-level hashing (used for override/unassign).
 _VOLATILE_LINE_FIELDS = {
     "Charge Code", "Charge Code Source", "Charge Code Overridden", "Charge Code Override Reason",
-    "Utility Type", "Mapped Utility Name",
-    "Current Amount", "Amount Overridden", "Amount Override Reason",
+    "Mapped Utility Name", "Current Amount", "Amount Overridden", "Amount Override Reason",
     "Is Excluded From UBI", "Exclusion Reason", "is_excluded_from_ubi", "exclusion_reason",
     "ubi_period", "ubi_amount", "ubi_months_total", "ubi_assigned_by", "ubi_assigned_date",
     "ubi_assignments", "ubi_period_count", "ubi_notes",
     "__stage8_key__", "__s3_key__", "__row_idx__", "__id__", "__manual__", "ubi_auto_suggested",
-    "PostedBy", "PostedAt", "SubmittedBy", "Submitter", "SubmittedAt", "Status",
+    "PostedBy", "PostedAt", "Status",
 }
 
 
