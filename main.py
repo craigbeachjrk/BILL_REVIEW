@@ -1189,11 +1189,28 @@ def _get_cached_exclusion_hashes(days_back: int = 90) -> set:
     return hashes
 
 def invalidate_exclusion_cache():
-    """Clear the exclusion hash cache (call after assignments)."""
+    """Clear the exclusion hash cache (call after assignments).
+    Does NOT trigger a full UBI cache rebuild — that takes 20 minutes.
+    Individual operations should remove specific bills from the in-memory
+    cache directly. The 4-hour periodic rebuild handles full refreshes.
+    """
     _EXCLUSION_HASH_CACHE["last_refresh"] = None
     _EXCLUSION_HASH_CACHE["hashes"] = set()
-    _invalidate_ubi_unassigned_cache()
-    print("[UBI EXCLUSION CACHE] Cache invalidated")
+    print("[UBI EXCLUSION CACHE] Exclusion hashes cleared")
+
+
+def _remove_bill_from_ubi_cache(s3_key: str):
+    """Remove a specific bill from the in-memory UBI cache by s3_key.
+    Fast O(n) filter instead of a 20-minute full rebuild."""
+    cached_data = _UBI_UNASSIGNED_CACHE.get("data")
+    if cached_data is not None:
+        before = len(cached_data)
+        _UBI_UNASSIGNED_CACHE["data"] = [b for b in cached_data if b.get("s3_key") != s3_key]
+        after = len(_UBI_UNASSIGNED_CACHE["data"])
+        if before != after:
+            print(f"[UBI CACHE] Removed bill {s3_key.split('/')[-1]} from cache ({before}->{after})")
+        else:
+            print(f"[UBI CACHE] Bill not found in cache: {s3_key.split('/')[-1]}")
 
 def _vendor_pair_refresh_loop():
     """Background loop that keeps the vendor pair cache permanently warm.
@@ -5161,15 +5178,19 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
             if not lines:
                 return None
 
-            # --- Inline GL mapping: parse all records, apply mappings, write back if changed ---
-            file_gl_changed = False
+            # --- Inline GL mapping: apply in memory only (no S3 rewrite) ---
+            # GL mappings are applied to the in-memory records for correct display
+            # in the cache, but we do NOT rewrite S3 files here. The frontend already
+            # does GL lookup on render, and assign/archive operations apply mappings
+            # when writing to Stage 8/99. Rewriting files during cache build was
+            # causing 20-minute rebuilds and race conditions with archive/assign.
             if gl_mappings:
-                all_recs = []
+                patched_lines = []
                 for raw_line in lines:
                     try:
                         rec = json.loads(raw_line)
                     except json.JSONDecodeError:
-                        all_recs.append(raw_line)
+                        patched_lines.append(raw_line)
                         continue
                     is_overridden = rec.get("Charge Code Overridden") in (True, "true", "True")
                     if not is_overridden:
@@ -5184,20 +5205,11 @@ def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
                                 rec["Charge Code"] = new_cc
                                 rec["Charge Code Source"] = "mapping"
                                 if mapping.get("utility_name"):
-                                    rec["Utility Type"] = mapping["utility_name"]
                                     rec["Mapped Utility Name"] = mapping["utility_name"]
-                                file_gl_changed = True
                                 with _gl_stats_lock:
                                     _gl_stats["lines"] += 1
-                    all_recs.append(json.dumps(rec, ensure_ascii=False) if isinstance(rec, dict) else rec)
-
-                if file_gl_changed:
-                    s3.put_object(Bucket=BUCKET, Key=key, Body="\n".join(all_recs).encode("utf-8"),
-                                  ContentType="application/x-ndjson")
-                    with _gl_stats_lock:
-                        _gl_stats["files"] += 1
-                    # Re-read lines from the updated records
-                    lines = all_recs
+                    patched_lines.append(json.dumps(rec, ensure_ascii=False) if isinstance(rec, dict) else rec)
+                lines = patched_lines
 
             try:
                 first_rec = json.loads(lines[0]) if isinstance(lines[0], str) else lines[0]
@@ -5849,8 +5861,9 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
 
         print(f"[UBI ASSIGN] COMPLETED: Moved {assigned_count} items to Stage 8 for {len(ubi_periods)} period(s)")
 
-        # Invalidate exclusion cache so new assignments are reflected immediately
+        # Clear exclusion hashes + remove this bill from in-memory cache
         invalidate_exclusion_cache()
+        _remove_bill_from_ubi_cache(s3_key)
 
         # Update UBI account history for smarter future suggestions
         if assigned_items:
@@ -6315,8 +6328,9 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
             total_amount
         )
 
-        # Invalidate cache
+        # Clear exclusion hashes + remove this bill from in-memory cache
         invalidate_exclusion_cache()
+        _remove_bill_from_ubi_cache(s3_key)
 
         return {
             "ok": True,
@@ -7446,14 +7460,26 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
 
         # Update source file: rewrite with remaining items or delete if empty
         if remaining_items:
-            _write_jsonl(source_prefix, y, m, d, base.replace('.jsonl', ''), remaining_items)
-            print(f"[UBI ARCHIVE] Rewrote {len(remaining_items)} remaining items to source")
+            new_key = _write_jsonl(source_prefix, y, m, d, base.replace('.jsonl', ''), remaining_items)
+            # _write_jsonl creates a NEW file with a timestamp — delete the original
+            if new_key != s3_key:
+                s3.delete_object(Bucket=BUCKET, Key=s3_key)
+                print(f"[UBI ARCHIVE] Deleted original {s3_key}, remaining items in {new_key}")
+                try:
+                    s3.head_object(Bucket=BUCKET, Key=s3_key)
+                    print(f"[UBI ARCHIVE] WARNING: Original file STILL EXISTS after delete: {s3_key}")
+                    s3.delete_object(Bucket=BUCKET, Key=s3_key)
+                except Exception:
+                    pass  # Good — file is gone
+            else:
+                print(f"[UBI ARCHIVE] Rewrote {len(remaining_items)} remaining items to source")
         else:
             s3.delete_object(Bucket=BUCKET, Key=s3_key)
             print(f"[UBI ARCHIVE] Deleted empty source file {s3_key}")
 
-        # Invalidate exclusion cache so archived bills are immediately excluded
+        # Clear exclusion hashes + remove this bill from in-memory cache
         invalidate_exclusion_cache()
+        _remove_bill_from_ubi_cache(s3_key)
 
         print(f"[UBI ARCHIVE] COMPLETED: Moved {len(archived_items)} items to Stage 99")
         return {"ok": True, "archived": len(archived_items)}

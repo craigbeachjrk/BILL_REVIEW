@@ -2736,10 +2736,15 @@
             processedBills++;
             updateLoadingProgress(processedBills, totalBills);
 
-            console.log(`[ARCHIVE] Response for ${s3Key.split('/').pop()}: ${response.status} ${response.statusText} (redirected=${response.redirected}, url=${response.url})`);
+            // Session expired — fetch followed 307 redirect to login page
+            if (response.redirected) {
+              hideLoading();
+              showToast('Session expired. Please log in again.', 'err');
+              window.location.href = '/login';
+              return;
+            }
 
             if (!response.ok) {
-              // Get the actual error message from the response
               let errorMsg = 'Unknown error';
               try {
                 const errData = await response.json();
@@ -2747,49 +2752,37 @@
               } catch {
                 errorMsg = `HTTP ${response.status}`;
               }
-              // Extract filename from s3_key for clearer error
               const fileName = s3Key.split('/').pop();
               errors.push(`${fileName}: ${errorMsg}`);
-              console.error(`[ARCHIVE] FAILED ${fileName}: ${errorMsg}`);
               continue;
             }
 
             const data = await response.json();
             totalArchived += data.archived || 0;
             successfulS3Keys.add(s3Key);
-            console.log(`[ARCHIVE] SUCCESS ${s3Key.split('/').pop()}: archived ${data.archived} lines`);
           } catch (fetchErr) {
             processedBills++;
             updateLoadingProgress(processedBills, totalBills);
             const fileName = s3Key.split('/').pop();
             errors.push(`${fileName}: ${fetchErr.message}`);
-            console.error(`[ARCHIVE] FETCH ERROR ${fileName}:`, fetchErr);
           }
         }
 
         hideLoading();
 
-        console.log(`[ARCHIVE] Done. totalArchived=${totalArchived}, successfulKeys=${successfulS3Keys.size}, errors=${errors.length}`);
-        console.log('[ARCHIVE] Successful S3 keys:', [...successfulS3Keys]);
-        console.log('[ARCHIVE] Bills before filter:', ubiUnassignedBills.length);
-
         if (errors.length > 0) {
-          // Show detailed error messages
-          const errorDetails = errors.join('\n');
-          console.error('Archive errors:', errorDetails);
+          console.error('Archive errors:', errors);
           showToast(`Archived ${totalArchived} items, but ${errors.length} failed:\n${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`, 'err');
         } else {
           showToast(`Archived ${totalArchived} line items`, 'ok');
         }
 
-        // Only remove SUCCESSFULLY archived bills from local cache (not failed ones!)
-        ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
-
-        console.log('[ARCHIVE] Bills after filter:', ubiUnassignedBills.length);
-
-        // Re-render the list from cache
-        renderUnassignedBills();
-        updateUbiSelectedCount();
+        // Remove successfully archived bills from local array and re-render
+        if (successfulS3Keys.size > 0) {
+          ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
+          renderUnassignedBills();
+          updateUbiSelectedCount();
+        }
       } catch (e) {
         hideLoading();
         console.error('Error archiving lines:', e);
