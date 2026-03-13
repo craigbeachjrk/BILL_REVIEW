@@ -2268,7 +2268,7 @@
       if (!lines.length) { console.log('[subtotals] no visible lines'); return; }
 
       // Group consecutive lines by page-start value
-      let pageGroups = []; // [{pageStart, pageEnd, lastLine, total, count}]
+      let pageGroups = []; // [{pageStart, pageEnd, firstLine, total, count}]
       let cur = null;
 
       for (let i = 0; i < lines.length; i++){
@@ -2278,8 +2278,7 @@
 
         if (!cur || ps !== cur.pageStart){
           // New group
-          if (cur) cur.lastLine = lines[i - 1];
-          cur = {pageStart: ps, pageEnd: pe, lastLine: null, total: 0, count: 0};
+          cur = {pageStart: ps, pageEnd: pe, firstLine: line, total: 0, count: 0};
           pageGroups.push(cur);
         }
         // Expand page-end if this line covers more pages
@@ -2292,18 +2291,16 @@
         }
         cur.count++;
       }
-      // Close last group
-      if (cur) cur.lastLine = lines[lines.length - 1];
 
       // Filter to groups with actual page data (page > 0)
       const valid = pageGroups.filter(g => g.pageStart > 0);
       if (valid.length < 1) { console.log('[subtotals] no page groups found from', lines.length, 'lines'); return; }
 
-      // Insert subtotal bar after last line of each page group
+      // Insert subtotal bar BEFORE first line of each page group
       let inserted = 0;
       for (const pg of valid){
-        if (!pg.lastLine) { console.warn('[subtotals] null lastLine for page', pg.pageStart); continue; }
-        if (!pg.lastLine.parentNode) { console.warn('[subtotals] detached lastLine for page', pg.pageStart); continue; }
+        if (!pg.firstLine) { console.warn('[subtotals] null firstLine for page', pg.pageStart); continue; }
+        if (!pg.firstLine.parentNode) { console.warn('[subtotals] detached firstLine for page', pg.pageStart); continue; }
         const bar = document.createElement('div');
         bar.className = 'page-subtotal-bar';
         bar.setAttribute('data-page', pg.pageStart);
@@ -2313,7 +2310,7 @@
         bar.innerHTML = '<span class="page-label">' + label + '</span>'
           + '<span>' + pg.count + ' line' + (pg.count !== 1 ? 's' : '') + '</span>'
           + '<span class="page-total">$' + pg.total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</span>';
-        pg.lastLine.insertAdjacentElement('afterend', bar);
+        pg.firstLine.insertAdjacentElement('beforebegin', bar);
         inserted++;
       }
       console.log('[subtotals]', inserted, 'bars for pages', valid.map(g => g.pageStart).join(','));
