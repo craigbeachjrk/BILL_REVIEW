@@ -2809,27 +2809,24 @@
         // Remove successfully archived bills from local array and re-render
         if (successfulS3Keys.size > 0) {
           const before = ubiUnassignedBills.length;
-          // Build multiple match sets for maximum robustness
-          const successFilenames = new Set([...successfulS3Keys].map(k => (k || '').split('/').pop()));
-          const removedIndices = [];
-          ubiUnassignedBills = ubiUnassignedBills.filter((bill, idx) => {
-            const dominated = successfulS3Keys.has(bill.s3_key)
-              || successFilenames.has((bill.s3_key || '').split('/').pop());
-            if (dominated) removedIndices.push(idx);
-            return !dominated;
+          const keysFromDOM = [...successfulS3Keys];
+          // Log every comparison for debugging
+          keysFromDOM.forEach(domKey => {
+            const match = ubiUnassignedBills.find(b => b.s3_key === domKey);
+            if (!match) {
+              // Find closest match
+              const closest = ubiUnassignedBills.find(b => (b.s3_key||'').split('/').pop() === (domKey||'').split('/').pop());
+              console.error(`[ARCHIVE] NO EXACT MATCH for DOM key. DOM: "${domKey}" | Closest bill: "${closest ? closest.s3_key : 'NONE'}"`);
+            }
           });
-          const removed = before - ubiUnassignedBills.length;
-          console.log(`[ARCHIVE] Removed ${removed} bills (${before}->${ubiUnassignedBills.length}). Indices: ${removedIndices}. DOM keys:`, [...successfulS3Keys]);
-          if (removed === 0) {
-            // Debug: log what keys we have vs what we're looking for
-            console.error('[ARCHIVE] FAILED TO MATCH. successfulS3Keys:', [...successfulS3Keys]);
-            console.error('[ARCHIVE] First 3 bill s3_keys:', ubiUnassignedBills.slice(0,3).map(b => b.s3_key));
-            // Nuclear option: just remove the checked bill-group elements from DOM
-            document.querySelectorAll('.bill-checkbox-unassigned:checked').forEach(cb => {
-              const group = cb.closest('.bill-group');
-              if (group) group.remove();
-            });
-          }
+          // Remove by exact match OR filename match
+          const successFilenames = new Set(keysFromDOM.map(k => (k || '').split('/').pop()));
+          ubiUnassignedBills = ubiUnassignedBills.filter(bill => {
+            if (successfulS3Keys.has(bill.s3_key)) return false;
+            if (successFilenames.has((bill.s3_key || '').split('/').pop())) return false;
+            return true;
+          });
+          console.log(`[ARCHIVE] Removed ${before - ubiUnassignedBills.length} of ${before} bills`);
           renderUnassignedBills();
           updateUbiSelectedCount();
         }
