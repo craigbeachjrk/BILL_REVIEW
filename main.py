@@ -1271,29 +1271,36 @@ async def startup_prewarm_caches():
         print("[STARTUP] POST helper caches ready")
     threading.Thread(target=prewarm_post_helpers, daemon=True, name="post-helper-prewarm").start()
 
-    # UBI unassigned cache: load from S3 SYNCHRONOUSLY so first request has data,
-    # then poll in background for Lambda updates only
-    print("[STARTUP] Loading UBI cache from S3 (built by Lambda)...")
-    _load_ubi_cache_from_s3()
-
-    def ubi_cache_poll_loop():
+    # UBI unassigned cache: load in background thread (S3 GET is blocking I/O,
+    # can't run synchronously in async startup without freezing the event loop).
+    # The /api/billback/ubi/unassigned endpoint has its own S3 fallback if cache isn't ready yet.
+    def ubi_cache_startup_and_poll():
         import time as _t
-        import gzip as _gzip
+        print("[STARTUP] Loading UBI cache from S3 (built by Lambda)...")
+        _load_ubi_cache_from_s3()
+        print("[STARTUP] UBI cache ready")
+        # Track the S3 ETag so we only download when the file actually changes
+        last_etag = ""
         while True:
             _t.sleep(300)  # Check every 5 minutes for Lambda updates
             try:
-                # Only reload if Lambda produced a genuinely new build (new ts)
+                head = s3.head_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
+                etag = head.get("ETag", "")
+                if etag == last_etag:
+                    continue  # Same file, don't reload — preserves local removals
+                # File changed — download and check Lambda ts
+                import gzip as _gzip
                 obj = s3.get_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
                 compressed = obj["Body"].read()
                 payload = json.loads(_gzip.decompress(compressed))
                 new_ts = payload.get("ts", 0)
+                last_etag = etag
                 if new_ts > _UBI_LAST_LAMBDA_TS:
                     print(f"[UBI CACHE] New Lambda build detected (ts {_UBI_LAST_LAMBDA_TS:.0f} -> {new_ts:.0f}), reloading...")
                     _load_ubi_cache_from_s3()
-                # else: same Lambda build, don't reload (preserves local removals)
             except Exception as e:
                 print(f"[UBI CACHE] Poll error: {e}")
-    threading.Thread(target=ubi_cache_poll_loop, daemon=True, name="ubi-cache-poll").start()
+    threading.Thread(target=ubi_cache_startup_and_poll, daemon=True, name="ubi-cache-poll").start()
 
     # Background refresh thread for invoice history cache (every 2 hours)
     def _invoice_history_refresh_loop():
