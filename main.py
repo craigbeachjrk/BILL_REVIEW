@@ -5194,11 +5194,10 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
                 print(f"[UBI ASSIGN] Fallback search failed: {search_err}")
 
         if not body:
-            # Bill not found in Stage 7 - it was likely already assigned or archived
-            print(f"[UBI ASSIGN] Bill not found after fallback search. Original key: {s3_key}")
-            return JSONResponse({
-                "error": "Bill not found - it may have been assigned or modified by another user. Please refresh the page to get the latest data."
-            }, status_code=404)
+            # Bill not found in Stage 7 — already assigned or archived. Clean up cache and return success.
+            print(f"[UBI ASSIGN] Bill already gone from Stage 7: {s3_key}")
+            _remove_bill_from_ubi_cache(s3_key)
+            return {"ok": True, "assigned": 0, "already_gone": True, "ubi_periods": ubi_periods, "period_count": len(ubi_periods)}
 
         # Use the actual key we found (may differ from original if fallback was used)
         s3_key = actual_s3_key
