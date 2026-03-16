@@ -2721,18 +2721,24 @@
       }
 
       // Group line hashes by s3_key (API requires s3_key parameter)
+      // Also record which bill INDICES in ubiUnassignedBills to remove on success
       const byS3Key = {};
+      const billIndicesToRemove = new Set();
       selectedCheckboxes.forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         const lineHash = cb.getAttribute('data-line-hash');
         if (!byS3Key[s3Key]) byS3Key[s3Key] = {selected: [], total: 0};
         byS3Key[s3Key].selected.push(lineHash);
+        // Find the bill index in the array NOW, before any async work
+        const idx = ubiUnassignedBills.findIndex(b => b.s3_key === s3Key);
+        if (idx >= 0) billIndicesToRemove.add(idx);
       });
       // Count total visible lines per s3_key to detect full-bill selection
       document.querySelectorAll('.line-checkbox').forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         if (byS3Key[s3Key]) byS3Key[s3Key].total++;
       });
+      console.log(`[ARCHIVE] Pre-computed ${billIndicesToRemove.size} bill indices to remove:`, [...billIndicesToRemove]);
 
       const totalBills = Object.keys(byS3Key).length;
       let processedBills = 0;
@@ -2806,27 +2812,15 @@
           showToast(`Archived ${totalArchived} line items`, 'ok');
         }
 
-        // Remove successfully archived bills from local array and re-render
-        if (successfulS3Keys.size > 0) {
+        // Remove archived bills using pre-computed indices (avoids key comparison issues)
+        if (successfulS3Keys.size > 0 || billIndicesToRemove.size > 0) {
           const before = ubiUnassignedBills.length;
-          const keysFromDOM = [...successfulS3Keys];
-          // Log every comparison for debugging
-          keysFromDOM.forEach(domKey => {
-            const match = ubiUnassignedBills.find(b => b.s3_key === domKey);
-            if (!match) {
-              // Find closest match
-              const closest = ubiUnassignedBills.find(b => (b.s3_key||'').split('/').pop() === (domKey||'').split('/').pop());
-              console.error(`[ARCHIVE] NO EXACT MATCH for DOM key. DOM: "${domKey}" | Closest bill: "${closest ? closest.s3_key : 'NONE'}"`);
-            }
-          });
-          // Remove by exact match OR filename match
-          const successFilenames = new Set(keysFromDOM.map(k => (k || '').split('/').pop()));
-          ubiUnassignedBills = ubiUnassignedBills.filter(bill => {
+          ubiUnassignedBills = ubiUnassignedBills.filter((bill, idx) => {
+            if (billIndicesToRemove.has(idx)) return false;
             if (successfulS3Keys.has(bill.s3_key)) return false;
-            if (successFilenames.has((bill.s3_key || '').split('/').pop())) return false;
             return true;
           });
-          console.log(`[ARCHIVE] Removed ${before - ubiUnassignedBills.length} of ${before} bills`);
+          console.log(`[ARCHIVE] Removed ${before - ubiUnassignedBills.length} of ${before} bills (indices: ${[...billIndicesToRemove]}, keys: ${[...successfulS3Keys].map(k=>k.split('/').pop())})`);
           renderUnassignedBills();
           updateUbiSelectedCount();
         }
@@ -3211,10 +3205,13 @@
 
       // Group by S3 key and collect line details
       const byS3Key = {};
+      const assignBillIndices = new Set();
       selectedCheckboxes.forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         const lineHash = cb.getAttribute('data-line-hash');
         const lineId = `${s3Key}_${lineHash}`.replace(/[^a-zA-Z0-9]/g, '_');
+        const idx = ubiUnassignedBills.findIndex(b => b.s3_key === s3Key);
+        if (idx >= 0) assignBillIndices.add(idx);
 
         // Get edited amount and notes
         const amtInput = document.getElementById('amt_' + lineId);
@@ -3281,9 +3278,14 @@
         // Clear period selection
         clearPeriodSelection();
 
-        // Remove assigned bills from local cache instead of reloading everything
-        const assignedS3Keys = Object.keys(byS3Key);
-        ubiUnassignedBills = ubiUnassignedBills.filter(bill => !assignedS3Keys.includes(bill.s3_key));
+        // Remove assigned bills using pre-computed indices + key fallback
+        const assignedS3Keys = new Set(Object.keys(byS3Key));
+        ubiUnassignedBills = ubiUnassignedBills.filter((bill, idx) => {
+          if (assignBillIndices.has(idx)) return false;
+          if (assignedS3Keys.has(bill.s3_key)) return false;
+          return true;
+        });
+        console.log(`[ASSIGN] Removed bills (indices: ${[...assignBillIndices]})`);
 
         // Re-render the list from cache
         renderUnassignedBills();
