@@ -544,17 +544,23 @@
       return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     }
 
-    function emailPoster(submitter, property, vendor, account, invoiceNo) {
+    function emailPoster(submitter, property, vendor, account, invoiceNo, reviewDate, pdfId, pdfKey) {
       if (!submitter) { showToast('No submitter email found', 'err'); return; }
       const subject = 'Bill Review — ' + (property || 'Property') + ' — ' + (vendor || 'Vendor') + (invoiceNo ? ' — Inv #' + invoiceNo : '');
+      const baseUrl = 'https://billreview.jrkanalytics.com';
+      const parseLink = reviewDate && pdfId ? baseUrl + '/review?date=' + reviewDate + '&pdf_id=' + pdfId : '';
+      const pdfLink = pdfKey ? baseUrl + '/pdf?k=' + encodeURIComponent(pdfKey) + (reviewDate ? '&date=' + reviewDate : '') + (pdfId ? '&pdf_id=' + pdfId : '') : '';
       const body = 'Hi ' + submitter.split('@')[0] + ',\n\n'
         + 'I have a question about the following invoice:\n\n'
         + 'Property: ' + property + '\n'
         + 'Vendor: ' + vendor + '\n'
         + 'Account: ' + account + '\n'
         + (invoiceNo ? 'Invoice #: ' + invoiceNo + '\n' : '')
+        + (parseLink ? '\nParse page: ' + parseLink + '\n' : '')
+        + (pdfLink ? 'PDF: ' + pdfLink + '\n' : '')
         + '\n[Please describe your question here]\n\n'
-        + 'Thanks';
+        + 'Sincerely,\nCraig Beach\n\n'
+        + '_This is an automated email from billreview.jrkanalytics.com._';
       const cc = 'mpastrana@jrk.com,tdavies@jrk.com';
       const mailto = 'mailto:' + encodeURIComponent(submitter)
         + '?cc=' + encodeURIComponent(cc)
@@ -2499,7 +2505,7 @@
             Send to POST
           </button>
           ${pdfButton}
-          ${bill.submitter ? `<button class="btn small" onclick="emailPoster('${escapeJs(bill.submitter)}', '${escapeJs(property)}', '${escapeJs(vendor)}', '${escapeJs(account)}', '${escapeJs(bill.invoice_no || '')}')"
+          ${bill.submitter ? `<button class="btn small" onclick="emailPoster('${escapeJs(bill.submitter)}', '${escapeJs(property)}', '${escapeJs(vendor)}', '${escapeJs(account)}', '${escapeJs(bill.invoice_no || '')}', '${escapeJs(bill.review_date || '')}', '${escapeJs(bill.pdf_id || '')}', '${escapeJs(pdfKey || '')}')"
                   style="background:#eef2ff;color:#4338ca;border:1px solid #4338ca;margin-left:4px;font-size:10px;padding:2px 8px">
             Email Poster
           </button>` : ''}
@@ -3478,6 +3484,7 @@
           const assignedSubmitter = firstLineData['Submitter'] || firstLineData['SubmittedBy'] || '';
           const assignedProperty = firstLineData['EnrichedPropertyName'] || firstLineData['Property Name'] || '';
           const assignedInvoice = firstLineData['Invoice Number'] || '';
+          const assignedPdfKey = firstLineData['source_input_key'] || firstLineData['PDF_LINK'] || '';
           billsHtml += `
             <div class="bill-group" data-bill-id="${billId}" data-assigned-date="${bill.assigned_date || ''}">
               <div class="bill-header">
@@ -3485,7 +3492,7 @@
                   <input type="checkbox" class="bill-checkbox-assigned" data-bill-id="${billId}" onchange="toggleAssignedBillSelection('${billId}')" style="width:18px;height:18px;cursor:pointer" title="Select all lines in this invoice" />
                   <div>
                     <div class="bill-title">${enrichedVendor} - ${bill.account}</div>
-                    <div class="bill-meta">${filteredLines.length} assigned lines${assignedDateStr ? ` | <span style="color:#6b7280">Assigned: ${assignedDateStr}</span>` : ''} | <a href="/review?date=${bill.review_date || ''}&pdf_id=${bill.pdf_id || ''}" target="_blank" style="color:#0ea5e9">View Invoice</a>${assignedSubmitter ? ` | <button class="btn small" onclick="emailPoster('${escapeJs(assignedSubmitter)}', '${escapeJs(assignedProperty)}', '${escapeJs(enrichedVendor)}', '${escapeJs(bill.account)}', '${escapeJs(assignedInvoice)}')" style="background:#eef2ff;color:#4338ca;border:1px solid #4338ca;font-size:10px;padding:1px 6px">Email Poster</button>` : ''}</div>
+                    <div class="bill-meta">${filteredLines.length} assigned lines${assignedDateStr ? ` | <span style="color:#6b7280">Assigned: ${assignedDateStr}</span>` : ''} | <a href="/review?date=${bill.review_date || ''}&pdf_id=${bill.pdf_id || ''}" target="_blank" style="color:#0ea5e9">View Invoice</a>${assignedSubmitter ? ` | <button class="btn small" onclick="emailPoster('${escapeJs(assignedSubmitter)}', '${escapeJs(assignedProperty)}', '${escapeJs(enrichedVendor)}', '${escapeJs(bill.account)}', '${escapeJs(assignedInvoice)}', '${escapeJs(bill.review_date || '')}', '${escapeJs(bill.pdf_id || '')}', '${escapeJs(assignedPdfKey || '')}')" style="background:#eef2ff;color:#4338ca;border:1px solid #4338ca;font-size:10px;padding:1px 6px">Email Poster</button>` : ''}</div>
                   </div>
                 </div>
               </div>
