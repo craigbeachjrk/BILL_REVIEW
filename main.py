@@ -6834,6 +6834,12 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
         try:
             body = _read_s3_text(BUCKET, s3_key)
         except Exception as read_err:
+            error_str = str(read_err)
+            if "NoSuchKey" in error_str or "does not exist" in error_str.lower():
+                # File already archived/deleted — treat as success, clean up cache
+                print(f"[UBI ARCHIVE] File already gone (previously archived): {s3_key}")
+                _remove_bill_from_ubi_cache(s3_key)
+                return {"ok": True, "archived": 0, "already_gone": True}
             print(f"[UBI ARCHIVE] Error reading S3 file: {read_err}")
             return JSONResponse({"error": f"Could not read S3 file: {read_err}"}, status_code=500)
 
