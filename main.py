@@ -836,38 +836,56 @@ def _save_week_rollup(stats: dict) -> bool:
 
 # -------- UBI Exclusion Hash Cache --------
 # Cache exclusion hashes (Stage 8 + Stage 99) to avoid re-scanning on every request
+# -------- UBI Exclusion Hash Cache --------
+# Used by suggestions/calculate endpoints to filter out already-assigned lines.
+# NOT invalidated on operations — only refreshes on TTL expiry (5 min).
 _EXCLUSION_HASH_CACHE = {
     "hashes": set(),
     "last_refresh": None,
     "ttl_seconds": 300  # 5 minutes
 }
 
+
+def _get_cached_exclusion_hashes(days_back: int = 90) -> set:
+    """Get cached exclusion hashes from DynamoDB (5-min TTL, never invalidated by operations)."""
+    from datetime import datetime
+    cache = _EXCLUSION_HASH_CACHE
+    now = datetime.now()
+    if cache["last_refresh"] and (now - cache["last_refresh"]).total_seconds() < cache["ttl_seconds"]:
+        return cache["hashes"]
+    print("[UBI EXCLUSION CACHE] Loading exclusion hashes...")
+    t0 = time.time()
+    hashes = set()
+    try:
+        ddb_paginator = ddb.get_paginator('scan')
+        for page in ddb_paginator.paginate(
+            TableName='jrk-bill-ubi-assignments',
+            ProjectionExpression='line_hash'
+        ):
+            for item in page.get('Items', []):
+                if 'line_hash' in item and 'S' in item['line_hash']:
+                    hashes.add(item['line_hash']['S'])
+    except Exception as e:
+        print(f"[UBI EXCLUSION CACHE] Error: {e}")
+    elapsed = time.time() - t0
+    print(f"[UBI EXCLUSION CACHE] Loaded {len(hashes)} hashes in {elapsed:.1f}s")
+    cache["hashes"] = hashes
+    cache["last_refresh"] = now
+    return hashes
+
+
 # -------- UBI Unassigned Bills Cache --------
-# Background-computed cache: rebuilds every 4 hours, never blocks requests
-# Persisted to S3 so it survives deploys — instant load on startup
+# Built externally by jrk-ubi-cache-builder Lambda, app only READS from S3.
+# Operations (assign/archive) do surgical in-memory removal — no rebuilds.
 import threading as _threading
 _UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float}
-_UBI_UNASSIGNED_COMPUTING = _threading.Event()  # Set while rebuild is running
-_UBI_UNASSIGNED_TTL = 14400  # 4 hours
+_UBI_FILTER_OPTIONS_CACHE: dict = {}  # {"properties": [], "vendors": [], "gl_codes": []}
 _UBI_CACHE_S3_KEY = "Bill_Parser_Cache/ubi_unassigned_cache.json.gz"
 
 
-def _persist_ubi_cache_to_s3(data: list):
-    """Save UBI cache to S3 as gzipped JSON for fast startup after deploys."""
-    try:
-        import gzip
-        payload = json.dumps({"data": data, "ts": time.time()}).encode("utf-8")
-        compressed = gzip.compress(payload)
-        s3.put_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY, Body=compressed,
-                      ContentType="application/gzip")
-        print(f"[UBI CACHE] Persisted {len(data)} bills to S3 ({len(compressed)//1024}KB)")
-    except Exception as e:
-        print(f"[UBI CACHE] Failed to persist to S3: {e}")
-
-
 def _load_ubi_cache_from_s3() -> bool:
-    """Load UBI cache from S3. Returns True if loaded successfully."""
-    global _UBI_UNASSIGNED_CACHE
+    """Load Lambda-built UBI cache from S3. Returns True if loaded successfully."""
+    global _UBI_UNASSIGNED_CACHE, _UBI_FILTER_OPTIONS_CACHE
     try:
         import gzip
         obj = s3.get_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
@@ -877,10 +895,14 @@ def _load_ubi_cache_from_s3() -> bool:
         ts = payload.get("ts", 0)
         age_hours = (time.time() - ts) / 3600
         _UBI_UNASSIGNED_CACHE = {"data": data, "ts": ts}
+        # Also load filter options if included by Lambda
+        fo = payload.get("filter_options")
+        if fo:
+            _UBI_FILTER_OPTIONS_CACHE = fo
         print(f"[UBI CACHE] Loaded {len(data)} bills from S3 (age {age_hours:.1f}h)")
         return True
     except s3.exceptions.NoSuchKey:
-        print("[UBI CACHE] No persisted cache in S3")
+        print("[UBI CACHE] No cache in S3 — waiting for Lambda to build it")
         return False
     except Exception as e:
         print(f"[UBI CACHE] Failed to load from S3: {e}")
@@ -1141,64 +1163,6 @@ def _get_cached_vendor_pairs(force_refresh=False):
         _VENDOR_PAIR_LOCK.release()
 
 
-def _get_cached_exclusion_hashes(days_back: int = 90) -> set:
-    """Get cached exclusion hashes from DynamoDB.
-
-    Source: DynamoDB table jrk-bill-ubi-assignments only.
-    The archived table is for historical record only, not exclusion.
-    This allows unassigned items to properly reappear in the queue.
-    """
-    from datetime import datetime
-
-    cache = _EXCLUSION_HASH_CACHE
-    now = datetime.now()
-
-    # Check if cache is still valid
-    if cache["last_refresh"] and (now - cache["last_refresh"]).total_seconds() < cache["ttl_seconds"]:
-        return cache["hashes"]
-
-    print(f"[UBI EXCLUSION CACHE] Loading exclusion hashes...")
-    import time as _time
-    t0 = _time.time()
-
-    hashes = set()
-
-    # Load line_hash values from assignments table only (not archived - that's for history)
-    tables_to_scan = ['jrk-bill-ubi-assignments']
-    for table_name in tables_to_scan:
-        try:
-            ddb_paginator = ddb.get_paginator('scan')
-            for page in ddb_paginator.paginate(
-                TableName=table_name,
-                ProjectionExpression='line_hash'
-            ):
-                for item in page.get('Items', []):
-                    if 'line_hash' in item and 'S' in item['line_hash']:
-                        hashes.add(item['line_hash']['S'])
-            print(f"[UBI EXCLUSION CACHE] After {table_name}: {len(hashes)} unique hashes")
-        except Exception as e:
-            print(f"[UBI EXCLUSION CACHE] Error loading from {table_name}: {e}")
-
-    elapsed = _time.time() - t0
-    print(f"[UBI EXCLUSION CACHE] Total: {len(hashes)} exclusion hashes in {elapsed:.1f}s")
-
-    # Update cache
-    cache["hashes"] = hashes
-    cache["last_refresh"] = now
-
-    return hashes
-
-def invalidate_exclusion_cache():
-    """Clear the exclusion hash cache (call after assignments).
-    Does NOT trigger a full UBI cache rebuild — that takes 20 minutes.
-    Individual operations should remove specific bills from the in-memory
-    cache directly. The 4-hour periodic rebuild handles full refreshes.
-    """
-    _EXCLUSION_HASH_CACHE["last_refresh"] = None
-    _EXCLUSION_HASH_CACHE["hashes"] = set()
-    print("[UBI EXCLUSION CACHE] Exclusion hashes cleared")
-
-
 def _remove_bill_from_ubi_cache(s3_key: str):
     """Remove a specific bill from the in-memory UBI cache by s3_key.
     Fast O(n) filter instead of a 20-minute full rebuild."""
@@ -1284,23 +1248,24 @@ async def startup_prewarm_caches():
         print("[STARTUP] POST helper caches ready")
     threading.Thread(target=prewarm_post_helpers, daemon=True, name="post-helper-prewarm").start()
 
-    # UBI unassigned cache: load from S3 on startup (instant), then rebuild in background
-    def ubi_cache_loop():
+    # UBI unassigned cache: read from S3 (built by Lambda), poll for updates
+    def ubi_cache_poll_loop():
         import time as _t
         _t.sleep(1)  # Brief pause for boto3 init
-        print("[STARTUP] Loading UBI cache from S3...")
-        loaded = _load_ubi_cache_from_s3()
-        if not loaded:
-            print("[STARTUP] No S3 cache, building fresh...")
-        # Always rebuild in background to get fresh data
-        _ubi_cache_rebuild_async()
+        print("[STARTUP] Loading UBI cache from S3 (built by Lambda)...")
+        _load_ubi_cache_from_s3()
         while True:
-            _t.sleep(_UBI_UNASSIGNED_TTL)
-            print("[UBI CACHE] Periodic rebuild triggered")
-            _ubi_cache_rebuild_async()
-    threading.Thread(target=ubi_cache_loop, daemon=True, name="ubi-cache-loop").start()
-
-    # GL mapping is now applied inline during UBI cache builds — no separate thread needed
+            _t.sleep(300)  # Check every 5 minutes for Lambda updates
+            try:
+                obj_head = s3.head_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
+                s3_last_mod = obj_head['LastModified'].timestamp()
+                current_ts = _UBI_UNASSIGNED_CACHE.get("ts", 0)
+                if s3_last_mod > current_ts:
+                    print("[UBI CACHE] Newer S3 cache detected, reloading...")
+                    _load_ubi_cache_from_s3()
+            except Exception as e:
+                print(f"[UBI CACHE] Poll error: {e}")
+    threading.Thread(target=ubi_cache_poll_loop, daemon=True, name="ubi-cache-poll").start()
 
     # Background refresh thread for invoice history cache (every 2 hours)
     def _invoice_history_refresh_loop():
@@ -4911,567 +4876,44 @@ def api_billback_ubi_filter_options(
 ):
     """Return unique properties, vendors, and GL codes for the filter drawer.
 
-    This endpoint scans Stage 7 files and returns unique values for filtering.
-    Results are cached for 5 minutes to avoid repeated scanning.
+    Reads from the Lambda-built cache (loaded into _UBI_FILTER_OPTIONS_CACHE).
+    No S3 scanning — instant response.
     """
-    try:
-        import hashlib
-        from datetime import datetime, timedelta
-
-        cache_key = f"filter_options_{days_back}"
-        cached = getattr(api_billback_ubi_filter_options, '_cache', {})
-        cache_time = getattr(api_billback_ubi_filter_options, '_cache_time', {})
-
-        # Check cache (5 minute TTL)
-        if cache_key in cached and cache_key in cache_time:
-            if (datetime.now() - cache_time[cache_key]).total_seconds() < 300:
-                return cached[cache_key]
-
-        start_time = datetime.now()
-
-        # Load UBI accounts (must be both is_ubi and is_tracked)
-        accounts_to_track = _get_accounts_to_track()
-        ubi_account_keys = set()
-        for acct in accounts_to_track:
-            if acct.get("is_ubi") == True and acct.get("is_tracked", True):
-                prop_id = str(acct.get("propertyId", "")).strip()
-                vendor_id = str(acct.get("vendorId", "")).strip()
-                acct_num = str(acct.get("accountNumber", "")).strip()
-                if prop_id and acct_num:
-                    ubi_account_keys.add(f"{prop_id}|{vendor_id}|{acct_num}")
-                    ubi_account_keys.add(f"{prop_id}||{acct_num}")
-
-        # Scan Stage 7 files
-        properties = set()
-        vendors = set()
-        gl_codes = set()
-
-        today = datetime.now()
-        dates_to_scan = []
-        for i in range(days_back):
-            d = today - timedelta(days=i)
-            dates_to_scan.append(d)
-
-        def scan_date(d):
-            local_props = set()
-            local_vendors = set()
-            local_gls = set()
-
-            # Scan both Stage 7 (PostEntrata) and Stage 8 (UBI Assigned) for filter options
-            prefixes_to_scan = [
-                f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/",
-                f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            ]
-
-            for prefix in prefixes_to_scan:
-                try:
-                    paginator = s3.get_paginator("list_objects_v2")
-                    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                        for obj in page.get("Contents", []):
-                            key = obj["Key"]
-                            if not key.endswith(".jsonl"):
-                                continue
-                            try:
-                                resp = s3.get_object(Bucket=BUCKET, Key=key)
-                                for line in resp["Body"].read().decode("utf-8").strip().split("\n"):
-                                    if not line.strip():
-                                        continue
-                                    row = json.loads(line)
-
-                                    # Check if this is a UBI account
-                                    prop_id = str(row.get("EnrichedPropertyID") or row.get("propertyId") or "").strip()
-                                    vendor_id = str(row.get("EnrichedVendorID") or row.get("vendorId") or "").strip()
-                                    acct_num = str(row.get("Account Number") or "").strip()
-
-                                    key1 = f"{prop_id}|{vendor_id}|{acct_num}"
-                                    key2 = f"{prop_id}||{acct_num}"
-                                    if key1 not in ubi_account_keys and key2 not in ubi_account_keys:
-                                        continue
-
-                                    # Collect unique values
-                                    prop_name = row.get("EnrichedPropertyName") or row.get("Property Name") or ""
-                                    if prop_name:
-                                        local_props.add(prop_name)
-
-                                    vendor_name = row.get("EnrichedVendorName") or row.get("Vendor Name") or ""
-                                    if vendor_name:
-                                        local_vendors.add(vendor_name)
-
-                                    gl_code = row.get("EnrichedGLAccountNumber") or row.get("GL Account Number") or ""
-                                    if gl_code:
-                                        local_gls.add(gl_code)
-                            except Exception as e:
-                                pass
-                except Exception as e:
-                    pass
-
-            return local_props, local_vendors, local_gls
-
-        futures = {_GLOBAL_EXECUTOR.submit(scan_date, d): d for d in dates_to_scan}
-        try:
-            for future in as_completed(futures, timeout=100):
-                try:
-                    local_props, local_vendors, local_gls = future.result()
-                    properties.update(local_props)
-                    vendors.update(local_vendors)
-                    gl_codes.update(local_gls)
-                except Exception:
-                    pass
-        except TimeoutError:
-            print(f"[FILTER OPTIONS] Timeout after 100s — returning partial results ({len(properties)} props, {len(vendors)} vendors, {len(gl_codes)} GLs)")
-
-        elapsed = (datetime.now() - start_time).total_seconds()
-
-        # Also include ALL properties from the dimension table so filtering works
-        # even for properties without recent Stage 7 data
-        try:
-            dim_properties = _load_dim_records(DIM_PROPERTY_PREFIX)
-            for r in dim_properties:
-                name = (
-                    r.get("name") or r.get("NAME") or r.get("propertyName") or
-                    r.get("Property Name") or r.get("PROPERTY_NAME") or
-                    r.get("Property") or r.get("PROPERTY")
-                )
-                if name and str(name).strip():
-                    properties.add(str(name).strip())
-        except Exception as e:
-            print(f"[FILTER OPTIONS] Error loading dim properties: {e}")
-
-        # Also include ALL GL codes from the dimension table so filtering works
-        # even for GL codes not seen in recent invoice data
-        try:
-            dim_gls = _load_dim_records(DIM_GL_PREFIX)
-            for r in dim_gls:
-                # Try formatted first (e.g., "5190-0000"), then raw account number
-                gl_num = (
-                    r.get("FORMATTED_ACCOUNT_NUMBER") or r.get("formattedAccountNumber") or
-                    r.get("glAccountNumber") or r.get("GL_ACCOUNT_NUMBER") or
-                    r.get("accountNumber") or r.get("ACCOUNT_NUMBER") or
-                    r.get("glNumber") or r.get("GL_NUMBER") or ""
-                )
-                if gl_num and str(gl_num).strip():
-                    gl_codes.add(str(gl_num).strip())
-        except Exception as e:
-            print(f"[FILTER OPTIONS] Error loading dim GL codes: {e}")
-
-        result = {
-            "properties": sorted(list(properties)),
-            "vendors": sorted(list(vendors)),
-            "gl_codes": sorted(list(gl_codes)),
-            "scan_time_seconds": round(elapsed, 2)
-        }
-
-        # Cache the result
-        if not hasattr(api_billback_ubi_filter_options, '_cache'):
-            api_billback_ubi_filter_options._cache = {}
-            api_billback_ubi_filter_options._cache_time = {}
-        api_billback_ubi_filter_options._cache[cache_key] = result
-        api_billback_ubi_filter_options._cache_time[cache_key] = datetime.now()
-
-        return result
-
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
-
-
-def _compute_ubi_unassigned_bills(days_back: int = 60) -> list:
-    """Compute all unassigned bills from Stage 7 with UBI suggestions.
-
-    Also applies GL code mappings inline during the scan — any files with
-    unmapped charge codes get updated in S3 during this pass, so the cache
-    always has current charge codes. One pass, no separate GL refresh needed.
-    """
-    import hashlib
-    from datetime import datetime, timedelta
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    start_time = datetime.now()
-
-    # Load GL code mappings for inline application
-    gl_mappings = _ddb_get_config("gl-charge-code-mapping")
-    if not gl_mappings or not isinstance(gl_mappings, list):
-        gl_mappings = []
-    print(f"[UBI CACHE] Loaded {len(gl_mappings)} GL mapping rules for inline application")
-
-    _gl_stats = {"files": 0, "lines": 0}
-    _gl_stats_lock = _threading.Lock()
-
-    # Load UBI accounts - only show bills for accounts marked is_ubi=true AND is_tracked=true
-    accounts_to_track = _get_accounts_to_track()
-    ubi_account_keys = set()
-    for acct in accounts_to_track:
-        if acct.get("is_ubi") == True and acct.get("is_tracked", True):
-            prop_id = str(acct.get("propertyId", "")).strip()
-            vendor_id = str(acct.get("vendorId", "")).strip()
-            acct_num = str(acct.get("accountNumber", "")).strip()
-            if prop_id and acct_num:
-                ubi_account_keys.add(f"{prop_id}|{vendor_id}|{acct_num}")
-                ubi_account_keys.add(f"{prop_id}||{acct_num}")
-    print(f"[UBI CACHE] Found {len(ubi_account_keys)} UBI account keys")
-
-    # Use cached exclusion hashes (refreshed every 5 minutes)
-    excluded_hashes = _get_cached_exclusion_hashes(days_back)
-    print(f"[UBI CACHE] Using {len(excluded_hashes)} cached exclusion hashes")
-
-    # Get last UBI periods from Stage 8 (scans actual assigned bills)
-    last_ubi_periods = _get_last_ubi_periods_from_stage8()
-    print(f"[UBI CACHE] Got {len(last_ubi_periods)} accounts with UBI history from Stage 8")
-
-    # Build date-partitioned prefixes
-    prefixes_to_scan = []
-    today = datetime.now()
-    for i in range(days_back):
-        d = today - timedelta(days=i)
-        prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-        prefixes_to_scan.append(prefix)
-
-    print(f"[UBI CACHE] Scanning {len(prefixes_to_scan)} date partitions (last {days_back} days)")
-
-    # Collect all S3 keys first
-    all_keys = []
-    for prefix in prefixes_to_scan:
-        try:
-            paginator = s3.get_paginator('list_objects_v2')
-            s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
-            for s3_page in s3_pages:
-                for obj in s3_page.get('Contents', []):
-                    key = obj['Key']
-                    if key.endswith('.jsonl'):
-                        all_keys.append(key)
-        except Exception:
-            continue
-
-    print(f"[UBI CACHE] Found {len(all_keys)} JSONL files to process")
-
-    def safe_parse_charge(charge_val):
-        if charge_val is None:
-            return 0.0
-        charge_str = str(charge_val).replace("$", "").replace(",", "").strip()
-        if not charge_str:
-            return 0.0
-        if "/" in charge_str or "-" in charge_str:
-            if re.match(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$', charge_str):
-                return 0.0
-        try:
-            return float(charge_str)
-        except (ValueError, TypeError):
-            return 0.0
-
-    ESSENTIAL_FIELDS = {
-        'EnrichedPropertyName', 'EnrichedPropertyID', 'Property Name',
-        'EnrichedVendorName', 'EnrichedVendorID', 'Vendor Name',
-        'Account Number', 'Bill Period Start', 'Bill Period End',
-        'EnrichedGLAccountNumber', 'EnrichedGLAccountName', 'GL Account Number',
-        'Line Item Description', 'Line Item Charge', 'Charge Code',
-        'source_input_key', 'PDF_LINK', 'Invoice Number',
-        'Service Address', 'Meter Number', 'Consumption Amount', 'Unit of Measure',
-        'Current Amount', 'Amount Overridden', 'Charge Code Source',
-    }
-
-    def process_file(key):
-        try:
-            obj_data = s3.get_object(Bucket=BUCKET, Key=key)
-            txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
-            lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
-
-            if not lines:
-                return None
-
-            # --- Inline GL mapping: apply in memory only (no S3 rewrite) ---
-            # GL mappings are applied to the in-memory records for correct display
-            # in the cache, but we do NOT rewrite S3 files here. The frontend already
-            # does GL lookup on render, and assign/archive operations apply mappings
-            # when writing to Stage 8/99. Rewriting files during cache build was
-            # causing 20-minute rebuilds and race conditions with archive/assign.
-            if gl_mappings:
-                patched_lines = []
-                for raw_line in lines:
-                    try:
-                        rec = json.loads(raw_line)
-                    except json.JSONDecodeError:
-                        patched_lines.append(raw_line)
-                        continue
-                    is_overridden = rec.get("Charge Code Overridden") in (True, "true", "True")
-                    if not is_overridden:
-                        prop_id = rec.get("EnrichedPropertyID", "")
-                        gl_aid = rec.get("EnrichedGLAccountID", "") or rec.get("GL Account ID", "")
-                        gl_c = rec.get("EnrichedGLAccountNumber", "") or rec.get("GL Account Number", "")
-                        mapping = _lookup_charge_code(prop_id, gl_aid, gl_c, gl_mappings)
-                        if mapping and mapping.get("charge_code"):
-                            old_cc = rec.get("Charge Code", "")
-                            new_cc = mapping["charge_code"]
-                            if old_cc != new_cc:
-                                rec["Charge Code"] = new_cc
-                                rec["Charge Code Source"] = "mapping"
-                                if mapping.get("utility_name"):
-                                    rec["Mapped Utility Name"] = mapping["utility_name"]
-                                with _gl_stats_lock:
-                                    _gl_stats["lines"] += 1
-                    patched_lines.append(json.dumps(rec, ensure_ascii=False) if isinstance(rec, dict) else rec)
-                lines = patched_lines
-
-            try:
-                first_rec = json.loads(lines[0]) if isinstance(lines[0], str) else lines[0]
-            except json.JSONDecodeError as e:
-                print(f"[UBI CACHE] Skipping corrupted file {key}: {e}")
-                return None
-
-            computed_pdf_id = pdf_id_from_key(key)
-            date_match = re.search(r'yyyy=(\d{4})/mm=(\d{2})/dd=(\d{2})', key)
-            review_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else ""
-
-            posted_at_str = first_rec.get("PostedAt", "") or first_rec.get("SubmittedAt", "")
-            posted_at_ts = 0
-            submitter = first_rec.get("Submitter", "") or first_rec.get("SubmittedBy", "")
-            if posted_at_str:
-                try:
-                    posted_at_dt = datetime.fromisoformat(posted_at_str.replace('Z', '+00:00'))
-                    posted_at_ts = posted_at_dt.timestamp()
-                except Exception:
-                    pass
-            if not posted_at_str:
-                s3_last_mod = obj_data.get('LastModified')
-                if s3_last_mod:
-                    posted_at_str = s3_last_mod.strftime("%Y-%m-%dT%H:%M:%S")
-                    posted_at_ts = s3_last_mod.timestamp()
-
-            property_id = first_rec.get("EnrichedPropertyID", "")
-            vendor_id = first_rec.get("EnrichedVendorID", "")
-            account_number = str(first_rec.get("Account Number", "")).strip()
-            account_key = f"{property_id}|{vendor_id}|{account_number}"
-            account_key_no_vendor = f"{property_id}||{account_number}"
-
-            is_ubi_account = account_key in ubi_account_keys or account_key_no_vendor in ubi_account_keys
-
-            history = last_ubi_periods.get(account_key) if is_ubi_account else None
-            suggested_period = None
-            last_ubi_period = None
-            last_service_month_str = None
-            last_service_dates = None
-
-            if history and is_ubi_account:
-                last_service_month = history.get("last_service_month")
-                last_ubi_period = history.get("last_ubi_period")
-                last_service_start = history.get("last_service_start", "")
-                last_service_end = history.get("last_service_end", "")
-
-                if last_service_month:
-                    last_service_month_str = f"{last_service_month[1]:02d}/{last_service_month[0]}"
-                    if last_service_start and last_service_end:
-                        last_service_dates = f"{last_service_start} - {last_service_end}"
-                    elif last_service_start:
-                        last_service_dates = last_service_start
-
-                    bill_service_start = first_rec.get("Bill Period Start", "")
-                    bill_service_month = _parse_service_period_to_month(bill_service_start)
-
-                    if bill_service_month and last_ubi_period:
-                        last_year, last_month = last_service_month
-                        bill_year, bill_month = bill_service_month
-
-                        if last_month == 12:
-                            expected_year, expected_month = last_year + 1, 1
-                        else:
-                            expected_year, expected_month = last_year, last_month + 1
-
-                        if bill_year == expected_year and bill_month == expected_month:
-                            suggested_period = _get_next_ubi_period(last_ubi_period)
-                        elif (bill_year, bill_month) > (last_year, last_month):
-                            suggested_period = _get_next_ubi_period(last_ubi_period)
-                    elif last_ubi_period:
-                        suggested_period = _get_next_ubi_period(last_ubi_period)
-
-            # Duplicate detection & prior period suggestion
-            duplicate_warning = None
-            prior_period_suggestion = None
-            bill_svc_start_raw = first_rec.get("Bill Period Start", "")
-            bill_svc_end_raw = first_rec.get("Bill Period End", "")
-
-            if history and is_ubi_account and bill_svc_start_raw:
-                all_assignments = history.get("all_assignments", [])
-                bill_start_dt = _parse_date_any(bill_svc_start_raw)
-                bill_end_dt = _parse_date_any(bill_svc_end_raw)
-
-                if bill_start_dt and all_assignments:
-                    for asgn in all_assignments:
-                        asgn_start = _parse_date_any(asgn.get("service_start", ""))
-                        asgn_end = _parse_date_any(asgn.get("service_end", ""))
-                        if asgn_start:
-                            start_diff = abs((bill_start_dt - asgn_start).days)
-                            if bill_end_dt and asgn_end:
-                                end_diff = abs((bill_end_dt - asgn_end).days)
-                            else:
-                                end_diff = 999
-                            if start_diff <= 5 and end_diff <= 5:
-                                duplicate_warning = asgn.get("ubi_period", "")
-                                break
-
-                    if not suggested_period and not duplicate_warning:
-                        bill_svc_month = _parse_service_period_to_month(bill_svc_start_raw)
-                        if bill_svc_month:
-                            bill_y, bill_m = bill_svc_month
-                            for asgn in all_assignments:
-                                asgn_month = asgn.get("service_month")
-                                if not asgn_month:
-                                    continue
-                                asgn_y, asgn_m = asgn_month
-                                if asgn_m == 1:
-                                    prev_y, prev_m = asgn_y - 1, 12
-                                else:
-                                    prev_y, prev_m = asgn_y, asgn_m - 1
-                                if bill_y == prev_y and bill_m == prev_m:
-                                    prior_ubi = _get_prev_ubi_period(asgn.get("ubi_period", ""))
-                                    if prior_ubi:
-                                        prior_period_suggestion = prior_ubi
-                                        suggested_period = prior_ubi
-                                        break
-
-            bill_info = {
-                "s3_key": key,
-                "vendor": first_rec.get("EnrichedVendorName", "") or first_rec.get("Vendor Name", ""),
-                "account": first_rec.get("Account Number", ""),
-                "account_key": account_key,
-                "property_name": first_rec.get("EnrichedPropertyName", ""),
-                "pdf_id": computed_pdf_id,
-                "review_date": review_date,
-                "invoice_no": first_rec.get("Invoice Number", ""),
-                "total_amount": 0.0,
-                "line_count": 0,
-                "unassigned_lines": [],
-                "last_modified": posted_at_str,
-                "last_modified_ts": posted_at_ts,
-                "submitter": submitter,
-                "suggested_period": suggested_period,
-                "last_assigned_period": last_ubi_period,
-                "last_assigned_service": last_service_dates or last_service_month_str,
-                "is_ubi_account": is_ubi_account,
-                "duplicate_warning": duplicate_warning,
-                "prior_period_suggestion": prior_period_suggestion,
-            }
-
-            for line in lines:
-                try:
-                    rec = json.loads(line)
-                    line_hash = _compute_stable_line_hash(rec)
-
-                    if line_hash in excluded_hashes:
-                        continue
-
-                    charge = safe_parse_charge(rec.get("Line Item Charge", "0"))
-
-                    sanitized_rec = {}
-                    for k, v in rec.items():
-                        if k not in ESSENTIAL_FIELDS:
-                            continue
-                        if isinstance(v, str):
-                            sanitized_rec[k] = v.replace('\x00', '').replace('\ufffd', '')
-                        else:
-                            sanitized_rec[k] = v
-
-                    bill_info["unassigned_lines"].append({
-                        "line_hash": line_hash,
-                        "line_data": sanitized_rec,
-                        "charge": charge
-                    })
-                    bill_info["total_amount"] += charge
-                    bill_info["line_count"] += 1
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    continue
-
-            if bill_info["unassigned_lines"]:
-                return bill_info
-            return None
-        except Exception as e:
-            print(f"[UBI CACHE] Error processing {key}: {e}")
-            return None
-
-    # Process files concurrently — use explicit executor lifecycle to avoid
-    # "cannot schedule new futures after shutdown" in daemon threads
-    unassigned_bills = []
-    executor = ThreadPoolExecutor(max_workers=50)
-    try:
-        futures = {executor.submit(process_file, key): key for key in all_keys}
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                if result:
-                    unassigned_bills.append(result)
-            except Exception as e:
-                print(f"[UBI CACHE] Future error: {e}")
-    finally:
-        executor.shutdown(wait=True)
-
-    elapsed = (datetime.now() - start_time).total_seconds()
-    print(f"[UBI CACHE] Computed {len(unassigned_bills)} unassigned bills in {elapsed:.1f}s "
-          f"(GL: {_gl_stats['files']} files, {_gl_stats['lines']} lines updated)")
-    return unassigned_bills
-
-
-def _ubi_cache_rebuild_async(days_back: int = 60):
-    """Rebuild UBI unassigned cache in a background thread. Never blocks requests."""
-    global _UBI_UNASSIGNED_CACHE
-    if _UBI_UNASSIGNED_COMPUTING.is_set():
-        print("[UBI CACHE] Background rebuild already in progress, skipping")
-        return
-    _UBI_UNASSIGNED_COMPUTING.set()
-    def _do_rebuild():
-        global _UBI_UNASSIGNED_CACHE
-        try:
-            data = _compute_ubi_unassigned_bills(days_back)
-            _UBI_UNASSIGNED_CACHE = {"data": data, "ts": time.time()}
-            print(f"[UBI CACHE] Background rebuild complete: {len(data)} bills")
-            _persist_ubi_cache_to_s3(data)
-        except Exception as e:
-            print(f"[UBI CACHE] Background rebuild failed: {e}")
-        finally:
-            _UBI_UNASSIGNED_COMPUTING.clear()
-    t = _threading.Thread(target=_do_rebuild, daemon=True)
-    t.start()
+    if _UBI_FILTER_OPTIONS_CACHE:
+        return {**_UBI_FILTER_OPTIONS_CACHE, "scan_time_seconds": 0}
+
+    # Fallback: try reloading from S3 if filter options not yet loaded
+    _load_ubi_cache_from_s3()
+    if _UBI_FILTER_OPTIONS_CACHE:
+        return {**_UBI_FILTER_OPTIONS_CACHE, "scan_time_seconds": 0}
+
+    # Last resort: return empty (Lambda hasn't run yet)
+    return {"properties": [], "vendors": [], "gl_codes": [], "scan_time_seconds": 0}
 
 
 def _get_ubi_unassigned_cached(days_back: int = 60, force_refresh: bool = False) -> list:
-    """Return cached bills instantly. If stale or empty, trigger async rebuild."""
+    """Return cached bills from Lambda-built S3 cache. Never computes locally."""
     cached = _UBI_UNASSIGNED_CACHE
-    now = time.time()
     has_data = cached.get("data") is not None
-    is_fresh = has_data and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL)
-    is_computing = _UBI_UNASSIGNED_COMPUTING.is_set()
-
-    if force_refresh or not is_fresh:
-        _ubi_cache_rebuild_async(days_back)
 
     if has_data:
-        age = now - cached.get("ts", 0)
-        print(f"[UBI CACHE] Returning {len(cached['data'])} bills (age {age:.0f}s, computing={is_computing})")
+        age = time.time() - cached.get("ts", 0)
+        print(f"[UBI CACHE] Returning {len(cached['data'])} bills (age {age:.0f}s)")
         return cached["data"]
 
-    # No in-memory data — try S3 directly (startup thread may not have loaded yet)
-    print("[UBI CACHE] No in-memory data, attempting S3 fallback...")
+    # No in-memory data — try S3 directly
+    print("[UBI CACHE] No in-memory data, loading from S3...")
     try:
         loaded = _load_ubi_cache_from_s3()
         if loaded and _UBI_UNASSIGNED_CACHE.get("data") is not None:
-            print(f"[UBI CACHE] Loaded from S3 on demand: {len(_UBI_UNASSIGNED_CACHE['data'])} bills")
+            print(f"[UBI CACHE] Loaded from S3: {len(_UBI_UNASSIGNED_CACHE['data'])} bills")
             return _UBI_UNASSIGNED_CACHE["data"]
-        print(f"[UBI CACHE] S3 fallback returned loaded={loaded}")
     except Exception as e:
-        print(f"[UBI CACHE] S3 fallback failed: {e}")
+        print(f"[UBI CACHE] S3 load failed: {e}")
 
-    # No data anywhere — return empty, rebuild is in progress
-    print("[UBI CACHE] No data yet, rebuild in progress")
+    # No data anywhere — Lambda hasn't run yet
+    print("[UBI CACHE] No cache available — waiting for Lambda build")
     return []
-
-
-def _invalidate_ubi_unassigned_cache():
-    """Mark cache stale and trigger async rebuild. Keep serving old data while rebuilding."""
-    global _UBI_UNASSIGNED_CACHE
-    # Don't wipe the cache — mark it stale so it keeps serving old data
-    if _UBI_UNASSIGNED_CACHE.get("data") is not None:
-        _UBI_UNASSIGNED_CACHE["ts"] = 0  # Force stale, but keep data
-        print("[UBI CACHE] Marked stale, triggering async rebuild (still serving old data)")
-    else:
-        print("[UBI CACHE] No data to keep, triggering async rebuild")
-    _ubi_cache_rebuild_async()
 
 
 # -------- Server-Side GL Mapping Refresh --------
@@ -5594,7 +5036,6 @@ def api_billback_ubi_unassigned(
         elapsed = time.time() - start_time
         print(f"[UBI UNASSIGNED] Page {page}/{total_pages} ({len(paginated_bills)}/{total_bills} bills) in {elapsed:.2f}s")
 
-        is_computing = _UBI_UNASSIGNED_COMPUTING.is_set()
         return {
             "bills": paginated_bills,
             "total_bills": total_bills,
@@ -5603,7 +5044,7 @@ def api_billback_ubi_unassigned(
             "total_pages": total_pages,
             "has_more": page < total_pages,
             "processing_time_seconds": round(elapsed, 2),
-            "cache_building": is_computing,
+            "cache_building": False,  # Cache built by Lambda, never computing locally
         }
 
     except Exception as e:
@@ -5861,8 +5302,6 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
 
         print(f"[UBI ASSIGN] COMPLETED: Moved {assigned_count} items to Stage 8 for {len(ubi_periods)} period(s)")
 
-        # Clear exclusion hashes + remove this bill from in-memory cache
-        invalidate_exclusion_cache()
         _remove_bill_from_ubi_cache(s3_key)
 
         # Update UBI account history for smarter future suggestions
@@ -5886,10 +5325,6 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
             except Exception as hist_err:
                 print(f"[UBI ASSIGN] Warning: Could not update history: {hist_err}")
 
-        # Invalidate the Stage 8 cache so next request gets fresh data
-        global _last_ubi_periods_cache
-        _last_ubi_periods_cache = {"data": {}, "expires": 0}
-        print("[UBI ASSIGN] Invalidated Stage 8 cache")
 
         return {"ok": True, "assigned": assigned_count, "ubi_periods": ubi_periods, "period_count": len(ubi_periods)}
 
@@ -6328,8 +5763,6 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
             total_amount
         )
 
-        # Clear exclusion hashes + remove this bill from in-memory cache
-        invalidate_exclusion_cache()
         _remove_bill_from_ubi_cache(s3_key)
 
         return {
@@ -6782,14 +6215,9 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
 
         print(f"[UBI UNASSIGN] Deleted {deleted_count} DDB assignment records")
 
-        # 2) Invalidate exclusion cache so unassigned bills reappear immediately
-        invalidate_exclusion_cache()
 
         # 3) Invalidate the Stage 8 history cache so BILLBACK shows correct
         # duplicate warnings and suggestions after unassign
-        global _last_ubi_periods_cache
-        _last_ubi_periods_cache = {"data": {}, "expires": 0}
-        print("[UBI UNASSIGN] Invalidated Stage 8 cache")
 
         print(f"[UBI UNASSIGN] COMPLETED: Moved {total_unassigned} items back to Stage 7")
         return {"ok": True, "unassigned": total_unassigned}
@@ -6970,13 +6398,9 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
         print(f"[UBI UNASSIGN ACCOUNT] Deleted {deleted_count} DDB records")
 
         # Invalidate caches
-        invalidate_exclusion_cache()
 
         # CRITICAL: Invalidate the Stage 8 history cache so BILLBACK shows correct
         # duplicate warnings and suggestions after unassign
-        global _last_ubi_periods_cache
-        _last_ubi_periods_cache = {"data": {}, "expires": 0}
-        print("[UBI UNASSIGN ACCOUNT] Invalidated Stage 8 cache")
 
         print(f"[UBI UNASSIGN ACCOUNT] COMPLETED: Unassigned {total_unassigned} items for {account_number} from {period}")
         return {"ok": True, "unassigned": total_unassigned}
@@ -7065,7 +6489,6 @@ async def api_billback_ubi_cleanup_exclusions(request: Request, user: str = Depe
                 print(f"[CLEANUP EXCLUSIONS] Warning: scan failed: {e}")
 
         # Invalidate cache
-        invalidate_exclusion_cache()
 
         print(f"[CLEANUP EXCLUSIONS] Deleted {deleted_count}/{len(line_hashes)} exclusion records")
         return {"ok": True, "deleted": deleted_count, "total_hashes": len(line_hashes)}
@@ -7191,13 +6614,9 @@ async def api_billback_ubi_reassign_account(request: Request, user: str = Depend
             return JSONResponse({"error": f"No matching line items found for account {account_number} in period {old_period}"}, status_code=404)
 
         # Invalidate caches
-        invalidate_exclusion_cache()
 
         # CRITICAL: Invalidate the Stage 8 history cache so BILLBACK shows correct
         # duplicate warnings and suggestions after reassign
-        global _last_ubi_periods_cache
-        _last_ubi_periods_cache = {"data": {}, "expires": 0}
-        print("[UBI REASSIGN ACCOUNT] Invalidated Stage 8 cache")
 
         print(f"[UBI REASSIGN ACCOUNT] COMPLETED: Reassigned {total_reassigned} items for {account_number} from {old_period} to {new_period}")
         return {"ok": True, "reassigned": total_reassigned}
@@ -7337,11 +6756,6 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
         if total_updated == 0:
             return JSONResponse({"error": "No matching line items found"}, status_code=400)
 
-        # Invalidate caches so BILLBACK shows correct data after reassign
-        invalidate_exclusion_cache()
-        global _last_ubi_periods_cache
-        _last_ubi_periods_cache = {"data": {}, "expires": 0}
-        print("[UBI REASSIGN] Invalidated exclusion + Stage 8 caches")
 
         print(f"[UBI REASSIGN] COMPLETED: Updated {total_updated} items to period {new_period}")
         return {"ok": True, "reassigned": total_updated, "new_period": new_period}
@@ -7477,8 +6891,6 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
             s3.delete_object(Bucket=BUCKET, Key=s3_key)
             print(f"[UBI ARCHIVE] Deleted empty source file {s3_key}")
 
-        # Clear exclusion hashes + remove this bill from in-memory cache
-        invalidate_exclusion_cache()
         _remove_bill_from_ubi_cache(s3_key)
 
         print(f"[UBI ARCHIVE] COMPLETED: Moved {len(archived_items)} items to Stage 99")
@@ -21837,7 +21249,6 @@ def api_debug_exclusion_hashes(user: str = Depends(require_user)):
         old_hashes = len(cache.get("hashes", set()))
 
         # Temporarily invalidate to force rebuild
-        invalidate_exclusion_cache()
         fresh_hashes = _get_cached_exclusion_hashes(90)
 
         # Also count Stage 8 files

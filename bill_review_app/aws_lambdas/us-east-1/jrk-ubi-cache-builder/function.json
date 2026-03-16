@@ -1,0 +1,20 @@
+{
+    "FunctionName": "jrk-ubi-cache-builder",
+    "Runtime": "python3.12",
+    "Handler": "lambda_ubi_cache_builder.lambda_handler",
+    "Timeout": 900,
+    "MemorySize": 1024,
+    "Environment": {
+        "Variables": {
+            "BUCKET": "jrk-analytics-billing",
+            "POST_ENTRATA_PREFIX": "Bill_Parser_7_PostEntrata_Submission/",
+            "UBI_ASSIGNED_PREFIX": "Bill_Parser_8_UBI_Assigned/",
+            "CONFIG_TABLE": "jrk-bill-config",
+            "ASSIGNMENTS_TABLE": "jrk-bill-ubi-assignments",
+            "ACCOUNTS_TRACK_KEY": "Bill_Parser_Config/accounts_to_track.json",
+            "EXPORTS_ROOT": "Bill_Parser_Enrichment/exports/",
+            "CACHE_OUTPUT_KEY": "Bill_Parser_Cache/ubi_unassigned_cache.json.gz",
+            "DAYS_BACK": "60"
+        }
+    }
+}
