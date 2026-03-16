@@ -2657,7 +2657,7 @@
             <div class="line-item" style="padding:8px 12px;border-bottom:1px solid #f9fafb;display:flex;align-items:center;gap:8px;${lineStyle}">
               <input type="checkbox" class="line-checkbox"
                      data-line-hash="${line.line_hash}"
-                     data-s3-key="${bill.s3_key}"
+                     data-s3-key="${escapeHtml(bill.s3_key)}"
                      onchange="updateUbiSelectedCount()" />
               <div style="flex:1;font-size:12px">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -2808,7 +2808,16 @@
 
         // Remove successfully archived bills from local array and re-render
         if (successfulS3Keys.size > 0) {
+          const before = ubiUnassignedBills.length;
           ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successfulS3Keys.has(bill.s3_key));
+          const after = ubiUnassignedBills.length;
+          console.log(`[ARCHIVE] Removed ${before - after} bills from local array (${before}->${after}). Keys matched:`, [...successfulS3Keys]);
+          if (before === after) {
+            // Fallback: try matching by filename (handles HTML entity encoding mismatches)
+            const successFilenames = new Set([...successfulS3Keys].map(k => k.split('/').pop()));
+            ubiUnassignedBills = ubiUnassignedBills.filter(bill => !successFilenames.has((bill.s3_key || '').split('/').pop()));
+            console.log(`[ARCHIVE] Fallback filename match: ${ubiUnassignedBills.length} bills remaining`);
+          }
           renderUnassignedBills();
           updateUbiSelectedCount();
         }
