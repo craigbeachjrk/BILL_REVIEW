@@ -877,15 +877,23 @@ def _get_cached_exclusion_hashes(days_back: int = 90) -> set:
 # -------- UBI Unassigned Bills Cache --------
 # Built externally by jrk-ubi-cache-builder Lambda, app only READS from S3.
 # Operations (assign/archive) do surgical in-memory removal — no rebuilds.
+# _UBI_REMOVED_KEYS tracks keys removed by operations so they survive S3 reloads.
+# When Lambda writes a new cache (new ts), removed keys are cleared since Lambda
+# already excludes archived/assigned bills.
 import threading as _threading
 _UBI_UNASSIGNED_CACHE: dict = {}  # {"data": [...], "ts": float}
 _UBI_FILTER_OPTIONS_CACHE: dict = {}  # {"properties": [], "vendors": [], "gl_codes": []}
 _UBI_CACHE_S3_KEY = "Bill_Parser_Cache/ubi_unassigned_cache.json.gz"
+_UBI_REMOVED_KEYS: set = set()  # s3_keys removed by assign/archive since last Lambda build
+_UBI_LAST_LAMBDA_TS: float = 0  # ts from last Lambda build we loaded
 
 
 def _load_ubi_cache_from_s3() -> bool:
-    """Load Lambda-built UBI cache from S3. Returns True if loaded successfully."""
-    global _UBI_UNASSIGNED_CACHE, _UBI_FILTER_OPTIONS_CACHE
+    """Load Lambda-built UBI cache from S3. Returns True if loaded successfully.
+    Re-applies _UBI_REMOVED_KEYS so locally-removed bills stay removed.
+    If the Lambda ts is newer than what we had, clears removed keys (Lambda already excluded them).
+    """
+    global _UBI_UNASSIGNED_CACHE, _UBI_FILTER_OPTIONS_CACHE, _UBI_REMOVED_KEYS, _UBI_LAST_LAMBDA_TS
     try:
         import gzip
         obj = s3.get_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
@@ -894,8 +902,21 @@ def _load_ubi_cache_from_s3() -> bool:
         data = payload.get("data", [])
         ts = payload.get("ts", 0)
         age_hours = (time.time() - ts) / 3600
+
+        # If Lambda produced a newer build, clear removed keys (it already excluded them)
+        if ts > _UBI_LAST_LAMBDA_TS:
+            if _UBI_REMOVED_KEYS:
+                print(f"[UBI CACHE] New Lambda build (ts={ts:.0f}), clearing {len(_UBI_REMOVED_KEYS)} removed keys")
+            _UBI_REMOVED_KEYS = set()
+            _UBI_LAST_LAMBDA_TS = ts
+
+        # Re-apply locally-removed keys (operations done since last Lambda build)
+        if _UBI_REMOVED_KEYS:
+            before = len(data)
+            data = [b for b in data if b.get("s3_key") not in _UBI_REMOVED_KEYS]
+            print(f"[UBI CACHE] Re-applied {before - len(data)} local removals ({len(_UBI_REMOVED_KEYS)} tracked keys)")
+
         _UBI_UNASSIGNED_CACHE = {"data": data, "ts": ts}
-        # Also load filter options if included by Lambda
         fo = payload.get("filter_options")
         if fo:
             _UBI_FILTER_OPTIONS_CACHE = fo
@@ -1165,16 +1186,18 @@ def _get_cached_vendor_pairs(force_refresh=False):
 
 def _remove_bill_from_ubi_cache(s3_key: str):
     """Remove a specific bill from the in-memory UBI cache by s3_key.
-    Fast O(n) filter instead of a 20-minute full rebuild."""
+    Also adds to _UBI_REMOVED_KEYS so it stays removed across S3 reloads."""
+    global _UBI_REMOVED_KEYS
+    _UBI_REMOVED_KEYS.add(s3_key)
     cached_data = _UBI_UNASSIGNED_CACHE.get("data")
     if cached_data is not None:
         before = len(cached_data)
         _UBI_UNASSIGNED_CACHE["data"] = [b for b in cached_data if b.get("s3_key") != s3_key]
         after = len(_UBI_UNASSIGNED_CACHE["data"])
         if before != after:
-            print(f"[UBI CACHE] Removed bill {s3_key.split('/')[-1]} from cache ({before}->{after})")
+            print(f"[UBI CACHE] Removed bill {s3_key.split('/')[-1]} from cache ({before}->{after}, {len(_UBI_REMOVED_KEYS)} tracked)")
         else:
-            print(f"[UBI CACHE] Bill not found in cache: {s3_key.split('/')[-1]}")
+            print(f"[UBI CACHE] Bill not found in cache: {s3_key.split('/')[-1]} (tracked for future reloads)")
 
 def _vendor_pair_refresh_loop():
     """Background loop that keeps the vendor pair cache permanently warm.
@@ -1248,21 +1271,26 @@ async def startup_prewarm_caches():
         print("[STARTUP] POST helper caches ready")
     threading.Thread(target=prewarm_post_helpers, daemon=True, name="post-helper-prewarm").start()
 
-    # UBI unassigned cache: read from S3 (built by Lambda), poll for updates
+    # UBI unassigned cache: load from S3 SYNCHRONOUSLY so first request has data,
+    # then poll in background for Lambda updates only
+    print("[STARTUP] Loading UBI cache from S3 (built by Lambda)...")
+    _load_ubi_cache_from_s3()
+
     def ubi_cache_poll_loop():
         import time as _t
-        _t.sleep(1)  # Brief pause for boto3 init
-        print("[STARTUP] Loading UBI cache from S3 (built by Lambda)...")
-        _load_ubi_cache_from_s3()
+        import gzip as _gzip
         while True:
             _t.sleep(300)  # Check every 5 minutes for Lambda updates
             try:
-                obj_head = s3.head_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
-                s3_last_mod = obj_head['LastModified'].timestamp()
-                current_ts = _UBI_UNASSIGNED_CACHE.get("ts", 0)
-                if s3_last_mod > current_ts:
-                    print("[UBI CACHE] Newer S3 cache detected, reloading...")
+                # Only reload if Lambda produced a genuinely new build (new ts)
+                obj = s3.get_object(Bucket=BUCKET, Key=_UBI_CACHE_S3_KEY)
+                compressed = obj["Body"].read()
+                payload = json.loads(_gzip.decompress(compressed))
+                new_ts = payload.get("ts", 0)
+                if new_ts > _UBI_LAST_LAMBDA_TS:
+                    print(f"[UBI CACHE] New Lambda build detected (ts {_UBI_LAST_LAMBDA_TS:.0f} -> {new_ts:.0f}), reloading...")
                     _load_ubi_cache_from_s3()
+                # else: same Lambda build, don't reload (preserves local removals)
             except Exception as e:
                 print(f"[UBI CACHE] Poll error: {e}")
     threading.Thread(target=ubi_cache_poll_loop, daemon=True, name="ubi-cache-poll").start()
