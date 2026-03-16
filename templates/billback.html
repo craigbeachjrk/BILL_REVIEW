@@ -2229,8 +2229,8 @@
       loading.innerHTML = '<span class="spinner"></span> Loading unassigned bills...';
       billsContainer.style.display = 'none';
 
-      // Load config first
-      await loadUbiConfig();
+      // Load config in parallel (don't block bill loading on slow config endpoints)
+      loadUbiConfig().catch(e => console.warn('Config load failed, continuing:', e));
 
       try {
         // Get current sort selection
