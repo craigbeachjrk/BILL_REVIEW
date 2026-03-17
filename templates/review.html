@@ -331,7 +331,7 @@
           </div>
           <div class="field"><div class="lbl">Due Date</div>
             <div id="hdr_dd_view">{{ header['Due Date'] }}</div>
-            <input type="text" name="Due Date" value="{{ header['Due Date'] }}" />
+            <input type="text" name="Due Date" value="{{ header['Due Date'] }}" oninput="this.value=this.value.replace(/[^0-9\/]/g,'')" placeholder="MM/DD/YYYY" />
           </div>
           <div class="field"><div class="lbl">Service Address</div>
             <div id="hdr_addr_view">{{ header['Service Address'] }}</div>
