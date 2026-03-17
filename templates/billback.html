@@ -143,6 +143,7 @@
     </div>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
+  <div id="toast" class="toast"></div>
   <div id="improveToast" class="improve-toast"></div>
 
   <div id="improveModal" class="improve-modal-overlay">
@@ -2537,7 +2538,7 @@
                         Suggest: ${bill.suggested_period}
                       </span>
                       <span style="color:#94a3b8;margin-left:4px">(Last svc: ${bill.last_assigned_service || '?'} &rarr; UBI: ${bill.last_assigned_period || '?'})</span>
-                      <button class="btn small" onclick="acceptSuggestion('${escapeJs(bill.s3_key)}', '${escapeJs(bill.suggested_period)}')"
+                      <button class="btn small" onclick="acceptSuggestion('${escapeJs(bill.s3_key)}', '${escapeJs(bill.suggested_period)}', '${bill.pdf_id}')"
                               style="margin-left:8px;background:#22c55e;color:#fff;border:none;font-size:9px;padding:2px 8px">
                         Accept
                       </button>
@@ -3293,9 +3294,10 @@
     }
 
     // Accept smart suggestion - quickly assign all lines of a bill to suggested period
-    async function acceptSuggestion(s3Key, suggestedPeriod) {
-      // Find the bill in our cache
-      const bill = ubiUnassignedBills.find(b => b.s3_key === s3Key);
+    async function acceptSuggestion(s3Key, suggestedPeriod, pdfId) {
+      // Find the bill in our cache (prefer pdf_id, fallback to s3_key)
+      const bill = (pdfId && ubiUnassignedBills.find(b => b.pdf_id === pdfId))
+                || ubiUnassignedBills.find(b => b.s3_key === s3Key);
       if (!bill) {
         showToast('Bill not found', 'err');
         return;
@@ -3342,8 +3344,10 @@
         const data = await response.json();
         showToast(`Assigned ${data.assigned} lines to ${periods.join(', ')}`, 'ok');
 
-        // Remove assigned bill from local cache
-        ubiUnassignedBills = ubiUnassignedBills.filter(b => b.s3_key !== s3Key);
+        // Remove assigned bill from local cache by pdf_id (clean hex, no encoding issues)
+        const billPdfId = bill.pdf_id;
+        ubiUnassignedBills = ubiUnassignedBills.filter(b => b.pdf_id !== billPdfId);
+        console.log(`[ACCEPT] Removed bill pdf_id=${billPdfId}`);
 
         // Re-render
         renderUnassignedBills();
@@ -3738,6 +3742,7 @@
     let toastTimeout = null;
     function showToast(msg, type){
       const t = document.getElementById('toast');
+      if (!t) { console.warn('[TOAST]', type, msg); return; }
       // Clear any existing timeout to prevent old dismiss from firing
       if (toastTimeout) {
         clearTimeout(toastTimeout);
