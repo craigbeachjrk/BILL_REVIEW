@@ -2658,6 +2658,7 @@
               <input type="checkbox" class="line-checkbox"
                      data-line-hash="${line.line_hash}"
                      data-s3-key="${escapeHtml(bill.s3_key)}"
+                     data-pdf-id="${bill.pdf_id}"
                      onchange="updateUbiSelectedCount()" />
               <div style="flex:1;font-size:12px">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -2721,24 +2722,22 @@
       }
 
       // Group line hashes by s3_key (API requires s3_key parameter)
-      // Also record which bill INDICES in ubiUnassignedBills to remove on success
+      // Track pdf_ids for DOM removal (pdf_id is a clean hex hash, no encoding issues)
       const byS3Key = {};
-      const billIndicesToRemove = new Set();
+      const pdfIdsToRemove = new Set();
       selectedCheckboxes.forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         const lineHash = cb.getAttribute('data-line-hash');
+        const pdfId = cb.getAttribute('data-pdf-id');
         if (!byS3Key[s3Key]) byS3Key[s3Key] = {selected: [], total: 0};
         byS3Key[s3Key].selected.push(lineHash);
-        // Find the bill index in the array NOW, before any async work
-        const idx = ubiUnassignedBills.findIndex(b => b.s3_key === s3Key);
-        if (idx >= 0) billIndicesToRemove.add(idx);
+        if (pdfId) pdfIdsToRemove.add(pdfId);
       });
       // Count total visible lines per s3_key to detect full-bill selection
       document.querySelectorAll('.line-checkbox').forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         if (byS3Key[s3Key]) byS3Key[s3Key].total++;
       });
-      console.log(`[ARCHIVE] Pre-computed ${billIndicesToRemove.size} bill indices to remove:`, [...billIndicesToRemove]);
 
       const totalBills = Object.keys(byS3Key).length;
       let processedBills = 0;
@@ -2812,15 +2811,15 @@
           showToast(`Archived ${totalArchived} line items`, 'ok');
         }
 
-        // Remove archived bills using pre-computed indices (avoids key comparison issues)
-        if (successfulS3Keys.size > 0 || billIndicesToRemove.size > 0) {
+        // Remove archived bills by pdf_id (clean hex hash, no encoding issues)
+        if (pdfIdsToRemove.size > 0) {
           const before = ubiUnassignedBills.length;
-          ubiUnassignedBills = ubiUnassignedBills.filter((bill, idx) => {
-            if (billIndicesToRemove.has(idx)) return false;
-            if (successfulS3Keys.has(bill.s3_key)) return false;
-            return true;
-          });
-          console.log(`[ARCHIVE] Removed ${before - ubiUnassignedBills.length} of ${before} bills (indices: ${[...billIndicesToRemove]}, keys: ${[...successfulS3Keys].map(k=>k.split('/').pop())})`);
+          ubiUnassignedBills = ubiUnassignedBills.filter(bill => !pdfIdsToRemove.has(bill.pdf_id));
+          const removed = before - ubiUnassignedBills.length;
+          console.log(`[ARCHIVE] Removed ${removed} of ${before} bills by pdf_id. IDs: ${[...pdfIdsToRemove]}`);
+          if (removed === 0) {
+            console.error('[ARCHIVE] BUG: No bills removed! pdfIdsToRemove:', [...pdfIdsToRemove], 'bill pdf_ids:', ubiUnassignedBills.slice(0,5).map(b => b.pdf_id));
+          }
           renderUnassignedBills();
           updateUbiSelectedCount();
         }
@@ -2849,7 +2848,8 @@
       selectedCheckboxes.forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         const lineHash = cb.getAttribute('data-line-hash');
-        const bill = ubiUnassignedBills.find(b => b.s3_key === s3Key);
+        const pdfId = cb.getAttribute('data-pdf-id');
+        const bill = ubiUnassignedBills.find(b => b.pdf_id === pdfId) || ubiUnassignedBills.find(b => b.s3_key === s3Key);
         if (bill) {
           if (!invoiceMap[s3Key]) {
             invoiceMap[s3Key] = {
@@ -3205,13 +3205,13 @@
 
       // Group by S3 key and collect line details
       const byS3Key = {};
-      const assignBillIndices = new Set();
+      const assignPdfIds = new Set();
       selectedCheckboxes.forEach(cb => {
         const s3Key = cb.getAttribute('data-s3-key');
         const lineHash = cb.getAttribute('data-line-hash');
+        const pdfId = cb.getAttribute('data-pdf-id');
         const lineId = `${s3Key}_${lineHash}`.replace(/[^a-zA-Z0-9]/g, '_');
-        const idx = ubiUnassignedBills.findIndex(b => b.s3_key === s3Key);
-        if (idx >= 0) assignBillIndices.add(idx);
+        if (pdfId) assignPdfIds.add(pdfId);
 
         // Get edited amount and notes
         const amtInput = document.getElementById('amt_' + lineId);
@@ -3278,14 +3278,9 @@
         // Clear period selection
         clearPeriodSelection();
 
-        // Remove assigned bills using pre-computed indices + key fallback
-        const assignedS3Keys = new Set(Object.keys(byS3Key));
-        ubiUnassignedBills = ubiUnassignedBills.filter((bill, idx) => {
-          if (assignBillIndices.has(idx)) return false;
-          if (assignedS3Keys.has(bill.s3_key)) return false;
-          return true;
-        });
-        console.log(`[ASSIGN] Removed bills (indices: ${[...assignBillIndices]})`);
+        // Remove assigned bills by pdf_id
+        ubiUnassignedBills = ubiUnassignedBills.filter(bill => !assignPdfIds.has(bill.pdf_id));
+        console.log(`[ASSIGN] Removed bills by pdf_id: ${[...assignPdfIds]}`);
 
         // Re-render the list from cache
         renderUnassignedBills();
