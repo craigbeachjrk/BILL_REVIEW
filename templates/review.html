@@ -279,7 +279,6 @@
         <h1>Invoice Review</h1>
         <div class="toolbar">
           <button class="btn secondary" type="button" onclick="sendRework()">Send Back to Parser</button>
-          <button class="btn secondary" type="button" onclick="emailPoster()">Email Poster</button>
           <button class="btn" type="button" id="saveHeaderBtn" onclick="manualSaveHeader()">Save Header</button>
           <span id="headerSaveStatus" style="font-size:12px;color:#666"></span>
           <form method="post" action="/api/submit" onsubmit="return submitAll(event)" id="submitForm">
@@ -797,50 +796,6 @@
       }
     }
 
-    function emailPoster(){
-      const submitter = '{{ submitter }}'.trim();
-      if (!submitter){
-        showToast('No submitter email found for this invoice', 'err');
-        return;
-      }
-      // Gather context from the header for the email template
-      const prop = (document.querySelector('#propName') || {}).value
-        || (document.getElementById('hdr_enrichedpropertyname_view') || {}).textContent
-        || '';
-      const vendor = (document.querySelector('#vendName') || {}).value
-        || (document.getElementById('hdr_vendor_view') || {}).textContent
-        || '';
-      const acct = '{{ account }}';
-      const inv = '{{ invoice }}';
-      const dt = '{{ date }}';
-
-      const pdfId = (document.querySelector('.line') || {}).getAttribute('data-pdf-id') || '';
-      const pdfKey = (document.querySelector('.line') || {}).getAttribute('data-pdf') || '';
-      const baseUrl = 'https://billreview.jrkanalytics.com';
-      const parseLink = dt && pdfId ? baseUrl + '/review?date=' + dt + '&pdf_id=' + pdfId : '';
-      const pdfLink = pdfKey ? baseUrl + '/pdf?k=' + encodeURIComponent(pdfKey) + '&date=' + dt + '&pdf_id=' + pdfId : '';
-
-      const subject = 'Bill Review — ' + (prop || 'Property') + ' — ' + (vendor || 'Vendor') + (inv && inv !== '(unknown)' ? ' — Inv #' + inv : '');
-      const body = 'Hi ' + submitter.split('@')[0] + ',\n\n'
-        + 'I have a question about the following invoice:\n\n'
-        + 'Property: ' + prop + '\n'
-        + 'Vendor: ' + vendor + '\n'
-        + 'Account: ' + acct + '\n'
-        + (inv && inv !== '(unknown)' ? 'Invoice #: ' + inv + '\n' : '')
-        + 'Date: ' + dt + '\n'
-        + (parseLink ? '\nParse page: ' + parseLink + '\n' : '')
-        + (pdfLink ? 'PDF: ' + pdfLink + '\n' : '')
-        + '\n[Please describe your question here]\n\n'
-        + 'Sincerely,\nCraig Beach\n\n'
-        + '_This is an automated email from billreview.jrkanalytics.com._';
-
-      const cc = 'mpastrana@jrk.com;tdavies@jrk.com';
-      const mailto = 'mailto:' + encodeURIComponent(submitter)
-        + '?cc=' + encodeURIComponent(cc)
-        + '&subject=' + encodeURIComponent(subject)
-        + '&body=' + encodeURIComponent(body);
-      window.open(mailto, '_blank');
-    }
 
     async function sendRework(){
       try{
