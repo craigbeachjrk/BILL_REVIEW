@@ -139,6 +139,9 @@ POST_ENTRATA_PREFIX = os.getenv("POST_ENTRATA_PREFIX", "Bill_Parser_7_PostEntrat
 UBI_ASSIGNED_PREFIX = os.getenv("UBI_ASSIGNED_PREFIX", "Bill_Parser_8_UBI_Assigned/")
 # Scraper bucket for utility PDFs pulled by external scrapers
 SCRAPER_BUCKET = os.getenv("SCRAPER_BUCKET", "jrk-utility-pdfs")
+# Scraper API for integration/account metadata
+SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "http://3.150.100.244:3000")
+SCRAPER_API_TOKEN = os.getenv("SCRAPER_API_TOKEN", "jrk_6435ebb70d6929079be8a35199815552f97e25a2a292bb72")
 # Gemini API for PDF date extraction
 GEMINI_SECRET_NAME = os.getenv("GEMINI_SECRET_NAME", "gemini/parser-keys")
 FLAGGED_REVIEW_PREFIX = os.getenv("FLAGGED_REVIEW_PREFIX", "Bill_Parser_9_Flagged_Review/")
@@ -3716,21 +3719,58 @@ def api_upload_input(file: UploadFile = File(...), user: str = Depends(require_u
 # Cached mappings for scraper bucket (integration_uuid -> provider, account_uuid -> account_id)
 _scraper_integration_map: dict[str, str] = {}  # integration_uuid -> provider_name
 _scraper_account_map: dict[str, dict] = {}  # account_uuid -> {account_id, provider}
+_scraper_api_integrations: list[dict] = []  # Full integration metadata from API
+_scraper_api_ts: float = 0  # Timestamp of last API fetch
+_SCRAPER_API_TTL = 300  # 5 minutes
+
+def _fetch_scraper_integrations() -> list[dict]:
+    """Fetch integration metadata from scraper API, with caching."""
+    global _scraper_api_integrations, _scraper_api_ts
+    now = time.time()
+    if _scraper_api_integrations and (now - _scraper_api_ts) < _SCRAPER_API_TTL:
+        return _scraper_api_integrations
+    try:
+        resp = requests.get(
+            f"{SCRAPER_API_URL}/api/integrations",
+            headers={"Authorization": f"Bearer {SCRAPER_API_TOKEN}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        integrations = data.get("integrations", [])
+        _scraper_api_integrations = integrations
+        _scraper_api_ts = now
+        print(f"[SCRAPER API] Loaded {len(integrations)} integrations")
+        return integrations
+    except Exception as e:
+        print(f"[SCRAPER API] Failed to load: {e}")
+        return _scraper_api_integrations or []
 
 def _load_scraper_mappings():
-    """Load scraper UUID mappings from CSV files in the app directory."""
+    """Load scraper UUID-to-provider mappings from scraper API (with CSV fallback)."""
     global _scraper_integration_map, _scraper_account_map
 
     if _scraper_integration_map:
         return  # Already loaded
 
+    # Try API first
+    integrations = _fetch_scraper_integrations()
+    if integrations:
+        for integ in integrations:
+            uuid = integ.get("id", "").strip()
+            provider = integ.get("provider", "").strip()
+            if uuid and provider:
+                _scraper_integration_map[uuid] = provider
+        print(f"[SCRAPER] Loaded {len(_scraper_integration_map)} integration mappings from API")
+        # Build account map by scanning S3 folder names (accounts are real numbers now)
+        _build_account_map_from_s3()
+        return
+
+    # Fallback: CSV files (legacy)
     import csv
     import os as _os
-
-    # Find the CSV files relative to main.py
     base_dir = _os.path.dirname(_os.path.abspath(__file__))
 
-    # Load integration UUID -> provider mapping
     integration_csv = _os.path.join(base_dir, "integration_uuid_provider_map.csv")
     if _os.path.exists(integration_csv):
         with open(integration_csv, 'r', encoding='utf-8') as f:
@@ -3740,9 +3780,8 @@ def _load_scraper_mappings():
                 provider = row.get('provider', '').strip()
                 if uuid and provider:
                     _scraper_integration_map[uuid] = provider
-        print(f"[SCRAPER] Loaded {len(_scraper_integration_map)} integration mappings")
+        print(f"[SCRAPER] Loaded {len(_scraper_integration_map)} integration mappings from CSV")
 
-    # Load account UUID -> account_id mapping
     account_csv = _os.path.join(base_dir, "account_uuid_provider_map.csv")
     if _os.path.exists(account_csv):
         with open(account_csv, 'r', encoding='utf-8') as f:
@@ -3753,37 +3792,106 @@ def _load_scraper_mappings():
                 provider = row.get('provider', '').strip()
                 if uuid and account_id:
                     _scraper_account_map[uuid] = {'account_id': account_id, 'provider': provider}
-        print(f"[SCRAPER] Loaded {len(_scraper_account_map)} account mappings")
+        print(f"[SCRAPER] Loaded {len(_scraper_account_map)} account mappings from CSV")
+
+def _build_account_map_from_s3():
+    """Scan S3 folder names to build account map. Accounts are stored as real numbers in
+    the new structure: {integration_id}/bills/{provider}/{account_number}/"""
+    global _scraper_account_map
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _scan_integration(integration_id, provider):
+        """List account folders for one integration."""
+        accounts = []
+        prefix = f"{integration_id}/bills/{provider}/"
+        try:
+            paginator = s3.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=prefix, Delimiter='/'):
+                for cp in page.get('CommonPrefixes', []):
+                    acct_folder = cp.get('Prefix', '').rstrip('/').split('/')[-1]
+                    if acct_folder:
+                        accounts.append((acct_folder, provider, integration_id))
+        except Exception:
+            pass
+        return accounts
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {}
+        for integration_id, provider in _scraper_integration_map.items():
+            futures[executor.submit(_scan_integration, integration_id, provider)] = (integration_id, provider)
+
+        for f in as_completed(futures):
+            for acct_id, provider, integration_id in f.result():
+                key = f"{provider}_{acct_id}"
+                _scraper_account_map[key] = {
+                    'account_id': acct_id,
+                    'provider': provider,
+                    'integration_id': integration_id,
+                }
+
+    print(f"[SCRAPER] Built account map: {len(_scraper_account_map)} accounts from S3 folders")
 
 
 @app.get("/api/scraper/providers")
 def api_scraper_providers(user: str = Depends(require_user)):
-    """List all providers in the scraper bucket with friendly names."""
+    """List all providers from scraper API with rich metadata."""
     _load_scraper_mappings()
 
     try:
-        # List top-level prefixes (integration UUIDs or provider names)
-        paginator = s3.get_paginator('list_objects_v2')
-        prefixes = set()
+        # Build provider list from API integrations (enriched with metadata)
+        integrations = _fetch_scraper_integrations()
+        integ_by_id = {i["id"]: i for i in integrations if i.get("id")}
 
+        # Also scan S3 for any folders not in the API (belt-and-suspenders)
+        paginator = s3.get_paginator('list_objects_v2')
+        s3_folders = set()
         for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Delimiter='/'):
             for prefix in page.get('CommonPrefixes', []):
                 p = prefix.get('Prefix', '').rstrip('/')
                 if p and p not in ('traces', 'unknown'):
-                    prefixes.add(p)
+                    s3_folders.add(p)
 
-        # Build provider list with friendly names
         providers = []
-        for folder in sorted(prefixes):
-            # Check if it's a UUID that maps to a provider name
-            provider_name = _scraper_integration_map.get(folder, folder)
+        seen_ids = set()
+
+        # API-sourced providers first (with full metadata)
+        for integ in integrations:
+            uid = integ.get("id", "")
+            if not uid or uid in seen_ids:
+                continue
+            seen_ids.add(uid)
+            display = integ.get("display_name") or integ.get("provider", uid)
             providers.append({
-                'folder': folder,
-                'name': provider_name.replace('_', ' ').title(),
-                'is_uuid': folder != provider_name
+                'folder': uid,
+                'name': display,
+                'provider_key': integ.get("provider", ""),
+                'utility_type': integ.get("utility_type", ""),
+                'service_region': integ.get("service_region", ""),
+                'status': integ.get("status", ""),
+                'account_count': integ.get("account_count", 0),
+                'statement_count': integ.get("statement_count", 0),
+                'latest_statement': integ.get("latest_statement_date", ""),
+                'has_api': True,
             })
 
-        # Sort by friendly name
+        # Add any S3 folders not already covered by API
+        for folder in sorted(s3_folders):
+            if folder not in seen_ids:
+                provider_name = _scraper_integration_map.get(folder, folder)
+                providers.append({
+                    'folder': folder,
+                    'name': provider_name.replace('_', ' ').title(),
+                    'provider_key': provider_name,
+                    'utility_type': '',
+                    'service_region': '',
+                    'status': '',
+                    'account_count': 0,
+                    'statement_count': 0,
+                    'latest_statement': '',
+                    'has_api': False,
+                })
+
+        # Sort by display name
         providers.sort(key=lambda x: x['name'].lower())
 
         return {"ok": True, "providers": providers}
@@ -3797,29 +3905,25 @@ def api_scraper_accounts(provider_folder: str, user: str = Depends(require_user)
     _load_scraper_mappings()
 
     try:
-        # The structure is: {integration_uuid}/bills/{provider_name}/{account_id}/
-        # First check if there's a bills subfolder
+        # Structure: {integration_id}/bills/{provider_name}/{account_number}/
         accounts = []
-
-        # Try listing under /bills/{provider_name}/
         provider_name = _scraper_integration_map.get(provider_folder, provider_folder)
         bills_prefix = f"{provider_folder}/bills/{provider_name}/"
 
         paginator = s3.get_paginator('list_objects_v2')
-        try:
-            for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=bills_prefix, Delimiter='/'):
-                for prefix in page.get('CommonPrefixes', []):
-                    account_folder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
-                    if account_folder:
-                        accounts.append({
-                            'folder': account_folder,
-                            'account_id': account_folder,
-                            'path': f"{provider_folder}/bills/{provider_name}/{account_folder}"
-                        })
-        except Exception:
-            pass
 
-        # If no accounts found, try direct listing under provider folder
+        # List account folders under /bills/{provider}/
+        for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=bills_prefix, Delimiter='/'):
+            for prefix in page.get('CommonPrefixes', []):
+                account_folder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
+                if account_folder:
+                    accounts.append({
+                        'folder': account_folder,
+                        'account_id': account_folder,
+                        'path': f"{provider_folder}/bills/{provider_name}/{account_folder}"
+                    })
+
+        # Fallback: try direct listing under provider folder
         if not accounts:
             for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=f"{provider_folder}/", Delimiter='/'):
                 for prefix in page.get('CommonPrefixes', []):
@@ -3831,30 +3935,42 @@ def api_scraper_accounts(provider_folder: str, user: str = Depends(require_user)
                             'path': f"{provider_folder}/{subfolder}"
                         })
 
-        # Filter out accounts with no PDFs (parallel check)
+        # Count PDFs per account in parallel
         if accounts:
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            def _has_pdfs(acct):
+            def _count_pdfs(acct):
+                count = 0
                 try:
                     prefix = acct['path'] + '/'
-                    resp = s3.list_objects_v2(Bucket=SCRAPER_BUCKET, Prefix=prefix, MaxKeys=20)
-                    for obj in resp.get('Contents', []):
-                        if obj['Key'].lower().endswith('.pdf'):
-                            return True
-                    return False
+                    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=SCRAPER_BUCKET, Prefix=prefix):
+                        for obj in page.get('Contents', []):
+                            if obj['Key'].lower().endswith('.pdf'):
+                                count += 1
                 except Exception:
-                    return False
+                    pass
+                return count
 
             with ThreadPoolExecutor(max_workers=20) as executor:
-                futures = {executor.submit(_has_pdfs, a): a for a in accounts}
+                futures = {executor.submit(_count_pdfs, a): a for a in accounts}
                 filtered = []
                 for f in as_completed(futures):
-                    if f.result():
-                        filtered.append(futures[f])
+                    count = f.result()
+                    if count > 0:
+                        acct = futures[f]
+                        acct['pdf_count'] = count
+                        filtered.append(acct)
                 accounts = sorted(filtered, key=lambda a: a['account_id'])
 
-        return {"ok": True, "accounts": accounts, "provider": provider_name}
+        # Get display name from API metadata
+        integrations = _fetch_scraper_integrations()
+        display_name = provider_name
+        for integ in integrations:
+            if integ.get("id") == provider_folder:
+                display_name = integ.get("display_name") or provider_name
+                break
+
+        return {"ok": True, "accounts": accounts, "provider": display_name}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -13013,9 +13129,10 @@ def _compute_scraper_links() -> dict:
     matched_account_keys: set[str] = set()
 
     # For each scraper account, try to match
-    for uuid, info in _scraper_account_map.items():
+    for _map_key, info in _scraper_account_map.items():
         scraper_acct_id = str(info.get("account_id") or "").strip()
         provider = str(info.get("provider") or "").strip()
+        integration_id = str(info.get("integration_id") or "").strip()
         if not scraper_acct_id:
             continue
         norm_scraper = _normalize_account_number(scraper_acct_id)
@@ -13031,7 +13148,7 @@ def _compute_scraper_links() -> dict:
                     links[key] = {
                         "scraperProvider": provider,
                         "scraperAccountId": scraper_acct_id,
-                        "scraperAccountUuid": uuid,
+                        "scraperAccountUuid": integration_id,
                         "matchMethod": "exact",
                         "linkedAt": dt.datetime.utcnow().isoformat() + "Z"
                     }
@@ -13050,7 +13167,7 @@ def _compute_scraper_links() -> dict:
                         links[key] = {
                             "scraperProvider": provider,
                             "scraperAccountId": scraper_acct_id,
-                            "scraperAccountUuid": uuid,
+                            "scraperAccountUuid": integration_id,
                             "matchMethod": "substring",
                             "linkedAt": dt.datetime.utcnow().isoformat() + "Z"
                         }

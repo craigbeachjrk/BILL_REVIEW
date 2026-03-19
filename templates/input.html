@@ -200,6 +200,16 @@
     .scraper-row .meta-svc.pending{color:#9ca3af;font-style:italic}
     .scraper-row .meta-svc.extracting{color:#3b82f6}
     .scraper-row .flag{font-size:10px;padding:2px 6px;border-radius:4px;background:#fbbf24;color:#78350f;margin-left:8px;text-transform:uppercase}
+    .scraper-row .badge{font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase;font-weight:600}
+    .badge-electric{background:#dbeafe;color:#1e40af}
+    .badge-gas{background:#fef3c7;color:#92400e}
+    .badge-water{background:#d1fae5;color:#065f46}
+    .badge-sewer{background:#ede9fe;color:#5b21b6}
+    .badge-multi{background:#e0e7ff;color:#3730a3}
+    .badge-trash{background:#f3f4f6;color:#374151}
+    .badge-region{background:#f1f5f9;color:#475569}
+    .scraper-row .meta-count{min-width:70px;text-align:right;color:#64748b;font-size:11px}
+    .scraper-row .meta-latest{min-width:90px;text-align:right;color:#64748b;font-size:11px}
     .scraper-header-row{display:flex;align-items:center;padding:8px 16px;background:#f8fafc;border-bottom:2px solid #e5e7eb;font-weight:600;font-size:11px;text-transform:uppercase;color:#64748b}
     .scraper-header-row span{cursor:pointer}
     .scraper-header-row span:hover{color:#0ea5e9}
@@ -371,20 +381,31 @@
           return;
         }
 
-        // Sort: mapped providers first (alphabetically), unmapped at bottom
-        const mapped = providers.filter(p => p.is_uuid).sort((a,b) => a.name.localeCompare(b.name));
-        const unmapped = providers.filter(p => !p.is_uuid && p.folder.includes('-')).sort((a,b) => a.folder.localeCompare(b.folder));
-        const direct = providers.filter(p => !p.is_uuid && !p.folder.includes('-')).sort((a,b) => a.name.localeCompare(b.name));
-        providers = [...mapped, ...direct, ...unmapped];
+        // Sort by name
+        providers.sort((a,b) => a.name.localeCompare(b.name));
 
         let html = '<div class="scraper-toolbar"><input type="text" id="providerSearch" placeholder="FILTER..." oninput="filterList()"></div>';
+        html += '<div class="scraper-header-row">';
+        html += '<span class="icon"></span>';
+        html += '<span class="name">PROVIDER</span>';
+        html += '<span class="meta-count">ACCOUNTS</span>';
+        html += '<span class="meta-count">BILLS</span>';
+        html += '<span class="meta-latest">LATEST BILL</span>';
+        html += '</div>';
         html += '<div class="scraper-list" id="itemList">';
         for (const p of providers) {
-          const isUnmapped = !p.is_uuid && p.folder.includes('-');
-          html += `<div class="scraper-row ${isUnmapped ? 'unmapped' : ''}" data-name="${escapeAttr(p.name.toLowerCase())}" onclick="loadAccounts('${escapeAttr(p.folder)}', '${escapeAttr(p.name)}')">
+          const utilBadge = p.utility_type ? `<span class="badge badge-${escapeAttr(p.utility_type)}">${escapeHtml(p.utility_type)}</span>` : '';
+          const regionBadge = p.service_region ? `<span class="badge badge-region">${escapeHtml(p.service_region)}</span>` : '';
+          const acctCount = p.account_count || '';
+          const stmtCount = p.statement_count || '';
+          const latest = p.latest_statement || '';
+          const noApi = !p.has_api ? '<span class="flag">NO API DATA</span>' : '';
+          html += `<div class="scraper-row" data-name="${escapeAttr(p.name.toLowerCase() + ' ' + (p.utility_type||'') + ' ' + (p.service_region||''))}" onclick="loadAccounts('${escapeAttr(p.folder)}', '${escapeAttr(p.name)}')">
             <span class="icon">📁</span>
-            <span class="name">${escapeHtml(p.name)}</span>
-            ${isUnmapped ? '<span class="flag">MISSING UUID MAPPING</span>' : ''}
+            <span class="name">${escapeHtml(p.name)}${utilBadge}${regionBadge}${noApi}</span>
+            <span class="meta-count">${acctCount}</span>
+            <span class="meta-count">${stmtCount}</span>
+            <span class="meta-latest">${escapeHtml(latest)}</span>
           </div>`;
         }
         html += '</div>';
@@ -431,15 +452,23 @@
           return;
         }
 
+        const totalPdfs = accounts.reduce((s, a) => s + (a.pdf_count || 0), 0);
         let html = '<div class="scraper-toolbar">';
-        html += `<button class="btn" onclick="loadAllPdfs('${escapeAttr(folder)}', '${escapeAttr(name)}')">VIEW ALL BILLS</button>`;
+        html += `<button class="btn" onclick="loadAllPdfs('${escapeAttr(folder)}', '${escapeAttr(name)}')">VIEW ALL BILLS (${totalPdfs})</button>`;
         html += '<input type="text" id="accountSearch" placeholder="FILTER..." oninput="filterList()">';
+        html += '</div>';
+        html += '<div class="scraper-header-row">';
+        html += '<span class="icon"></span>';
+        html += '<span class="name">ACCOUNT</span>';
+        html += '<span class="meta-count">BILLS</span>';
         html += '</div>';
         html += '<div class="scraper-list" id="itemList">';
         for (const a of accounts) {
+          const count = a.pdf_count || '';
           html += `<div class="scraper-row" data-name="${escapeAttr(a.account_id.toLowerCase())}" onclick="loadPdfs('${escapeAttr(folder)}', '${escapeAttr(name)}', '${escapeAttr(a.path)}', '${escapeAttr(a.account_id)}')">
             <span class="icon">📁</span>
             <span class="name">${escapeHtml(a.account_id)}</span>
+            <span class="meta-count">${count}</span>
           </div>`;
         }
         html += '</div>';
