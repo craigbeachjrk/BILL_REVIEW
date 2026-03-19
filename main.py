@@ -3794,9 +3794,28 @@ def _load_scraper_mappings():
                     _scraper_account_map[uuid] = {'account_id': account_id, 'provider': provider}
         print(f"[SCRAPER] Loaded {len(_scraper_account_map)} account mappings from CSV")
 
+_UNLINKED_SENTINEL = "__unlinked__"
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+_SCRAPER_SKIP_FOLDERS = {'traces', 'unknown', 'deploy', 'aps'}
+
+def _list_unlinked_account_folders() -> list[str]:
+    """Return root-level S3 folders that are NOT UUIDs and not special folders.
+    These are flat account-number folders with PDFs directly inside."""
+    folders = []
+    paginator = s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Delimiter='/'):
+        for prefix in page.get('CommonPrefixes', []):
+            p = prefix.get('Prefix', '').rstrip('/')
+            if p and p not in _SCRAPER_SKIP_FOLDERS and not _UUID_RE.match(p):
+                folders.append(p)
+    return folders
+
 def _build_account_map_from_s3():
-    """Scan S3 folder names to build account map. Accounts are stored as real numbers in
-    the new structure: {integration_id}/bills/{provider}/{account_number}/"""
+    """Scan S3 folder names to build account map.
+    Handles both structures:
+      - UUID integration folders: {integration_id}/bills/{provider}/{account_number}/
+      - Flat root-level folders:  {account_number}/ (orphaned / legacy)
+    """
     global _scraper_account_map
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -3828,6 +3847,16 @@ def _build_account_map_from_s3():
                     'provider': provider,
                     'integration_id': integration_id,
                 }
+
+    # Also include flat root-level account folders (no integration/provider)
+    for folder in _list_unlinked_account_folders():
+        key = f"_unlinked_{folder}"
+        if key not in _scraper_account_map:
+            _scraper_account_map[key] = {
+                'account_id': folder,
+                'provider': '',
+                'integration_id': '',
+            }
 
     print(f"[SCRAPER] Built account map: {len(_scraper_account_map)} accounts from S3 folders")
 
@@ -3874,9 +3903,12 @@ def api_scraper_providers(user: str = Depends(require_user)):
                 'has_api': True,
             })
 
-        # Add any S3 folders not already covered by API
+        # Add any UUID S3 folders not already covered by API
+        unlinked_count = 0
         for folder in sorted(s3_folders):
-            if folder not in seen_ids:
+            if folder in seen_ids:
+                continue
+            if _UUID_RE.match(folder):
                 provider_name = _scraper_integration_map.get(folder, folder)
                 providers.append({
                     'folder': folder,
@@ -3890,6 +3922,23 @@ def api_scraper_providers(user: str = Depends(require_user)):
                     'latest_statement': '',
                     'has_api': False,
                 })
+            elif folder not in _SCRAPER_SKIP_FOLDERS:
+                unlinked_count += 1
+
+        # Add synthetic "Unlinked Accounts" entry for flat root-level folders
+        if unlinked_count > 0:
+            providers.append({
+                'folder': _UNLINKED_SENTINEL,
+                'name': 'Unlinked Accounts',
+                'provider_key': '',
+                'utility_type': '',
+                'service_region': 'Various',
+                'status': 'unlinked',
+                'account_count': unlinked_count,
+                'statement_count': 0,
+                'latest_statement': '',
+                'has_api': False,
+            })
 
         # Sort by display name
         providers.sort(key=lambda x: x['name'].lower())
@@ -3905,35 +3954,52 @@ def api_scraper_accounts(provider_folder: str, user: str = Depends(require_user)
     _load_scraper_mappings()
 
     try:
-        # Structure: {integration_id}/bills/{provider_name}/{account_number}/
         accounts = []
-        provider_name = _scraper_integration_map.get(provider_folder, provider_folder)
-        bills_prefix = f"{provider_folder}/bills/{provider_name}/"
-
         paginator = s3.get_paginator('list_objects_v2')
 
-        # List account folders under /bills/{provider}/
-        for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=bills_prefix, Delimiter='/'):
-            for prefix in page.get('CommonPrefixes', []):
-                account_folder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
-                if account_folder:
-                    accounts.append({
-                        'folder': account_folder,
-                        'account_id': account_folder,
-                        'path': f"{provider_folder}/bills/{provider_name}/{account_folder}"
-                    })
+        if provider_folder == _UNLINKED_SENTINEL:
+            # Flat root-level account folders (not inside any integration)
+            for folder in _list_unlinked_account_folders():
+                accounts.append({
+                    'folder': folder,
+                    'account_id': folder,
+                    'path': folder,  # root-level path
+                })
+            display_name = "Unlinked Accounts"
+        else:
+            # Structure: {integration_id}/bills/{provider_name}/{account_number}/
+            provider_name = _scraper_integration_map.get(provider_folder, provider_folder)
+            bills_prefix = f"{provider_folder}/bills/{provider_name}/"
 
-        # Fallback: try direct listing under provider folder
-        if not accounts:
-            for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=f"{provider_folder}/", Delimiter='/'):
+            for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=bills_prefix, Delimiter='/'):
                 for prefix in page.get('CommonPrefixes', []):
-                    subfolder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
-                    if subfolder and subfolder != 'bills':
+                    account_folder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
+                    if account_folder:
                         accounts.append({
-                            'folder': subfolder,
-                            'account_id': subfolder,
-                            'path': f"{provider_folder}/{subfolder}"
+                            'folder': account_folder,
+                            'account_id': account_folder,
+                            'path': f"{provider_folder}/bills/{provider_name}/{account_folder}"
                         })
+
+            # Fallback: try direct listing under provider folder
+            if not accounts:
+                for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=f"{provider_folder}/", Delimiter='/'):
+                    for prefix in page.get('CommonPrefixes', []):
+                        subfolder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
+                        if subfolder and subfolder != 'bills':
+                            accounts.append({
+                                'folder': subfolder,
+                                'account_id': subfolder,
+                                'path': f"{provider_folder}/{subfolder}"
+                            })
+
+            # Get display name from API metadata
+            integrations = _fetch_scraper_integrations()
+            display_name = provider_name
+            for integ in integrations:
+                if integ.get("id") == provider_folder:
+                    display_name = integ.get("display_name") or provider_name
+                    break
 
         # Count PDFs per account in parallel
         if accounts:
@@ -3962,14 +4028,6 @@ def api_scraper_accounts(provider_folder: str, user: str = Depends(require_user)
                         filtered.append(acct)
                 accounts = sorted(filtered, key=lambda a: a['account_id'])
 
-        # Get display name from API metadata
-        integrations = _fetch_scraper_integrations()
-        display_name = provider_name
-        for integ in integrations:
-            if integ.get("id") == provider_folder:
-                display_name = integ.get("display_name") or provider_name
-                break
-
         return {"ok": True, "accounts": accounts, "provider": display_name}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -3984,7 +4042,10 @@ def api_scraper_pdfs(provider_folder: str, account_folder: str, user: str = Depe
         provider_name = _scraper_integration_map.get(provider_folder, provider_folder)
 
         # Build the full path
-        if '/' in account_folder:
+        if provider_folder == _UNLINKED_SENTINEL:
+            # Flat root-level account folder
+            prefix = f"{account_folder}/"
+        elif '/' in account_folder:
             # Path already includes intermediate folders
             prefix = f"{provider_folder}/{account_folder}/"
         else:
@@ -4037,31 +4098,40 @@ def api_scraper_all_pdfs(provider_folder: str, user: str = Depends(require_user)
 
         # First get all accounts
         accounts = []
-        bills_prefix = f"{provider_folder}/bills/{provider_name}/"
-
         paginator = s3.get_paginator('list_objects_v2')
-        try:
-            for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=bills_prefix, Delimiter='/'):
-                for prefix in page.get('CommonPrefixes', []):
-                    account_folder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
-                    if account_folder:
-                        accounts.append({
-                            'account_id': account_folder,
-                            'prefix': f"{bills_prefix}{account_folder}/"
-                        })
-        except Exception:
-            pass
 
-        # Fallback: try direct listing
-        if not accounts:
-            for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=f"{provider_folder}/", Delimiter='/'):
-                for prefix in page.get('CommonPrefixes', []):
-                    subfolder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
-                    if subfolder and subfolder != 'bills':
-                        accounts.append({
-                            'account_id': subfolder,
-                            'prefix': f"{provider_folder}/{subfolder}/"
-                        })
+        if provider_folder == _UNLINKED_SENTINEL:
+            # Flat root-level account folders
+            for folder in _list_unlinked_account_folders():
+                accounts.append({
+                    'account_id': folder,
+                    'prefix': f"{folder}/"
+                })
+            provider_name = "Unlinked Accounts"
+        else:
+            bills_prefix = f"{provider_folder}/bills/{provider_name}/"
+            try:
+                for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=bills_prefix, Delimiter='/'):
+                    for prefix in page.get('CommonPrefixes', []):
+                        account_folder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
+                        if account_folder:
+                            accounts.append({
+                                'account_id': account_folder,
+                                'prefix': f"{bills_prefix}{account_folder}/"
+                            })
+            except Exception:
+                pass
+
+            # Fallback: try direct listing
+            if not accounts:
+                for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=f"{provider_folder}/", Delimiter='/'):
+                    for prefix in page.get('CommonPrefixes', []):
+                        subfolder = prefix.get('Prefix', '').rstrip('/').split('/')[-1]
+                        if subfolder and subfolder != 'bills':
+                            accounts.append({
+                                'account_id': subfolder,
+                                'prefix': f"{provider_folder}/{subfolder}/"
+                            })
 
         # Now get all PDFs from all accounts
         all_pdfs = []
