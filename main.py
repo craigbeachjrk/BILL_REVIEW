@@ -30644,7 +30644,7 @@ def api_ai_review_analyze(pdf_id: str, date: str = None, use_gemini: bool = True
             category = note.get("category", "")
 
             # Simple flag for warning/issue categories
-            if category in ("common_issue", "warning", "gotcha"):
+            if category in ("common_issues", "common_issue", "warning", "gotchas", "gotcha", "special_rules"):
                 knowledge_flags.append(f"[{category}] {note.get('content', '')[:100]}")
 
         # 7. Determine auto-pass eligibility
