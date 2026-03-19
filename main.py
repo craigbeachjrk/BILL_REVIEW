@@ -4274,7 +4274,7 @@ def _init_gemini():
 
         # Use first available key
         genai.configure(api_key=api_keys[0])
-        _gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+        _gemini_model = genai.GenerativeModel("gemini-2.5-flash")
         print(f"[GEMINI] Initialized successfully with key ending ...{api_keys[0][-4:]}")
         return True
     except Exception as e:
