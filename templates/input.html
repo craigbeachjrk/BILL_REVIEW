@@ -209,8 +209,8 @@
     .badge-trash{background:#f3f4f6;color:#374151}
     .badge-region{background:#f1f5f9;color:#475569}
     .badge-unlinked{background:#fef3c7;color:#92400e}
-    .scraper-row .meta-count{min-width:70px;text-align:right;color:#64748b;font-size:11px}
-    .scraper-row .meta-latest{min-width:90px;text-align:right;color:#64748b;font-size:11px}
+    .scraper-row .meta-count{min-width:80px;text-align:right;color:#64748b;font-size:11px;margin-left:12px;flex-shrink:0}
+    .scraper-row .meta-latest{min-width:110px;text-align:right;color:#64748b;font-size:11px;margin-left:12px;flex-shrink:0}
     .scraper-header-row{display:flex;align-items:center;padding:8px 16px;background:#f8fafc;border-bottom:2px solid #e5e7eb;font-weight:600;font-size:11px;text-transform:uppercase;color:#64748b}
     .scraper-header-row span{cursor:pointer}
     .scraper-header-row span:hover{color:#0ea5e9}
@@ -221,6 +221,8 @@
     .scraper-header-row .meta-size{min-width:70px}
     .scraper-header-row .meta-date{min-width:130px}
     .scraper-header-row .meta-svc{min-width:90px}
+    .scraper-header-row .meta-count{min-width:80px;margin-left:12px;text-align:right;flex-shrink:0}
+    .scraper-header-row .meta-latest{min-width:110px;margin-left:12px;text-align:right;flex-shrink:0}
     .scraper-footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;background:#f8fafc}
     .scraper-selected-count{font-size:12px;color:#64748b;text-transform:uppercase}
     .scraper-actions{display:flex;gap:8px}
@@ -361,6 +363,80 @@
 
     let allPdfsData = []; // Store for sorting
     let currentSort = { field: 'date', dir: 'desc' };
+    let allProvidersData = []; // Store for provider sorting
+    let providerSort = { field: 'name', dir: 'asc' };
+
+    function formatDate(isoStr) {
+      if (!isoStr) return '';
+      // Handle "2026-02-04" or "2026-02-04T00:00:00.000Z"
+      const d = new Date(isoStr);
+      if (isNaN(d)) return isoStr;
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+    }
+
+    function renderProviders() {
+      const sorted = [...allProvidersData].sort((a, b) => {
+        let va, vb;
+        if (providerSort.field === 'name') { va = a.name || ''; vb = b.name || ''; }
+        else if (providerSort.field === 'accounts') { va = a.account_count || 0; vb = b.account_count || 0; }
+        else if (providerSort.field === 'bills') { va = a.statement_count || 0; vb = b.statement_count || 0; }
+        else if (providerSort.field === 'latest') { va = a.latest_statement || ''; vb = b.latest_statement || ''; }
+        else if (providerSort.field === 'type') { va = a.utility_type || ''; vb = b.utility_type || ''; }
+        else if (providerSort.field === 'region') { va = a.service_region || ''; vb = b.service_region || ''; }
+        else { va = a.name || ''; vb = b.name || ''; }
+        let cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return providerSort.dir === 'desc' ? -cmp : cmp;
+      });
+
+      const arrow = (f) => providerSort.field === f ? (providerSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+      const totalBills = sorted.reduce((s, p) => s + (p.statement_count || 0), 0);
+      const totalAccts = sorted.reduce((s, p) => s + (p.account_count || 0), 0);
+
+      let html = '<div class="scraper-toolbar">';
+      html += `<input type="text" id="providerSearch" placeholder="FILTER ${sorted.length} PROVIDERS, ${totalAccts} ACCOUNTS, ${totalBills} BILLS..." oninput="filterList()">`;
+      html += '</div>';
+      html += '<div class="scraper-header-row">';
+      html += '<span class="icon"></span>';
+      html += `<span class="name" onclick="sortProviders('name')">PROVIDER${arrow('name')}</span>`;
+      html += `<span class="meta-count" onclick="sortProviders('type')">TYPE${arrow('type')}</span>`;
+      html += `<span class="meta-count" onclick="sortProviders('region')">REGION${arrow('region')}</span>`;
+      html += `<span class="meta-count" onclick="sortProviders('accounts')">ACCOUNTS${arrow('accounts')}</span>`;
+      html += `<span class="meta-count" onclick="sortProviders('bills')">BILLS${arrow('bills')}</span>`;
+      html += `<span class="meta-latest" onclick="sortProviders('latest')">LATEST BILL${arrow('latest')}</span>`;
+      html += '</div>';
+      html += '<div class="scraper-list" id="itemList">';
+      for (const p of sorted) {
+        const utilBadge = p.utility_type ? `<span class="badge badge-${escapeAttr(p.utility_type)}">${escapeHtml(p.utility_type)}</span>` : '';
+        const statusBadge = p.status === 'unlinked' ? '<span class="badge badge-unlinked">FLAT FOLDERS</span>' : '';
+        const acctCount = p.account_count || '';
+        const stmtCount = p.statement_count || '';
+        const latest = formatDate(p.latest_statement);
+        const utilType = p.utility_type || '';
+        const region = p.service_region || '';
+        html += `<div class="scraper-row" data-name="${escapeAttr(p.name.toLowerCase() + ' ' + utilType + ' ' + region)}" onclick="loadAccounts('${escapeAttr(p.folder)}', '${escapeAttr(p.name)}')">
+          <span class="icon">📁</span>
+          <span class="name">${escapeHtml(p.name)}${utilBadge}${statusBadge}</span>
+          <span class="meta-count">${escapeHtml(utilType)}</span>
+          <span class="meta-count">${escapeHtml(region)}</span>
+          <span class="meta-count">${acctCount}</span>
+          <span class="meta-count">${stmtCount}</span>
+          <span class="meta-latest">${latest}</span>
+        </div>`;
+      }
+      html += '</div>';
+      document.getElementById('scraperContent').innerHTML = html;
+    }
+
+    function sortProviders(field) {
+      if (providerSort.field === field) {
+        providerSort.dir = providerSort.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        providerSort.field = field;
+        providerSort.dir = (field === 'bills' || field === 'accounts' || field === 'latest') ? 'desc' : 'asc';
+      }
+      renderProviders();
+    }
 
     async function loadProviders() {
       scraperState.currentProvider = null;
@@ -382,36 +458,10 @@
           return;
         }
 
-        // Sort by name
-        providers.sort((a,b) => a.name.localeCompare(b.name));
-
-        let html = '<div class="scraper-toolbar"><input type="text" id="providerSearch" placeholder="FILTER..." oninput="filterList()"></div>';
-        html += '<div class="scraper-header-row">';
-        html += '<span class="icon"></span>';
-        html += '<span class="name">PROVIDER</span>';
-        html += '<span class="meta-count">ACCOUNTS</span>';
-        html += '<span class="meta-count">BILLS</span>';
-        html += '<span class="meta-latest">LATEST BILL</span>';
-        html += '</div>';
-        html += '<div class="scraper-list" id="itemList">';
-        for (const p of providers) {
-          const utilBadge = p.utility_type ? `<span class="badge badge-${escapeAttr(p.utility_type)}">${escapeHtml(p.utility_type)}</span>` : '';
-          const regionBadge = p.service_region ? `<span class="badge badge-region">${escapeHtml(p.service_region)}</span>` : '';
-          const statusBadge = p.status === 'unlinked' ? '<span class="badge badge-unlinked">FLAT FOLDERS</span>' : '';
-          const acctCount = p.account_count || '';
-          const stmtCount = p.statement_count || '';
-          const latest = p.latest_statement || '';
-          const noApi = (!p.has_api && p.status !== 'unlinked') ? '<span class="flag">NO API DATA</span>' : '';
-          html += `<div class="scraper-row" data-name="${escapeAttr(p.name.toLowerCase() + ' ' + (p.utility_type||'') + ' ' + (p.service_region||''))}" onclick="loadAccounts('${escapeAttr(p.folder)}', '${escapeAttr(p.name)}')">
-            <span class="icon">📁</span>
-            <span class="name">${escapeHtml(p.name)}${utilBadge}${regionBadge}${statusBadge}${noApi}</span>
-            <span class="meta-count">${acctCount}</span>
-            <span class="meta-count">${stmtCount}</span>
-            <span class="meta-latest">${escapeHtml(latest)}</span>
-          </div>`;
-        }
-        html += '</div>';
-        document.getElementById('scraperContent').innerHTML = html;
+        // Store for sorting
+        allProvidersData = data.providers || [];
+        providerSort = { field: 'name', dir: 'asc' };
+        renderProviders();
       } catch (e) {
         document.getElementById('scraperContent').innerHTML = `<div class="scraper-loading" style="color:#dc2626">ERROR: ${escapeHtml(e.message)}</div>`;
       }
