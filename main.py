@@ -3869,7 +3869,6 @@ def api_scraper_providers(user: str = Depends(require_user)):
     try:
         # Build provider list from API integrations (enriched with metadata)
         integrations = _fetch_scraper_integrations()
-        integ_by_id = {i["id"]: i for i in integrations if i.get("id")}
 
         # Also scan S3 for any folders not in the API (belt-and-suspenders)
         paginator = s3.get_paginator('list_objects_v2')
@@ -3877,7 +3876,7 @@ def api_scraper_providers(user: str = Depends(require_user)):
         for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Delimiter='/'):
             for prefix in page.get('CommonPrefixes', []):
                 p = prefix.get('Prefix', '').rstrip('/')
-                if p and p not in ('traces', 'unknown'):
+                if p and p not in _SCRAPER_SKIP_FOLDERS:
                     s3_folders.add(p)
 
         providers = []
@@ -4133,18 +4132,20 @@ def api_scraper_all_pdfs(provider_folder: str, user: str = Depends(require_user)
                                 'prefix': f"{provider_folder}/{subfolder}/"
                             })
 
-        # Now get all PDFs from all accounts
-        all_pdfs = []
-        for acct in accounts:
+        # Now get all PDFs from all accounts (parallel for performance)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _list_acct_pdfs(acct):
+            pdfs = []
             try:
-                for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=acct['prefix']):
+                for page in s3.get_paginator('list_objects_v2').paginate(Bucket=SCRAPER_BUCKET, Prefix=acct['prefix']):
                     for obj in page.get('Contents', []):
                         key = obj.get('Key', '')
                         if key.lower().endswith('.pdf'):
                             filename = key.split('/')[-1]
                             size = obj.get('Size', 0)
                             last_mod = obj.get('LastModified')
-                            all_pdfs.append({
+                            pdfs.append({
                                 'key': key,
                                 'filename': filename,
                                 'account_id': acct['account_id'],
@@ -4154,7 +4155,14 @@ def api_scraper_all_pdfs(provider_folder: str, user: str = Depends(require_user)
                                 'last_modified_human': last_mod.strftime('%b %d, %Y %I:%M %p') if last_mod else ''
                             })
             except Exception:
-                continue
+                pass
+            return pdfs
+
+        all_pdfs = []
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [executor.submit(_list_acct_pdfs, a) for a in accounts]
+            for f in as_completed(futures):
+                all_pdfs.extend(f.result())
 
         # Sort by last modified (newest first)
         all_pdfs.sort(key=lambda x: x.get('last_modified', ''), reverse=True)
@@ -4247,10 +4255,9 @@ _gemini_model = None
 def _init_gemini():
     """Initialize Gemini API with key from Secrets Manager."""
     global _gemini_configured, _gemini_model
-    if _gemini_configured:
-        return _gemini_model is not None
+    if _gemini_configured and _gemini_model is not None:
+        return True
 
-    _gemini_configured = True
     try:
         # Get API key from Secrets Manager
         sm = boto3.client('secretsmanager', region_name=AWS_REGION)
@@ -4275,6 +4282,7 @@ def _init_gemini():
         # Use first available key
         genai.configure(api_key=api_keys[0])
         _gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+        _gemini_configured = True
         print(f"[GEMINI] Initialized successfully with key ending ...{api_keys[0][-4:]}")
         return True
     except Exception as e:
