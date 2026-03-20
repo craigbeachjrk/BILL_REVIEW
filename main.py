@@ -2532,6 +2532,9 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
         sel = list(dict.fromkeys(k.strip() for k in (keys or '').split('|||') if k.strip()))
         if not sel:
             return JSONResponse({"error": "no_keys"}, status_code=400)
+        # Validate all S3 keys before processing
+        for key in sel:
+            _require_valid_s3_key(key, operation="post_to_entrata")
         print(f"[POST] user={user}, keys={len(sel)}, vendor_overrides={vendor_overrides!r}")
         # Use cached vendor data to avoid S3 read on every POST
         _vc = _POST_HELPER_CACHE.get("vendor_cache")
@@ -2716,10 +2719,11 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
                 pm_arg = None
                 if post_month and isinstance(post_month, str) and '/' in post_month:
                     # Convert MM/YYYY -> pseudo date as first of month for parser
-                    try:
-                        mm, yyyy = post_month.split('/')
-                        pm_arg = f"{yyyy}-{mm}-01"
-                    except Exception:
+                    parts = post_month.split('/')
+                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                        pm_arg = f"{parts[1]}-{parts[0]}-01"
+                    else:
+                        print(f"[POST] WARNING: Malformed post_month '{post_month}', ignoring")
                         pm_arg = None
                 if not pm_arg and post_month_date:
                     pm_arg = post_month_date
@@ -9838,16 +9842,14 @@ def api_workflow(request: Request, user: str = Depends(require_user)):
 _WORKFLOW_TRACKER_LOCK = threading.Lock()
 
 
-_TRACKER_REBUILDING = False  # simple flag to prevent concurrent rebuilds
+_TRACKER_REBUILD_LOCK = threading.Lock()
 
 
 def _bg_rebuild_tracker():
     """Rebuild completion tracker in the background (never blocks a request)."""
-    global _TRACKER_REBUILDING
-    if _TRACKER_REBUILDING:
+    if not _TRACKER_REBUILD_LOCK.acquire(blocking=False):
         print("[COMPLETION TRACKER] Rebuild already in progress, skipping")
         return
-    _TRACKER_REBUILDING = True
     try:
         data = _compute_workflow_tracker()
         _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
@@ -9856,7 +9858,7 @@ def _bg_rebuild_tracker():
     except Exception as e:
         print(f"[COMPLETION TRACKER] Background rebuild failed: {e}")
     finally:
-        _TRACKER_REBUILDING = False
+        _TRACKER_REBUILD_LOCK.release()
 
 
 def _persist_completion_tracker_to_s3(data: dict):
@@ -9907,9 +9909,13 @@ def _load_or_build_bill_index(today, months_list) -> dict:
         obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY)
         payload = json.loads(_gzip.decompress(obj["Body"].read()))
         bills_found = {}
+        _skipped = 0
         for k_str, months_data in payload.get("index", {}).items():
             parts = k_str.split("|", 1)
-            if len(parts) == 2:
+            if len(parts) != 2:
+                _skipped += 1
+                continue
+            if True:
                 bills_found[tuple(parts)] = {}
                 for m, info in months_data.items():
                     bd = None
@@ -9921,6 +9927,8 @@ def _load_or_build_bill_index(today, months_list) -> dict:
                         "service_days": info.get("service_days", 0),
                     }
         built_at = payload.get("built_at", "unknown")
+        if _skipped:
+            print(f"[BILL INDEX] WARNING: Skipped {_skipped} malformed cache entries")
         print(f"[BILL INDEX] Loaded from S3: {len(bills_found)} accounts (built {built_at})")
         return bills_found
     except Exception as e:
@@ -9929,8 +9937,6 @@ def _load_or_build_bill_index(today, months_list) -> dict:
         else:
             print("[BILL INDEX] No cache found — invoke jrk-bill-index-builder Lambda")
         return {}
-
-    return bills_found
 
 
 def _compute_workflow_tracker(months_back: int = 6) -> dict:
@@ -10222,13 +10228,11 @@ def _workflow_tracker_refresh_loop():
     loaded = _load_completion_tracker_from_s3()
 
     # Initial compute (even if S3 loaded, get fresh data)
-    global _TRACKER_REBUILDING
     for attempt in range(3):
-        if _TRACKER_REBUILDING:
+        if not _TRACKER_REBUILD_LOCK.acquire(blocking=False):
             print("[WORKFLOW TRACKER BG] Another rebuild in progress, waiting...")
             time.sleep(30)
             continue
-        _TRACKER_REBUILDING = True
         try:
             data = _compute_workflow_tracker()
             _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
@@ -10240,7 +10244,7 @@ def _workflow_tracker_refresh_loop():
             if attempt < 2:
                 time.sleep(30)
         finally:
-            _TRACKER_REBUILDING = False
+            _TRACKER_REBUILD_LOCK.release()
     # Also refresh aging accounts (workflow data) on startup
     try:
         aging_data = _compute_workflow_data()
@@ -10253,10 +10257,9 @@ def _workflow_tracker_refresh_loop():
     _cycle = 0
     while True:
         time.sleep(_REFRESH_INTERVAL)
-        if _TRACKER_REBUILDING:
+        if not _TRACKER_REBUILD_LOCK.acquire(blocking=False):
             print("[WORKFLOW TRACKER BG] Rebuild in progress, skipping cycle")
             continue
-        _TRACKER_REBUILDING = True
         try:
             data = _compute_workflow_tracker()
             _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": data}
@@ -10265,7 +10268,7 @@ def _workflow_tracker_refresh_loop():
         except Exception as e:
             print(f"[WORKFLOW TRACKER BG] Refresh error (will retry): {e}")
         finally:
-            _TRACKER_REBUILDING = False
+            _TRACKER_REBUILD_LOCK.release()
 
         # Refresh aging accounts every ~15 cycles (60 min)
         _cycle += 1
@@ -25458,7 +25461,8 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                 unit_override_map = json.loads(unit_overrides)
                 if not isinstance(unit_override_map, dict):
                     unit_override_map = {}
-        except Exception:
+        except Exception as e:
+            print(f"[SUBMIT] WARNING: Failed to parse unit_overrides JSON: {e}")
             unit_override_map = {}
 
         # Parse confirmed warnings (for quarantine tracking)
@@ -25468,7 +25472,8 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                 confirmed_warning_types = json.loads(confirmed_warnings)
                 if not isinstance(confirmed_warning_types, list):
                     confirmed_warning_types = []
-        except Exception:
+        except Exception as e:
+            print(f"[SUBMIT] WARNING: Failed to parse confirmed_warnings JSON: {e}")
             confirmed_warning_types = []
 
         # load all rows for the day, map by __id__
