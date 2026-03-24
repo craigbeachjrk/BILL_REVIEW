@@ -1955,7 +1955,8 @@ function renderTracker() {
       const commentTag = skipDisplay ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fef3c7;color:#92400e;font-weight:600;margin-left:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${escapeHtml(skipDisplay)}">${escapeHtml(skipDisplay.length > 20 ? skipDisplay.substring(0, 20) + '...' : skipDisplay)}</span>` : '';
 
       const dblClick = IS_ADMIN ? ` ondblclick="event.stopPropagation();ct_removeAccount('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}',this)"` : '';
-      html += `<div class="account-item" title="${escapeHtml(fullLabel)}"${dblClick}>
+      const singleClick = ` onclick="window.open('/search?account=' + encodeURIComponent('${escapeJs(item.account_number)}'), '_blank')"`;
+      html += `<div class="account-item" title="${escapeHtml(fullLabel)}" style="cursor:pointer"${singleClick}${dblClick}>
         <div class="acct-info"><div class="acct-label">${fullLabel}${scraperTag}${commentTag}</div></div>
         <span class="month-badge ${item.status_label}" title="Expected bill period">${monthDisplay}</span>
         ${stageTag}
