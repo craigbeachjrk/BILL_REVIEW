@@ -2045,11 +2045,13 @@ async function ct_confirmSkip() {
   const comment = notes ? `[${reasonLabel}] ${notes}` : `[${reasonLabel}]`;
 
   const month = ct_skipMonth;
+  const account = ct_skipAccount;
+  const vendor = ct_skipVendor;
   ct_closeSkipModal();
   try {
     const fd = new FormData();
-    fd.append('account_number', ct_skipAccount);
-    fd.append('vendor_name', ct_skipVendor);
+    fd.append('account_number', account);
+    fd.append('vendor_name', vendor);
     fd.append('month', month);
     fd.append('reason', comment);
     const resp = await fetch('/api/config/account-skip-reason', { method: 'POST', body: fd });
