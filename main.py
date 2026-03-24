@@ -22846,6 +22846,9 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
     pdf_property_cache: Dict[str, str] = {}
     # Track accounts per pdf_id to detect multi-account PDFs
     pdf_accounts: Dict[str, set] = {}
+    # Track the canonical (first-seen) account per pdf_id so all rows of the same PDF
+    # collapse into one list entry — matching the account shown on the /review page (rows[0])
+    pdf_canonical_account: Dict[str, str] = {}
     for r in rows:
         # Fall back from Account Number to Line Item Account Number for consistency
         # Clean the account number so it displays consistently with what gets written to Stage 6 and Entrata
@@ -22890,7 +22893,12 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
             # Cache the vendor for subsequent rows from the same PDF
             if pdf_id != "(unknown)" and vendor and vendor != "(unknown)":
                 pdf_vendor_cache[pdf_id] = vendor
-        key = (vendor, account_no, pdf_id)
+        # Use the canonical (first-seen) account for this pdf_id so all rows from the same
+        # PDF collapse into one list entry, matching what /review shows (rows[0] account)
+        if pdf_id not in pdf_canonical_account and pdf_id != "(unknown)":
+            pdf_canonical_account[pdf_id] = account_no
+        display_account = pdf_canonical_account.get(pdf_id, account_no)
+        key = (vendor, display_account, pdf_id)
         # Track accounts per pdf_id for multi-account detection
         pdf_accounts.setdefault(pdf_id, set()).add(account_no)
         # Extract property name for display — prefer header draft override, then cached, then raw
@@ -24928,6 +24936,8 @@ def api_invoices_status(date: str, user: str = Depends(require_user), response: 
 
     inv: Dict[tuple, Dict[str, Any]] = {}
     group_ids: Dict[tuple, List[str]] = {}
+    # Track canonical (first-seen) account per pdf_id for consistent grouping with invoices_view
+    status_canonical_account: Dict[str, str] = {}
     for r in rows:
         pdf_id = pdf_id_from_key(r.get("__s3_key__", "")) if r.get("__s3_key__") else "(unknown)"
         hdr = header_by_pdf.get(pdf_id, {})
@@ -24950,10 +24960,15 @@ def api_invoices_status(date: str, user: str = Depends(require_user), response: 
             or str(r.get("PropertyName", ""))
             or ""
         )
-        key = (vendor, account_no, pdf_id)
+        # Use canonical (first-seen) account per pdf_id so multi-account PDFs collapse into one
+        # entry that matches the account shown on the /review page (rows[0] account)
+        if pdf_id not in status_canonical_account and pdf_id != "(unknown)":
+            status_canonical_account[pdf_id] = account_no
+        display_account = status_canonical_account.get(pdf_id, account_no)
+        key = (vendor, display_account, pdf_id)
         g = inv.setdefault(key, {
             "vendor": vendor,
-            "account": account_no,
+            "account": display_account,
             "pdf_id": pdf_id,
             "invoice": invoice_no,
             "count": 0,
