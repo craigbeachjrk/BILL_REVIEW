@@ -1030,26 +1030,39 @@ def _build_analytics_cache(meter_data: dict) -> dict:
         service_start = entry["service_start"]
         service_end = entry["service_end"]
 
+        start_dt = _parse_date(service_start)
         end_dt = _parse_date(service_end)
         if not end_dt:
             continue
-        month_key = end_dt.strftime("%Y-%m")
+        if not start_dt:
+            start_dt = end_dt
 
-        start_dt = _parse_date(service_start)
-        days = (end_dt - start_dt).days if start_dt and end_dt else 0
-        if days <= 0:
-            days = 1
+        # Prorate cost and consumption across each day in the service period,
+        # then accumulate into the month that each day falls in.
+        total_days = (end_dt - start_dt).days
+        if total_days <= 0:
+            total_days = 1
+        daily_cost = amount / total_days
+        daily_consumption = consumption / total_days
 
-        bucket = meter_monthly[meter_id].get(month_key)
-        if not bucket:
-            bucket = {"consumption": 0.0, "cost": 0.0, "days": 0, "_day_sum": 0}
-            meter_monthly[meter_id][month_key] = bucket
-        bucket["consumption"] += consumption
-        bucket["cost"] += amount
-        # Track days as max across readings in same month (they overlap)
-        if days > bucket["days"]:
-            bucket["days"] = days
-        bucket["_day_sum"] += days
+        from datetime import timedelta as _td
+        for day_offset in range(total_days):
+            day_dt = start_dt + _td(days=day_offset)
+            month_key = day_dt.strftime("%Y-%m")
+            bucket = meter_monthly[meter_id].get(month_key)
+            if not bucket:
+                bucket = {"consumption": 0.0, "cost": 0.0, "days": 0, "_day_sum": 0}
+                meter_monthly[meter_id][month_key] = bucket
+            bucket["consumption"] += daily_consumption
+            bucket["cost"] += daily_cost
+            bucket["_day_sum"] += 1
+        # Track total service days for rate calc (use max across readings)
+        for day_offset in range(total_days):
+            day_dt = start_dt + _td(days=day_offset)
+            mk = day_dt.strftime("%Y-%m")
+            b = meter_monthly[meter_id].get(mk)
+            if b and total_days > b["days"]:
+                b["days"] = total_days
 
     # Finalize rate / daily_rate per bucket
     for mid, months in meter_monthly.items():
