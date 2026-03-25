@@ -11800,7 +11800,7 @@ def api_pipeline_queue(user: str = Depends(require_user)):
 def api_pipeline_bill(pdf_id: str, user: str = Depends(require_user)):
     """Full lifecycle timeline for one bill. Query by pdf_id (SHA1 hash)."""
     try:
-        resp = _ddb_client.query(
+        resp = ddb.query(
             TableName=PIPELINE_TRACKER_TABLE,
             KeyConditionExpression="pk = :pk",
             ExpressionAttributeValues={":pk": {"S": f"BILL#{pdf_id}"}},
@@ -11893,7 +11893,7 @@ def api_pipeline_stats(hours: int = 24, user: str = Depends(require_user)):
         by_hour = defaultdict(lambda: defaultdict(int))
         for day in [yesterday, today]:
             try:
-                resp = _ddb_client.query(
+                resp = ddb.query(
                     TableName=PIPELINE_TRACKER_TABLE,
                     IndexName="gsi-date",
                     KeyConditionExpression="event_date = :d",
@@ -26398,7 +26398,7 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                 # Pipeline tracker: SUBMITTED event
                 s3_key = first.get("__s3_key__", "")
                 if s3_key:
-                    _pipeline_track(s3_key, "SUBMITTED", "S6", {"user": user, "line_count": len(merged_with_meta), "vendor": str(first.get("EnrichedVendorName", ""))})
+                    _pipeline_track(s3_key, "SUBMITTED", f"app:submit:{user}", "S6", {"line_count": len(merged_with_meta), "vendor": str(first.get("EnrichedVendorName", ""))})
 
                 # Append extra lines to Stage 4 if needed
                 if extra_lines and first.get("__s3_key__"):

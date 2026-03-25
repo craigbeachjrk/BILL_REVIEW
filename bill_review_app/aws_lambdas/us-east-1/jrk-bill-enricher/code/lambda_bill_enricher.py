@@ -951,14 +951,19 @@ def lambda_handler(event, context):
         if not key.startswith(INPUT_PREFIX):
             continue
         _track(key, "ENRICHING", "S3")
-        obj = s3.get_object(Bucket=bucket, Key=key)
-        body = obj["Body"].read().decode("utf-8", errors="ignore")
-        lines = [ln for ln in body.splitlines() if ln.strip()]
-        enriched_lines = _enrich_lines(lines)
-        # Write to stage 4 with same partitioning and file stem
-        stem = key.split("/", 1)[-1]  # drop prefix
-        out_key = f"{OUTPUT_PREFIX}{stem}"
-        s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
-        _track(key, "ENRICHED", "S4", {"out_key": out_key, "line_count": len(enriched_lines)})
-        print(json.dumps({"message": "Enriched file written", "out_key": out_key, "lines": len(enriched_lines)}))
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=key)
+            body = obj["Body"].read().decode("utf-8", errors="ignore")
+            lines = [ln for ln in body.splitlines() if ln.strip()]
+            enriched_lines = _enrich_lines(lines)
+            # Write to stage 4 with same partitioning and file stem
+            stem = key.split("/", 1)[-1]  # drop prefix
+            out_key = f"{OUTPUT_PREFIX}{stem}"
+            s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
+            _track(key, "ENRICHED", "S4", {"out_key": out_key, "line_count": len(enriched_lines)})
+            print(json.dumps({"message": "Enriched file written", "out_key": out_key, "lines": len(enriched_lines)}))
+        except Exception as enrich_err:
+            _track(key, "FAILED", "S3", {"error": str(enrich_err)[:200]})
+            print(json.dumps({"error": "enrichment_failed", "key": key, "message": str(enrich_err)}))
+            raise
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

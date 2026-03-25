@@ -1010,7 +1010,7 @@ def lambda_handler(event, context):
                 Body=json.dumps(result_data, ensure_ascii=False).encode('utf-8'),
                 ContentType='application/json'
             )
-            _track(key, "PARSED", "S1_Lg", {"type": "chunk", "chunk_num": chunk_num, "rows": len(rows), "job_id": job_id})
+            _track(key, "FAILED" if chunk_failed else "PARSED", "S1_Lg", {"type": "chunk", "chunk_num": chunk_num, "rows": len(rows), "job_id": job_id, "failed": chunk_failed})
             print(json.dumps({"message": "Chunk result saved", "result_key": result_key, "rows": len(rows), "failed": chunk_failed}))
             # Write timing sidecar
             timing["totalMs"] = int((time.time() - t0) * 1000)
