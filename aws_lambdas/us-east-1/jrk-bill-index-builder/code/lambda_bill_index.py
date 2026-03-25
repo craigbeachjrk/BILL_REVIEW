@@ -234,21 +234,22 @@ def _build_bill_index():
                 return
             norm_acct = _normalize_account_number(acct)
             service_days = (pe - ps).days if ps and pe and pe > ps else 0
-            bill_months = []
-            if ps and pe and ps <= pe:
-                cur = dt.date(ps.year, ps.month, 1)
-                end_m = dt.date(pe.year, pe.month, 1)
-                while cur <= end_m:
-                    bill_months.append(f"{cur.month:02d}/{cur.year}")
-                    cur = dt.date(cur.year + 1, 1, 1) if cur.month == 12 else dt.date(cur.year, cur.month + 1, 1)
-            if not bill_months and bill_date:
-                bill_months = [f"{bill_date.month:02d}/{bill_date.year}"]
+
+            # Map bill to ONE month using: bill_date -> service_end -> service_start
+            ref_date = bill_date or pe or ps
+            if not ref_date:
+                return  # no usable date at all
+            bill_month = f"{ref_date.month:02d}/{ref_date.year}"
+
             key = (pid, norm_acct)
             if key not in bills_found:
                 bills_found[key] = {}
-            for bm in bill_months:
-                if bm not in bills_found[key]:
-                    bills_found[key][bm] = {"stage": stage_label, "bill_date": bill_date, "service_days": service_days}
+            if bill_month not in bills_found[key]:
+                bills_found[key][bill_month] = {
+                    "stage": stage_label, "bill_date": bill_date,
+                    "service_days": service_days,
+                    "service_start": ps, "service_end": pe,
+                }
 
         for stage_keys_all, stage_label in all_keys_by_stage:
             stage_new = [k for k in stage_keys_all if k in new_keys]
@@ -278,6 +279,8 @@ def _build_bill_index():
                 "stage": info.get("stage"),
                 "bill_date": info["bill_date"].isoformat() if info.get("bill_date") else None,
                 "service_days": info.get("service_days", 0),
+                "service_start": info["service_start"].isoformat() if info.get("service_start") else None,
+                "service_end": info["service_end"].isoformat() if info.get("service_end") else None,
             }
     payload = json.dumps({
         "index": serializable_index,

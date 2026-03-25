@@ -10257,6 +10257,8 @@ def _load_or_build_bill_index(today, months_list) -> dict:
                         "stage": info.get("stage"),
                         "bill_date": bd,
                         "service_days": info.get("service_days", 0),
+                        "service_start": info.get("service_start", ""),
+                        "service_end": info.get("service_end", ""),
                     }
         built_at = payload.get("built_at", "unknown")
         if _skipped:
@@ -10469,6 +10471,15 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                         month_skip = skip_reasons[cm[0]]
                         break
 
+            # Extract service period from bill info for hover display
+            svc_start_str = ""
+            svc_end_str = ""
+            svc_days_display = 0
+            if bill_info:
+                svc_start_str = str(bill_info.get("service_start") or "")
+                svc_end_str = str(bill_info.get("service_end") or "")
+                svc_days_display = bill_info.get("service_days", 0)
+
             property_data[pid]["items"].append({
                 "vendor_name": vendor_name,
                 "account_number": acct,
@@ -10482,6 +10493,9 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                 "pipeline_stage": pipeline_stage,
                 "comment": comment,
                 "skip_reason": month_skip,
+                "service_start": svc_start_str,
+                "service_end": svc_end_str,
+                "service_days": svc_days_display,
             })
 
             i += months_per_cycle

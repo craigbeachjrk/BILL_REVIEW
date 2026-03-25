@@ -1987,7 +1987,11 @@ function renderTracker() {
       }
       const stageTag = item.pipeline_stage ? `<span class="stage-tag">${item.pipeline_stage}</span>` : '';
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
-      const fullLabel = `${item.vendor_name || 'Unknown'} - ${item.account_number}`;
+      // Build hover tooltip with service period info
+      const svcInfo = item.service_start && item.service_end
+        ? `\nService: ${item.service_start} to ${item.service_end} (${item.service_days || '?'}d)`
+        : item.service_days ? `\nService period: ${item.service_days}d` : '';
+      const fullLabel = `${item.vendor_name || 'Unknown'} - ${item.account_number}${svcInfo}`;
       const skipDisplay = item.skip_reason || '';
       // Extract just the [Reason] part for the badge, show full string (with user/date) in tooltip
       const skipBadgeText = skipDisplay.match(/^\[(.+?)\]/)?.[1] || (skipDisplay.length > 20 ? skipDisplay.substring(0, 20) + '...' : skipDisplay);
