@@ -4471,6 +4471,71 @@ Look for phrases like "Service Period", "Bill Period", "From/To dates", "Service
         return {'ok': False, 'error': str(e)}
 
 
+@app.get("/api/scraper/pdfs-by-account")
+def api_scraper_pdfs_by_account(account_number: str, user: str = Depends(require_user)):
+    """List available PDFs in the scraper bucket for a given account number.
+    Matches by normalised account number against all entries in _scraper_account_map."""
+    _load_scraper_mappings()
+    import re as _re
+
+    norm_query = _re.sub(r'[^A-Za-z0-9]', '', account_number).lower()
+    if not norm_query:
+        return JSONResponse({"error": "account_number required"}, status_code=400)
+
+    try:
+        # Find all matching entries in scraper account map
+        matches = []
+        for info in _scraper_account_map.values():
+            acct_id = str(info.get("account_id") or "").strip()
+            if not acct_id:
+                continue
+            norm_acct = _re.sub(r'[^A-Za-z0-9]', '', acct_id).lower()
+            if norm_acct == norm_query or norm_query in norm_acct or norm_acct in norm_query:
+                matches.append(info)
+
+        if not matches:
+            return {"ok": True, "pdfs": [], "message": "No scraper account found for this account number"}
+
+        all_pdfs = []
+        paginator = s3.get_paginator('list_objects_v2')
+
+        for info in matches:
+            integration_id = str(info.get("integration_id") or "").strip()
+            provider = str(info.get("provider") or "").strip()
+            acct_id = str(info.get("account_id") or "").strip()
+
+            if integration_id and provider:
+                prefix = f"{integration_id}/bills/{provider}/{acct_id}/"
+            elif acct_id:
+                prefix = f"{acct_id}/"
+            else:
+                continue
+
+            try:
+                for page in paginator.paginate(Bucket=SCRAPER_BUCKET, Prefix=prefix):
+                    for obj in page.get('Contents', []):
+                        key = obj.get('Key', '')
+                        if key.lower().endswith('.pdf'):
+                            last_mod = obj.get('LastModified')
+                            size = obj.get('Size', 0)
+                            all_pdfs.append({
+                                'key': key,
+                                'filename': key.split('/')[-1],
+                                'size_kb': round(size / 1024, 1),
+                                'last_modified': last_mod.isoformat() if last_mod else '',
+                                'last_modified_human': last_mod.strftime('%b %d, %Y') if last_mod else '',
+                                'provider': provider,
+                                'account_id': acct_id,
+                            })
+            except Exception:
+                pass
+
+        all_pdfs.sort(key=lambda x: x.get('last_modified', ''), reverse=True)
+        return {"ok": True, "pdfs": all_pdfs}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/api/scraper/extract-dates")
 async def api_scraper_extract_dates(request: Request, user: str = Depends(require_user)):
     """Extract service dates from PDFs using Gemini AI. Results are cached."""
