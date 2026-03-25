@@ -10022,7 +10022,24 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
             }
 
         acct_bills = bills_found.get(acct_key, {})
-        months_per_cycle = max(1, round(days_between / 30))
+
+        # Auto-detect billing frequency from actual bill service periods.
+        # If real bills exist with service_days data, use the median to determine
+        # months_per_cycle instead of the default daysBetweenBills (which is 30).
+        # This correctly handles quarterly (90d), bimonthly (60d), etc.
+        _svc_days_list = [
+            b.get("service_days") for b in acct_bills.values()
+            if b.get("service_days") and b["service_days"] > 10
+        ]
+        if _svc_days_list:
+            # Use median to avoid outliers (e.g., a one-time short bill)
+            _svc_days_list.sort()
+            _median_svc = _svc_days_list[len(_svc_days_list) // 2]
+            effective_days_between = _median_svc
+        else:
+            effective_days_between = days_between
+
+        months_per_cycle = max(1, round(effective_days_between / 30))
 
         # Find earliest covered month in our display window as baseline.
         # Only generate entries starting from the first month we have a bill.
@@ -10079,20 +10096,20 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
 
             # Look for the most recent bill before this cycle across all known bills
             best_prev_date = None
-            best_prev_svc = days_between
+            best_prev_svc = effective_days_between
             for bm_str, bm_info in acct_bills.items():
                 if bm_str >= cycle_months[0][0]:
                     continue  # Skip current/future months
                 bd = bm_info.get("bill_date")
                 if bd and (best_prev_date is None or bd > best_prev_date):
                     best_prev_date = bd
-                    best_prev_svc = bm_info.get("service_days") or days_between
+                    best_prev_svc = bm_info.get("service_days") or effective_days_between
             if best_prev_date:
                 expected_by = best_prev_date + dt.timedelta(days=best_prev_svc)
 
             # Fallback: cycle_start + days_between (same as before)
             if not expected_by:
-                expected_by = cycle_start_date + dt.timedelta(days=days_between)
+                expected_by = cycle_start_date + dt.timedelta(days=effective_days_between)
             if has_bill:
                 status_label = "COMPLETE"
                 days_overdue = 0
