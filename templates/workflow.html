@@ -684,6 +684,7 @@
    SHARED STATE
    ============================================================ */
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+const CURRENT_USER = '{{ user }}';
 let trackerData = null;
 let activeStatus = null;
 let activeAp = null;
@@ -1988,7 +1989,9 @@ function renderTracker() {
       const scraperTag = item.in_scraper ? '<span class="scraper-tag">SCR</span>' : '';
       const fullLabel = `${item.vendor_name || 'Unknown'} - ${item.account_number}`;
       const skipDisplay = item.skip_reason || '';
-      const commentTag = skipDisplay ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fef3c7;color:#92400e;font-weight:600;margin-left:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${escapeHtml(skipDisplay)}">${escapeHtml(skipDisplay.length > 20 ? skipDisplay.substring(0, 20) + '...' : skipDisplay)}</span>` : '';
+      // Extract just the [Reason] part for the badge, show full string (with user/date) in tooltip
+      const skipBadgeText = skipDisplay.match(/^\[(.+?)\]/)?.[1] || (skipDisplay.length > 20 ? skipDisplay.substring(0, 20) + '...' : skipDisplay);
+      const commentTag = skipDisplay ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fef3c7;color:#92400e;font-weight:600;margin-left:4px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${escapeHtml(skipDisplay)}">${escapeHtml(skipBadgeText)}</span>` : '';
 
       const dblClick = IS_ADMIN ? ` ondblclick="event.stopPropagation();ct_removeAccount('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}',this)"` : '';
       const singleClick = ` onclick="window.open('/search?account=' + encodeURIComponent('${escapeJs(item.account_number)}'), '_blank')"`;
@@ -2014,16 +2017,26 @@ let ct_skipProperty = null;
 let ct_skipMonth = null;
 
 const CT_SKIP_REASONS = [
-  { code: 'entered_manually', label: 'Entered manually into the system' },
-  { code: 'wrong_service_period', label: 'Account ID service period is not correct' },
+  // ── Already handled ──
+  { code: 'entered_manually', label: 'Already entered manually' },
+  { code: 'already_in_system', label: 'Already in Entrata' },
+  // ── Account issues (admin action needed) ──
   { code: 'account_closed', label: 'Account is closed' },
-  { code: 'credit_balance', label: 'Credit balance' },
+  { code: 'wrong_identifier', label: 'Wrong identifier (invoice # used as account #)' },
+  { code: 'duplicate_account', label: 'Duplicate account (tracked elsewhere)' },
+  // ── Bill not available ──
   { code: 'bill_not_located', label: 'Bill not located' },
-  { code: 'vacant_account', label: 'Vacant account' },
-  { code: 'portal_down', label: 'Portal/website was down' },
   { code: 'not_available', label: 'Bill not yet available from provider' },
-  { code: 'vendor_issue', label: 'Vendor issue (wrong account, etc.)' },
+  { code: 'portal_down', label: 'Portal/website was down' },
+  // ── Financial ──
+  { code: 'credit_balance', label: 'Credit balance' },
+  { code: 'vacant_account', label: 'Vacant account' },
+  { code: 'zero_balance', label: 'Zero balance / no charges' },
+  // ── Timing ──
+  { code: 'wrong_service_period', label: 'Service period does not match' },
   { code: 'waiting_info', label: 'Waiting on information' },
+  // ── Other ──
+  { code: 'vendor_issue', label: 'Vendor issue' },
   { code: 'other', label: 'Other (see notes)' },
 ];
 
@@ -2077,9 +2090,12 @@ async function ct_confirmSkip() {
   const notes = document.getElementById('ct_skipNotes').value.trim();
   if (!reason) { showToast('Please select a reason', 'err'); return; }
 
-  // Build comment from reason label + month + optional notes
+  // Build comment: [Reason Label] notes — user@email (MM/DD/YY)
   const reasonLabel = CT_SKIP_REASONS.find(c => c.code === reason)?.label || reason;
-  const comment = notes ? `[${reasonLabel}] ${notes}` : `[${reasonLabel}]`;
+  const dateStr = new Date().toLocaleDateString('en-US', {month:'2-digit',day:'2-digit',year:'2-digit'});
+  const userShort = CURRENT_USER.split('@')[0];
+  const attribution = ` — ${userShort} (${dateStr})`;
+  const comment = notes ? `[${reasonLabel}] ${notes}${attribution}` : `[${reasonLabel}]${attribution}`;
 
   const month = ct_skipMonth;
   const account = ct_skipAccount;
