@@ -8295,6 +8295,337 @@ def workflow_manage_view(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse("workflow_manage.html", {"request": request, "user": user})
 
 
+# -------- Account Manager (Admin Tile) --------
+
+_SKIP_REASON_RE = re.compile(r'^\[(.+?)\]\s*(.*?)\s*—\s*(\S+)\s*\((\d{2}/\d{2}/\d{2})\)$')
+
+def _parse_skip_reason(raw: str) -> dict:
+    """Parse '[Reason] notes — user (MM/DD/YY)' into components."""
+    m = _SKIP_REASON_RE.match(raw)
+    if m:
+        return {"label": m.group(1), "notes": m.group(2).strip(), "user": m.group(3), "date": m.group(4)}
+    m2 = re.match(r'^\[(.+?)\]\s*(.*)', raw)
+    if m2:
+        return {"label": m2.group(1), "notes": m2.group(2).strip(), "user": "", "date": ""}
+    return {"label": "", "notes": raw, "user": "", "date": ""}
+
+
+@app.get("/account-manager", response_class=HTMLResponse)
+def account_manager_view(request: Request, user: str = Depends(require_user)):
+    """Account Manager page — skip reasons, renames, duplicates, closed accounts."""
+    if user not in ADMIN_USERS:
+        return templates.TemplateResponse("error.html", {"request": request, "user": user, "error": "Admin access required"}, status_code=403)
+    return templates.TemplateResponse("account_manager.html", {"request": request, "user": user})
+
+
+@app.get("/api/account-manager/skip-reasons")
+def api_acctmgr_skip_reasons(user: str = Depends(require_user)):
+    """Report of all skip reasons with parsed attribution."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    arr = _get_accounts_to_track()
+    items = []
+    for a in arr:
+        sr = a.get("skip_reasons") or {}
+        if not isinstance(sr, dict) or not sr:
+            continue
+        for month, raw in sr.items():
+            parsed = _parse_skip_reason(raw)
+            items.append({
+                "property_name": str(a.get("propertyName") or a.get("property_name") or ""),
+                "property_id": str(a.get("propertyId") or a.get("property_id") or ""),
+                "vendor_name": str(a.get("vendorName") or a.get("vendor_name") or ""),
+                "vendor_id": str(a.get("vendorId") or a.get("vendor_id") or ""),
+                "account_number": str(a.get("accountNumber") or a.get("account_number") or ""),
+                "month": month,
+                "reason_label": parsed["label"],
+                "notes": parsed["notes"],
+                "skip_user": parsed["user"],
+                "skip_date": parsed["date"],
+                "raw_reason": raw,
+            })
+    items.sort(key=lambda x: (x["property_name"], x["vendor_name"], x["month"]))
+    accts_with_skips = len({(i["property_id"], i["vendor_id"], i["account_number"]) for i in items})
+    return {"items": items, "total_accounts_with_skips": accts_with_skips, "total_skip_entries": len(items)}
+
+
+@app.post("/api/account-manager/rename-account")
+async def api_acctmgr_rename(request: Request, user: str = Depends(require_user)):
+    """Rename an account number. Merges if target already exists."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    try:
+        body = await request.json()
+        prop_id = str(body.get("property_id", "")).strip()
+        vendor_id = str(body.get("vendor_id", "")).strip()
+        old_acct = str(body.get("old_account_number", "")).strip()
+        new_acct = str(body.get("new_account_number", "")).strip()
+        if not prop_id or not old_acct or not new_acct:
+            return JSONResponse({"error": "property_id, old_account_number, new_account_number required"}, status_code=400)
+        if old_acct == new_acct:
+            return JSONResponse({"error": "Old and new account numbers are the same"}, status_code=400)
+
+        arr = _get_accounts_to_track()
+        # Find source(s)
+        sources = [a for a in arr if str(a.get("propertyId") or a.get("property_id") or "").strip() == prop_id
+                    and str(a.get("accountNumber") or a.get("account_number") or "").strip() == old_acct
+                    and (not vendor_id or str(a.get("vendorId") or a.get("vendor_id") or "").strip() == vendor_id)]
+        if not sources:
+            return JSONResponse({"error": f"Account {old_acct} not found for property {prop_id}"}, status_code=404)
+
+        # Check if target exists (for merge detection)
+        targets = [a for a in arr if str(a.get("propertyId") or a.get("property_id") or "").strip() == prop_id
+                    and str(a.get("accountNumber") or a.get("account_number") or "").strip() == new_acct
+                    and (not vendor_id or str(a.get("vendorId") or a.get("vendor_id") or "").strip() == vendor_id)]
+
+        merged = False
+        if targets:
+            # Merge: transfer skip_reasons + comment from source to target
+            target = targets[0]
+            for src in sources:
+                src_skips = src.get("skip_reasons") or {}
+                tgt_skips = target.get("skip_reasons") or {}
+                if not isinstance(tgt_skips, dict):
+                    tgt_skips = {}
+                for m, reason in src_skips.items():
+                    if m not in tgt_skips:
+                        tgt_skips[m] = reason
+                target["skip_reasons"] = tgt_skips
+                src_comment = str(src.get("comment") or "").strip()
+                tgt_comment = str(target.get("comment") or "").strip()
+                if src_comment and src_comment not in tgt_comment:
+                    target["comment"] = (tgt_comment + " | " + src_comment).strip(" |")
+                # Preserve tracking flags (keep True if either has it)
+                if src.get("is_tracked", True):
+                    target["is_tracked"] = True
+                if src.get("is_ubi", False):
+                    target["is_ubi"] = True
+                # Soft-delete source
+                src["is_tracked"] = False
+                src["is_ubi"] = False
+            merged = True
+        else:
+            # No conflict: just rename
+            for src in sources:
+                src["accountNumber"] = new_acct
+                if "account_number" in src:
+                    src["account_number"] = new_acct
+
+        if not _put_accounts_to_track(arr):
+            return JSONResponse({"error": "Failed to save"}, status_code=500)
+        _CACHE.pop(("accounts_to_track",), None)
+        _CACHE.pop(("workflow_tracker",), None)
+
+        vendor_name = str(sources[0].get("vendorName") or sources[0].get("vendor_name") or "")
+        prop_name = str(sources[0].get("propertyName") or sources[0].get("property_name") or "")
+        _record_audit_event("ACCOUNT_RENAME", user, {
+            "old_account": old_acct, "new_account": new_acct,
+            "property_id": prop_id, "property_name": prop_name,
+            "vendor_id": vendor_id, "vendor_name": vendor_name,
+            "merged": merged, "sources_count": len(sources),
+        })
+        return {"ok": True, "merged": merged, "old_account": old_acct, "new_account": new_acct}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "rename account")}, status_code=500)
+
+
+@app.get("/api/account-manager/rename-history")
+def api_acctmgr_rename_history(days: int = 90, user: str = Depends(require_user)):
+    """Audit trail of account renames."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    try:
+        cutoff = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%d")
+        resp = ddb.query(
+            TableName=CONFIG_TABLE,
+            KeyConditionExpression="pk = :pk AND sk > :cutoff",
+            ExpressionAttributeValues={":pk": {"S": "AUDIT_EVENT"}, ":cutoff": {"S": cutoff}},
+            ScanIndexForward=False,
+        )
+        items = []
+        for it in resp.get("Items", []):
+            evt_type = it.get("event_type", {}).get("S", "")
+            if evt_type != "ACCOUNT_RENAME":
+                continue
+            details = {}
+            try:
+                details = json.loads(it.get("details", {}).get("S", "{}"))
+            except Exception:
+                pass
+            items.append({
+                "timestamp": it.get("timestamp_utc", {}).get("S", ""),
+                "user": it.get("user", {}).get("S", ""),
+                "old_account": details.get("old_account", ""),
+                "new_account": details.get("new_account", ""),
+                "property_name": details.get("property_name", ""),
+                "vendor_name": details.get("vendor_name", ""),
+                "merged": details.get("merged", False),
+            })
+        return {"items": items}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "rename history")}, status_code=500)
+
+
+@app.get("/api/account-manager/duplicate-bills")
+def api_acctmgr_duplicate_bills(days: int = 90, user: str = Depends(require_user)):
+    """Detect bills posted more than once (same vendor+account+date+amount)."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    try:
+        from collections import defaultdict
+        cutoff = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat() + "Z"
+        # Paginate through POSTED_INVOICES
+        all_items = []
+        kwargs = {
+            "TableName": CONFIG_TABLE,
+            "KeyConditionExpression": "pk = :pk AND sk > :cutoff",
+            "ExpressionAttributeValues": {":pk": {"S": "POSTED_INVOICES"}, ":cutoff": {"S": cutoff}},
+        }
+        while True:
+            resp = ddb.query(**kwargs)
+            all_items.extend(resp.get("Items", []))
+            if "LastEvaluatedKey" not in resp:
+                break
+            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+        # Group by (vendor_id, account_number, invoice_date, invoice_total)
+        groups = defaultdict(list)
+        for it in all_items:
+            vid = it.get("vendor_id", {}).get("S", "")
+            acct = it.get("account_number", {}).get("S", "")
+            inv_date = it.get("invoice_date", {}).get("S", "")
+            total_str = it.get("invoice_total", {}).get("N", it.get("invoice_total", {}).get("S", "0"))
+            try:
+                total = round(float(total_str), 2)
+            except (ValueError, TypeError):
+                total = 0.0
+            key = f"{vid}|{acct}|{inv_date}|{total}"
+            groups[key].append({
+                "pdf_id": it.get("pdf_id", {}).get("S", ""),
+                "vendor_name": it.get("vendor_name", {}).get("S", ""),
+                "property_name": it.get("property_name", {}).get("S", ""),
+                "posted_by": it.get("posted_by", {}).get("S", ""),
+                "posted_at": it.get("posted_at", {}).get("S", ""),
+                "s3_key": it.get("s3_key", {}).get("S", ""),
+            })
+
+        dupes = []
+        total_dup_amount = 0.0
+        total_dup_invoices = 0
+        for key, invoices in groups.items():
+            if len(invoices) < 2:
+                continue
+            parts = key.split("|", 3)
+            amount = float(parts[3]) if len(parts) > 3 else 0.0
+            dupes.append({
+                "vendor_id": parts[0], "account_number": parts[1],
+                "invoice_date": parts[2] if len(parts) > 2 else "",
+                "invoice_total": amount,
+                "vendor_name": invoices[0].get("vendor_name", ""),
+                "count": len(invoices),
+                "invoices": invoices,
+            })
+            total_dup_amount += amount * (len(invoices) - 1)
+            total_dup_invoices += len(invoices) - 1
+
+        dupes.sort(key=lambda x: x["count"], reverse=True)
+        return {
+            "groups": dupes[:200],
+            "total_groups": len(dupes),
+            "total_duplicate_invoices": total_dup_invoices,
+            "total_duplicate_amount": round(total_dup_amount, 2),
+            "scanned_invoices": len(all_items),
+        }
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "duplicate bills")}, status_code=500)
+
+
+@app.get("/api/account-manager/closed-accounts")
+def api_acctmgr_closed(user: str = Depends(require_user)):
+    """List accounts with 'Account is closed' skip reason."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    arr = _get_accounts_to_track()
+    accounts = []
+    for a in arr:
+        sr = a.get("skip_reasons") or {}
+        if not isinstance(sr, dict):
+            continue
+        closed_months = []
+        marked_by = ""
+        marked_date = ""
+        for month, raw in sr.items():
+            if "Account is closed" in raw:
+                closed_months.append(month)
+                parsed = _parse_skip_reason(raw)
+                if parsed["user"]:
+                    marked_by = parsed["user"]
+                    marked_date = parsed["date"]
+        if not closed_months:
+            continue
+        pid = str(a.get("propertyId") or a.get("property_id") or "").strip()
+        vid = str(a.get("vendorId") or a.get("vendor_id") or "").strip()
+        acct = str(a.get("accountNumber") or a.get("account_number") or "").strip()
+        accounts.append({
+            "property_name": str(a.get("propertyName") or a.get("property_name") or ""),
+            "property_id": pid,
+            "vendor_name": str(a.get("vendorName") or a.get("vendor_name") or ""),
+            "vendor_id": vid,
+            "account_number": acct,
+            "is_tracked": a.get("is_tracked", True),
+            "is_ubi": a.get("is_ubi", False),
+            "closed_months": sorted(closed_months),
+            "marked_by": marked_by,
+            "marked_date": marked_date,
+            "account_key": f"{pid}|{vid}|{acct}",
+        })
+    accounts.sort(key=lambda x: (x["property_name"], x["vendor_name"]))
+    return {"accounts": accounts, "total": len(accounts)}
+
+
+@app.post("/api/account-manager/remove-closed-accounts")
+async def api_acctmgr_remove_closed(request: Request, user: str = Depends(require_user)):
+    """Bulk remove closed accounts from tracker and/or UBI."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    try:
+        body = await request.json()
+        account_keys = body.get("account_keys", [])
+        remove_from = body.get("remove_from", "both")  # "tracker", "ubi", or "both"
+        if not account_keys:
+            return JSONResponse({"error": "No accounts selected"}, status_code=400)
+
+        arr = _get_accounts_to_track()
+        removed = 0
+        key_set = set(account_keys)
+        for a in arr:
+            pid = str(a.get("propertyId") or a.get("property_id") or "").strip()
+            vid = str(a.get("vendorId") or a.get("vendor_id") or "").strip()
+            acct = str(a.get("accountNumber") or a.get("account_number") or "").strip()
+            akey = f"{pid}|{vid}|{acct}"
+            if akey in key_set:
+                if remove_from in ("tracker", "both"):
+                    a["is_tracked"] = False
+                if remove_from in ("ubi", "both"):
+                    a["is_ubi"] = False
+                removed += 1
+
+        if removed == 0:
+            return JSONResponse({"error": "No matching accounts found"}, status_code=404)
+
+        if not _put_accounts_to_track(arr):
+            return JSONResponse({"error": "Failed to save"}, status_code=500)
+        _CACHE.pop(("accounts_to_track",), None)
+        _CACHE.pop(("workflow_tracker",), None)
+
+        _record_audit_event("CLOSED_ACCOUNT_REMOVAL", user, {
+            "account_keys": account_keys, "remove_from": remove_from, "count": removed,
+        })
+        return {"ok": True, "removed": removed, "remove_from": remove_from}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "remove closed accounts")}, status_code=500)
+
+
 @app.get("/directed", response_class=HTMLResponse)
 def directed_view(request: Request, user: str = Depends(require_user)):
     """Directed Workflow - Daily work plan generator."""

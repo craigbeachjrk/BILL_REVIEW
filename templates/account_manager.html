@@ -1,0 +1,946 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Account Manager - Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;background:linear-gradient(135deg,rgba(14,165,233,.85),rgba(67,56,202,.85));backdrop-filter:blur(10px)}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:13px;font-weight:600}
+    .btn.secondary{background:#64748b}
+    .btn.danger{background:#dc2626}
+    .btn.success{background:#10b981}
+    .btn.small{padding:4px 8px;font-size:11px;border-radius:6px}
+    .btn:disabled{opacity:0.5;cursor:not-allowed}
+    .btn:hover:not(:disabled){filter:brightness(1.1)}
+    .wrap{max-width:1400px;margin:20px auto;padding:0 20px 40px}
+    h1{margin:0 0 4px 0;color:#fff;font-size:26px;letter-spacing:-0.5px}
+    .subtitle{color:rgba(255,255,255,.8);margin:0 0 20px 0;font-size:13px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:20px}
+    .card h2{margin:0 0 16px 0;font-size:16px}
+
+    /* Stat cards */
+    .stat-grid{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+    .stat-box{background:#f8fafc;padding:16px;border-radius:10px;text-align:center;flex:1;min-width:140px}
+    .stat-box .value{font-size:26px;font-weight:700;color:#0ea5e9}
+    .stat-box .label{font-size:11px;color:#64748b;margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px}
+    .stat-box.danger .value{color:#dc2626}
+    .stat-box.warning .value{color:#f59e0b}
+    .stat-box.success .value{color:#10b981}
+
+    /* Tabs */
+    .tab-bar{display:flex;gap:4px;margin-bottom:16px}
+    .tab-btn{padding:10px 18px;border:none;border-radius:10px 10px 0 0;background:rgba(255,255,255,.35);color:#0f172a;font-family:inherit;font-weight:600;cursor:pointer;font-size:13px;transition:background .15s}
+    .tab-btn.active{background:var(--glass);box-shadow:0 -2px 10px rgba(0,0,0,.08)}
+    .tab-btn:hover:not(.active){background:rgba(255,255,255,.5)}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+
+    /* Tables */
+    .table-wrap{max-height:600px;overflow-y:auto;border-radius:10px;border:1px solid #e5e7eb}
+    table{width:100%;border-collapse:collapse;background:#fff}
+    th,td{padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px}
+    th{background:#f8fafc;font-weight:600;position:sticky;top:0;z-index:5;cursor:default;white-space:nowrap}
+    th.sortable{cursor:pointer;user-select:none}
+    th.sortable:hover{background:#eef2f7}
+    th .sort-arrow{font-size:10px;margin-left:2px;opacity:.4}
+    th.sorted .sort-arrow{opacity:1;color:#0ea5e9}
+    tr:hover{background:rgba(14,165,233,0.04)}
+    td.mono{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:11px}
+    td.num{text-align:right;font-variant-numeric:tabular-nums}
+
+    /* Controls */
+    .controls{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+    .controls input,.controls select{padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit}
+    .controls input[type="text"]{min-width:220px}
+
+    /* Badges */
+    .badge{display:inline-block;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:600}
+    .badge.merged{background:#dcfce7;color:#166534}
+    .badge.renamed{background:#dbeafe;color:#1e40af}
+    .badge.yes{background:#dcfce7;color:#166534}
+    .badge.no{background:#fee2e2;color:#991b1b}
+
+    /* Toast */
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 20px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:10000;opacity:0;transition:opacity .3s;font-size:13px;max-width:400px}
+    .toast.show{opacity:.96}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* Loading / empty */
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e5e7eb;border-top:2px solid #0ea5e9;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .empty{text-align:center;padding:30px;color:#64748b;font-size:13px}
+
+    /* Modal */
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;padding:24px;max-width:480px;width:calc(100% - 40px);box-shadow:0 20px 60px rgba(0,0,0,.3)}
+    .modal-box h3{margin:0 0 12px 0;font-size:16px}
+    .modal-box p{margin:0 0 20px 0;font-size:13px;color:#475569;line-height:1.5}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end}
+
+    /* Form fields */
+    .form-group{margin-bottom:14px}
+    .form-group label{display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:#374151}
+    .form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box}
+    .form-group input:focus,.form-group select:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px rgba(14,165,233,.15)}
+
+    /* Account search dropdown */
+    .account-search-wrap{position:relative}
+    .account-dropdown{position:absolute;top:100%;left:0;right:0;max-height:240px;overflow-y:auto;background:#fff;border:1px solid #e5e7eb;border-radius:0 0 8px 8px;z-index:20;display:none;box-shadow:0 4px 12px rgba(0,0,0,.1)}
+    .account-dropdown.open{display:block}
+    .account-option{padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9}
+    .account-option:hover{background:#f0f9ff}
+    .account-option .prop{font-weight:600}
+    .account-option .acct{color:#64748b}
+
+    /* Expandable row */
+    .expand-row{display:none}
+    .expand-row.open{display:table-row}
+    .expand-cell{padding:12px 20px;background:#f8fafc}
+    .sub-table{width:100%;font-size:11px}
+    .sub-table th{background:#eef2f7;font-size:10px}
+
+    /* Checkbox */
+    input[type="checkbox"]{width:16px;height:16px;cursor:pointer;accent-color:#0ea5e9}
+
+    /* Red/green diff */
+    .old-val{color:#dc2626;text-decoration:line-through}
+    .new-val{color:#16a34a;font-weight:600}
+
+    /* Highlight rows */
+    tr.highlight-red{background:rgba(220,38,38,0.06)}
+    tr.highlight-red:hover{background:rgba(220,38,38,0.1)}
+
+    /* Section divider */
+    .section-divider{border:none;border-top:1px solid #e5e7eb;margin:24px 0}
+
+    /* Selected account card */
+    .selected-account{background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:14px;margin-bottom:14px;display:none}
+    .selected-account .detail{font-size:12px;color:#475569;margin:4px 0}
+    .selected-account .detail strong{color:#0f172a}
+  </style>
+</head>
+<body>
+
+  <header class="top">
+    <div style="display:flex;align-items:center;gap:12px">
+      <a href="/" style="color:#fff;text-decoration:none;font-size:18px" title="Back to Home">&larr;</a>
+      <a href="/" style="text-decoration:none;color:#fff;font-weight:600">Bill Review @ JRK</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="font-size:13px;opacity:.85">{{ user }}</span>
+      <a class="btn secondary" href="/">Home</a>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirmModal" class="modal-overlay">
+    <div class="modal-box">
+      <h3 id="confirmTitle">Confirm Action</h3>
+      <p id="confirmMessage">Are you sure?</p>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn danger" id="confirmBtn" onclick="confirmAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h1>ACCOUNT MANAGER</h1>
+    <p class="subtitle">Manage skip reasons, account renames, duplicate bills, and closed accounts</p>
+
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('skip-reasons')">Skip Reasons</button>
+      <button class="tab-btn" onclick="switchTab('account-changes')">Account ID Changes</button>
+      <button class="tab-btn" onclick="switchTab('duplicate-bills')">Duplicate Posted Bills</button>
+      <button class="tab-btn" onclick="switchTab('closed-accounts')">Closed Accounts</button>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- TAB 1: SKIP REASONS                                              -->
+    <!-- ================================================================ -->
+    <div id="tab-skip-reasons" class="tab-content active">
+      <div class="stat-grid" id="skipStats">
+        <div class="stat-box">
+          <div class="value" id="skipAcctCount">--</div>
+          <div class="label">Accounts with Skips</div>
+        </div>
+        <div class="stat-box">
+          <div class="value" id="skipEntryCount">--</div>
+          <div class="label">Total Skip Entries</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="controls">
+          <input type="text" id="skipSearch" placeholder="Search by property, vendor, account..." oninput="filterSkipTable()">
+          <select id="skipReasonFilter" onchange="filterSkipTable()">
+            <option value="">All Reasons</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="sortable" onclick="sortSkipTable('property')">Property <span class="sort-arrow">&#9650;</span></th>
+                <th class="sortable" onclick="sortSkipTable('vendor')">Vendor <span class="sort-arrow">&#9650;</span></th>
+                <th class="sortable" onclick="sortSkipTable('account')">Account # <span class="sort-arrow">&#9650;</span></th>
+                <th class="sortable" onclick="sortSkipTable('month')">Month <span class="sort-arrow">&#9650;</span></th>
+                <th class="sortable" onclick="sortSkipTable('reason')">Reason <span class="sort-arrow">&#9650;</span></th>
+                <th>Notes</th>
+                <th class="sortable" onclick="sortSkipTable('user')">User <span class="sort-arrow">&#9650;</span></th>
+                <th class="sortable" onclick="sortSkipTable('date')">Date <span class="sort-arrow">&#9650;</span></th>
+              </tr>
+            </thead>
+            <tbody id="skipTableBody">
+              <tr><td colspan="8" class="empty"><span class="spinner"></span> Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- TAB 2: ACCOUNT ID CHANGES                                        -->
+    <!-- ================================================================ -->
+    <div id="tab-account-changes" class="tab-content">
+      <!-- Section A: Rename Tool -->
+      <div class="card">
+        <h2>Rename Account</h2>
+
+        <div class="form-group account-search-wrap">
+          <label>Search Account</label>
+          <input type="text" id="accountSearchInput" placeholder="Type to search by property, vendor, or account #..." oninput="filterAccountList()" onfocus="openAccountDropdown()">
+          <div class="account-dropdown" id="accountDropdown"></div>
+        </div>
+
+        <div class="selected-account" id="selectedAccountCard">
+          <div class="detail"><strong>Property:</strong> <span id="selProperty">--</span></div>
+          <div class="detail"><strong>Vendor:</strong> <span id="selVendor">--</span></div>
+          <div class="detail"><strong>Current Account #:</strong> <span id="selAccount" style="font-family:monospace">--</span></div>
+        </div>
+
+        <div class="form-group">
+          <label>New Account Number</label>
+          <input type="text" id="newAccountNumber" placeholder="Enter new account number">
+        </div>
+
+        <button class="btn" id="renameBtn" onclick="renameAccount()" disabled>Rename Account</button>
+      </div>
+
+      <!-- Section B: Audit Trail -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h2 style="margin:0">Rename History</h2>
+          <div class="controls" style="margin:0">
+            <select id="renameDays" onchange="loadRenameHistory()">
+              <option value="30">Last 30 days</option>
+              <option value="60">Last 60 days</option>
+              <option value="90" selected>Last 90 days</option>
+              <option value="180">Last 180 days</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>User</th>
+                <th>Property</th>
+                <th>Vendor</th>
+                <th>Old Account #</th>
+                <th>New Account #</th>
+                <th>Merged?</th>
+              </tr>
+            </thead>
+            <tbody id="renameTableBody">
+              <tr><td colspan="7" class="empty"><span class="spinner"></span> Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- TAB 3: DUPLICATE POSTED BILLS                                    -->
+    <!-- ================================================================ -->
+    <div id="tab-duplicate-bills" class="tab-content">
+      <div class="stat-grid" id="dupStats">
+        <div class="stat-box warning">
+          <div class="value" id="dupGroupCount">--</div>
+          <div class="label">Duplicate Groups</div>
+        </div>
+        <div class="stat-box danger">
+          <div class="value" id="dupExtraCount">--</div>
+          <div class="label">Extra Invoices</div>
+        </div>
+        <div class="stat-box danger">
+          <div class="value" id="dupDollarAmount">--</div>
+          <div class="label">Duplicate $ Amount</div>
+        </div>
+        <div class="stat-box">
+          <div class="value" id="dupScannedCount">--</div>
+          <div class="label">Invoices Scanned</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="controls">
+          <select id="dupDays" onchange="loadDuplicateBills()">
+            <option value="30">Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90" selected>Last 90 days</option>
+            <option value="180">Last 180 days</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:30px"></th>
+                <th>Vendor</th>
+                <th>Account #</th>
+                <th>Invoice Date</th>
+                <th class="num">Total</th>
+                <th class="num">Count</th>
+              </tr>
+            </thead>
+            <tbody id="dupTableBody">
+              <tr><td colspan="6" class="empty"><span class="spinner"></span> Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- TAB 4: CLOSED ACCOUNTS                                           -->
+    <!-- ================================================================ -->
+    <div id="tab-closed-accounts" class="tab-content">
+      <div class="stat-grid" id="closedStats">
+        <div class="stat-box">
+          <div class="value" id="closedTotal">--</div>
+          <div class="label">Total Closed Accounts</div>
+        </div>
+        <div class="stat-box warning">
+          <div class="value" id="closedTracked">--</div>
+          <div class="label">Tracked Count</div>
+        </div>
+        <div class="stat-box">
+          <div class="value" id="closedUbi">--</div>
+          <div class="label">UBI Count</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="controls">
+          <button class="btn" id="removeTrackerBtn" onclick="removeClosedAccounts('tracker')" disabled>Remove from Tracker</button>
+          <button class="btn" id="removeUbiBtn" onclick="removeClosedAccounts('ubi')" disabled>Remove from UBI</button>
+          <button class="btn danger" id="removeBothBtn" onclick="removeClosedAccounts('both')" disabled>Remove from Both</button>
+          <span id="closedSelCount" style="font-size:12px;color:#64748b;margin-left:8px">0 selected</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:40px"><input type="checkbox" id="closedSelectAll" onchange="toggleSelectAllClosed()"></th>
+                <th>Property</th>
+                <th>Vendor</th>
+                <th>Account #</th>
+                <th>Months Closed</th>
+                <th>Marked By</th>
+                <th>Date</th>
+                <th>UBI?</th>
+                <th>Tracked?</th>
+              </tr>
+            </thead>
+            <tbody id="closedTableBody">
+              <tr><td colspan="9" class="empty"><span class="spinner"></span> Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- .wrap -->
+
+<script>
+/* ===================================================================
+   GLOBALS
+   =================================================================== */
+let skipData = [];
+let skipSortCol = 'date';
+let skipSortAsc = false;
+let accountList = [];
+let selectedAccount = null;
+let renameHistoryData = [];
+let dupData = [];
+let closedData = [];
+let _pendingConfirm = null;
+
+/* ===================================================================
+   HELPERS
+   =================================================================== */
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+async function fetchJSON(url) {
+  const r = await fetch(url, { credentials: 'same-origin' });
+  if (!r.ok) {
+    const text = await r.text().catch(() => '');
+    throw new Error(text || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+async function postJSON(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => '');
+    throw new Error(text || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function fmtDate(s) {
+  if (!s) return '--';
+  try {
+    const d = new Date(s);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return s; }
+}
+
+function fmtMoney(n) {
+  if (n == null) return '--';
+  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* ===================================================================
+   TABS
+   =================================================================== */
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    const tabs = ['skip-reasons', 'account-changes', 'duplicate-bills', 'closed-accounts'];
+    b.classList.toggle('active', tabs[i] === id);
+  });
+  document.querySelectorAll('.tab-content').forEach(el => {
+    el.classList.toggle('active', el.id === 'tab-' + id);
+  });
+  // Lazy-load data when switching to a tab
+  if (id === 'skip-reasons' && skipData.length === 0) loadSkipReasons();
+  if (id === 'account-changes' && accountList.length === 0) { loadAccountList(); loadRenameHistory(); }
+  if (id === 'duplicate-bills' && dupData.length === 0) loadDuplicateBills();
+  if (id === 'closed-accounts' && closedData.length === 0) loadClosedAccounts();
+}
+
+/* ===================================================================
+   TAB 1: SKIP REASONS
+   =================================================================== */
+async function loadSkipReasons() {
+  const tbody = document.getElementById('skipTableBody');
+  tbody.innerHTML = '<tr><td colspan="8" class="empty"><span class="spinner"></span> Loading skip reasons...</td></tr>';
+  try {
+    const resp = await fetchJSON('/api/account-manager/skip-reasons');
+    skipData = resp.data || resp || [];
+
+    // Update stat cards
+    const uniqueAccounts = new Set();
+    skipData.forEach(r => uniqueAccounts.add(`${r.property_id || r.property}|${r.vendor_id || r.vendor}|${r.account_number || r.account}`));
+    document.getElementById('skipAcctCount').textContent = uniqueAccounts.size.toLocaleString();
+    document.getElementById('skipEntryCount').textContent = skipData.length.toLocaleString();
+
+    // Populate reason filter dropdown
+    const reasons = [...new Set(skipData.map(r => r.reason).filter(Boolean))].sort();
+    const sel = document.getElementById('skipReasonFilter');
+    sel.innerHTML = '<option value="">All Reasons</option>';
+    reasons.forEach(r => {
+      sel.innerHTML += `<option value="${esc(r)}">${esc(r)}</option>`;
+    });
+
+    renderSkipTable();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty">Error loading skip reasons: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderSkipTable() {
+  const tbody = document.getElementById('skipTableBody');
+  const search = (document.getElementById('skipSearch').value || '').toLowerCase();
+  const reasonFilter = document.getElementById('skipReasonFilter').value;
+
+  let filtered = skipData.filter(r => {
+    if (reasonFilter && r.reason !== reasonFilter) return false;
+    if (search) {
+      const haystack = [r.property, r.vendor, r.account_number || r.account, r.month, r.reason, r.notes, r.user].join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+
+  // Sort
+  filtered.sort((a, b) => {
+    let va = a[skipSortCol] || '';
+    let vb = b[skipSortCol] || '';
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return skipSortAsc ? -1 : 1;
+    if (va > vb) return skipSortAsc ? 1 : -1;
+    return 0;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No skip reasons found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(r => `<tr>
+    <td>${esc(r.property)}</td>
+    <td>${esc(r.vendor)}</td>
+    <td class="mono">${esc(r.account_number || r.account)}</td>
+    <td>${esc(r.month)}</td>
+    <td><span class="badge" style="background:#fef3c7;color:#92400e">${esc(r.reason)}</span></td>
+    <td>${esc(r.notes || '')}</td>
+    <td>${esc(r.user)}</td>
+    <td>${fmtDate(r.date || r.created_at)}</td>
+  </tr>`).join('');
+}
+
+function filterSkipTable() {
+  renderSkipTable();
+}
+
+function sortSkipTable(col) {
+  const colMap = { property: 'property', vendor: 'vendor', account: 'account_number', month: 'month', reason: 'reason', user: 'user', date: 'date' };
+  const mapped = colMap[col] || col;
+  if (skipSortCol === mapped) {
+    skipSortAsc = !skipSortAsc;
+  } else {
+    skipSortCol = mapped;
+    skipSortAsc = true;
+  }
+  // Update sort arrows visually
+  document.querySelectorAll('#tab-skip-reasons th.sortable').forEach(th => th.classList.remove('sorted'));
+  event.currentTarget.classList.add('sorted');
+  renderSkipTable();
+}
+
+/* ===================================================================
+   TAB 2: ACCOUNT ID CHANGES
+   =================================================================== */
+
+// --- Section A: Rename Tool ---
+async function loadAccountList() {
+  try {
+    const resp = await fetchJSON('/api/config/accounts-to-track');
+    accountList = resp.data || resp.accounts || resp || [];
+  } catch (e) {
+    showToast('Failed to load account list: ' + e.message, 'err');
+  }
+}
+
+function openAccountDropdown() {
+  filterAccountList();
+  document.getElementById('accountDropdown').classList.add('open');
+}
+
+function filterAccountList() {
+  const q = (document.getElementById('accountSearchInput').value || '').toLowerCase();
+  const dd = document.getElementById('accountDropdown');
+  if (!q || q.length < 2) {
+    dd.classList.remove('open');
+    return;
+  }
+  dd.classList.add('open');
+
+  const matches = accountList.filter(a => {
+    const haystack = [a.property_name || a.property, a.vendor_name || a.vendor, a.account_number || a.account].join(' ').toLowerCase();
+    return haystack.includes(q);
+  }).slice(0, 50);
+
+  if (matches.length === 0) {
+    dd.innerHTML = '<div class="account-option" style="color:#64748b;cursor:default">No matches found</div>';
+    return;
+  }
+
+  dd.innerHTML = matches.map((a, i) => `<div class="account-option" onclick="selectAccount(${i})" data-idx="${i}">
+    <span class="prop">${esc(a.property_name || a.property)}</span> &mdash;
+    ${esc(a.vendor_name || a.vendor)}
+    <span class="acct">(${esc(a.account_number || a.account)})</span>
+  </div>`).join('');
+
+  // Store filtered list for selection
+  dd._matches = matches;
+}
+
+function selectAccount(idx) {
+  const dd = document.getElementById('accountDropdown');
+  const matches = dd._matches || [];
+  const a = matches[idx];
+  if (!a) return;
+
+  selectedAccount = a;
+  document.getElementById('accountSearchInput').value =
+    (a.property_name || a.property) + ' - ' + (a.vendor_name || a.vendor) + ' - ' + (a.account_number || a.account);
+  dd.classList.remove('open');
+
+  // Show selected account details
+  const card = document.getElementById('selectedAccountCard');
+  card.style.display = 'block';
+  document.getElementById('selProperty').textContent = a.property_name || a.property || '--';
+  document.getElementById('selVendor').textContent = a.vendor_name || a.vendor || '--';
+  document.getElementById('selAccount').textContent = a.account_number || a.account || '--';
+
+  document.getElementById('renameBtn').disabled = false;
+}
+
+async function renameAccount() {
+  if (!selectedAccount) return;
+  const newNum = document.getElementById('newAccountNumber').value.trim();
+  if (!newNum) { showToast('Please enter a new account number', 'err'); return; }
+
+  const oldNum = selectedAccount.account_number || selectedAccount.account;
+  if (newNum === oldNum) { showToast('New account number is the same as the current one', 'err'); return; }
+
+  document.getElementById('renameBtn').disabled = true;
+  document.getElementById('renameBtn').textContent = 'Renaming...';
+
+  try {
+    const resp = await postJSON('/api/account-manager/rename-account', {
+      property_id: selectedAccount.property_id || selectedAccount.property,
+      vendor_id: selectedAccount.vendor_id || selectedAccount.vendor,
+      old_account_number: oldNum,
+      new_account_number: newNum
+    });
+
+    if (resp.merged) {
+      showToast('Merged with existing account', 'ok');
+    } else {
+      showToast('Account renamed successfully', 'ok');
+    }
+
+    // Reset form
+    selectedAccount = null;
+    document.getElementById('accountSearchInput').value = '';
+    document.getElementById('newAccountNumber').value = '';
+    document.getElementById('selectedAccountCard').style.display = 'none';
+    document.getElementById('renameBtn').disabled = true;
+
+    // Refresh data
+    loadAccountList();
+    loadRenameHistory();
+  } catch (e) {
+    showToast('Rename failed: ' + e.message, 'err');
+  } finally {
+    document.getElementById('renameBtn').textContent = 'Rename Account';
+    document.getElementById('renameBtn').disabled = !selectedAccount;
+  }
+}
+
+// --- Section B: Audit Trail ---
+async function loadRenameHistory() {
+  const days = document.getElementById('renameDays').value;
+  const tbody = document.getElementById('renameTableBody');
+  tbody.innerHTML = '<tr><td colspan="7" class="empty"><span class="spinner"></span> Loading history...</td></tr>';
+
+  try {
+    const resp = await fetchJSON(`/api/account-manager/rename-history?days=${days}`);
+    renameHistoryData = resp.data || resp || [];
+
+    if (renameHistoryData.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No rename history found</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = renameHistoryData.map(r => `<tr>
+      <td>${fmtDate(r.date || r.timestamp)}</td>
+      <td>${esc(r.user)}</td>
+      <td>${esc(r.property_name || r.property)}</td>
+      <td>${esc(r.vendor_name || r.vendor)}</td>
+      <td class="mono"><span class="old-val">${esc(r.old_account_number || r.old_account)}</span></td>
+      <td class="mono"><span class="new-val">${esc(r.new_account_number || r.new_account)}</span></td>
+      <td>${r.merged ? '<span class="badge merged">MERGED</span>' : '<span class="badge renamed">RENAMED</span>'}</td>
+    </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+// Close account dropdown on outside click
+document.addEventListener('click', (e) => {
+  const wrap = document.querySelector('.account-search-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('accountDropdown').classList.remove('open');
+  }
+});
+
+/* ===================================================================
+   TAB 3: DUPLICATE POSTED BILLS
+   =================================================================== */
+async function loadDuplicateBills() {
+  const days = document.getElementById('dupDays').value;
+  const tbody = document.getElementById('dupTableBody');
+  tbody.innerHTML = '<tr><td colspan="6" class="empty"><span class="spinner"></span> Scanning for duplicates...</td></tr>';
+
+  try {
+    const resp = await fetchJSON(`/api/account-manager/duplicate-bills?days=${days}`);
+    dupData = resp.data || resp.groups || resp || [];
+
+    // Update stat cards
+    const totalGroups = dupData.length;
+    const totalExtra = dupData.reduce((s, g) => s + (g.count - 1), 0);
+    const totalDollars = dupData.reduce((s, g) => s + ((g.total || 0) * (g.count - 1)), 0);
+    const scanned = resp.scanned || resp.invoices_scanned || '--';
+
+    document.getElementById('dupGroupCount').textContent = totalGroups.toLocaleString();
+    document.getElementById('dupExtraCount').textContent = totalExtra.toLocaleString();
+    document.getElementById('dupDollarAmount').textContent = fmtMoney(totalDollars);
+    document.getElementById('dupScannedCount').textContent = typeof scanned === 'number' ? scanned.toLocaleString() : scanned;
+
+    renderDupTable();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderDupTable() {
+  const tbody = document.getElementById('dupTableBody');
+  if (dupData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No duplicate bills found</td></tr>';
+    return;
+  }
+
+  let html = '';
+  dupData.forEach((g, gi) => {
+    const rowClass = g.count > 2 ? ' class="highlight-red"' : '';
+    html += `<tr${rowClass} style="cursor:pointer" onclick="toggleDupExpand(${gi})">
+      <td style="text-align:center;font-size:14px" id="dupArrow${gi}">&#9654;</td>
+      <td>${esc(g.vendor)}</td>
+      <td class="mono">${esc(g.account_number || g.account)}</td>
+      <td>${fmtDate(g.invoice_date)}</td>
+      <td class="num">${fmtMoney(g.total)}</td>
+      <td class="num" style="font-weight:600;${g.count > 2 ? 'color:#dc2626' : ''}">${g.count}</td>
+    </tr>`;
+
+    // Expandable detail row
+    html += `<tr class="expand-row" id="dupExpand${gi}">
+      <td colspan="6" class="expand-cell">
+        <table class="sub-table">
+          <thead><tr><th>PDF ID</th><th>Posted By</th><th>Posted At</th><th>Property</th></tr></thead>
+          <tbody>`;
+    if (g.invoices && g.invoices.length) {
+      g.invoices.forEach(inv => {
+        html += `<tr>
+          <td class="mono">${esc(inv.pdf_id || '--')}</td>
+          <td>${esc(inv.posted_by || '--')}</td>
+          <td>${fmtDate(inv.posted_at)}</td>
+          <td>${esc(inv.property || '--')}</td>
+        </tr>`;
+      });
+    } else {
+      html += '<tr><td colspan="4" style="color:#94a3b8;text-align:center">No detail available</td></tr>';
+    }
+    html += `</tbody></table></td></tr>`;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function toggleDupExpand(idx) {
+  const row = document.getElementById('dupExpand' + idx);
+  const arrow = document.getElementById('dupArrow' + idx);
+  if (row.classList.contains('open')) {
+    row.classList.remove('open');
+    arrow.innerHTML = '&#9654;';
+  } else {
+    row.classList.add('open');
+    arrow.innerHTML = '&#9660;';
+  }
+}
+
+/* ===================================================================
+   TAB 4: CLOSED ACCOUNTS
+   =================================================================== */
+async function loadClosedAccounts() {
+  const tbody = document.getElementById('closedTableBody');
+  tbody.innerHTML = '<tr><td colspan="9" class="empty"><span class="spinner"></span> Loading closed accounts...</td></tr>';
+
+  try {
+    const resp = await fetchJSON('/api/account-manager/closed-accounts');
+    closedData = resp.data || resp || [];
+
+    // Update stat cards
+    document.getElementById('closedTotal').textContent = closedData.length.toLocaleString();
+    document.getElementById('closedTracked').textContent = closedData.filter(a => a.is_tracked).length.toLocaleString();
+    document.getElementById('closedUbi').textContent = closedData.filter(a => a.is_ubi).length.toLocaleString();
+
+    renderClosedTable();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderClosedTable() {
+  const tbody = document.getElementById('closedTableBody');
+  if (closedData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">No closed accounts found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = closedData.map((a, i) => `<tr>
+    <td><input type="checkbox" class="closed-cb" data-idx="${i}" onchange="updateClosedSelection()"></td>
+    <td>${esc(a.property_name || a.property)}</td>
+    <td>${esc(a.vendor_name || a.vendor)}</td>
+    <td class="mono">${esc(a.account_number || a.account)}</td>
+    <td class="num">${a.months_closed != null ? a.months_closed : '--'}</td>
+    <td>${esc(a.marked_by || '--')}</td>
+    <td>${fmtDate(a.marked_date || a.date)}</td>
+    <td>${a.is_ubi ? '<span class="badge yes">Yes</span>' : '<span class="badge no">No</span>'}</td>
+    <td>${a.is_tracked ? '<span class="badge yes">Yes</span>' : '<span class="badge no">No</span>'}</td>
+  </tr>`).join('');
+
+  document.getElementById('closedSelectAll').checked = false;
+  updateClosedSelection();
+}
+
+function toggleSelectAllClosed() {
+  const all = document.getElementById('closedSelectAll').checked;
+  document.querySelectorAll('.closed-cb').forEach(cb => { cb.checked = all; });
+  updateClosedSelection();
+}
+
+function updateClosedSelection() {
+  const checked = document.querySelectorAll('.closed-cb:checked');
+  const count = checked.length;
+  document.getElementById('closedSelCount').textContent = count + ' selected';
+  document.getElementById('removeTrackerBtn').disabled = count === 0;
+  document.getElementById('removeUbiBtn').disabled = count === 0;
+  document.getElementById('removeBothBtn').disabled = count === 0;
+}
+
+function getSelectedClosedAccounts() {
+  const indices = [];
+  document.querySelectorAll('.closed-cb:checked').forEach(cb => {
+    indices.push(parseInt(cb.dataset.idx));
+  });
+  return indices.map(i => closedData[i]).filter(Boolean);
+}
+
+function removeClosedAccounts(removeFrom) {
+  const selected = getSelectedClosedAccounts();
+  if (selected.length === 0) return;
+
+  const label = removeFrom === 'both' ? 'tracker and UBI' : removeFrom;
+  _pendingConfirm = { removeFrom, selected };
+
+  document.getElementById('confirmTitle').textContent = 'Confirm Removal';
+  document.getElementById('confirmMessage').textContent =
+    `Are you sure you want to remove ${selected.length} account${selected.length > 1 ? 's' : ''} from ${label}?`;
+  document.getElementById('confirmBtn').textContent = 'Remove';
+  document.getElementById('confirmBtn').className = 'btn danger';
+  document.getElementById('confirmModal').classList.add('show');
+}
+
+async function confirmAction() {
+  if (!_pendingConfirm) return;
+  const { removeFrom, selected } = _pendingConfirm;
+  closeModal();
+
+  const accountKeys = selected.map(a => ({
+    property_id: a.property_id || a.property,
+    vendor_id: a.vendor_id || a.vendor,
+    account_number: a.account_number || a.account
+  }));
+
+  try {
+    await postJSON('/api/account-manager/remove-closed-accounts', {
+      account_keys: accountKeys,
+      remove_from: removeFrom
+    });
+
+    showToast(`Removed ${selected.length} account(s) from ${removeFrom === 'both' ? 'tracker and UBI' : removeFrom}`, 'ok');
+
+    // Remove rows from local data
+    const removedSet = new Set(selected.map(a =>
+      `${a.property_id || a.property}|${a.vendor_id || a.vendor}|${a.account_number || a.account}`
+    ));
+
+    if (removeFrom === 'both') {
+      closedData = closedData.filter(a =>
+        !removedSet.has(`${a.property_id || a.property}|${a.vendor_id || a.vendor}|${a.account_number || a.account}`)
+      );
+    } else {
+      // Update flags rather than removing rows
+      closedData.forEach(a => {
+        const key = `${a.property_id || a.property}|${a.vendor_id || a.vendor}|${a.account_number || a.account}`;
+        if (removedSet.has(key)) {
+          if (removeFrom === 'tracker') a.is_tracked = false;
+          if (removeFrom === 'ubi') a.is_ubi = false;
+        }
+      });
+    }
+
+    // Re-render
+    document.getElementById('closedTotal').textContent = closedData.length.toLocaleString();
+    document.getElementById('closedTracked').textContent = closedData.filter(a => a.is_tracked).length.toLocaleString();
+    document.getElementById('closedUbi').textContent = closedData.filter(a => a.is_ubi).length.toLocaleString();
+    renderClosedTable();
+  } catch (e) {
+    showToast('Failed to remove accounts: ' + e.message, 'err');
+  }
+
+  _pendingConfirm = null;
+}
+
+function closeModal() {
+  document.getElementById('confirmModal').classList.remove('show');
+  _pendingConfirm = null;
+}
+
+// Close modal on overlay click
+document.getElementById('confirmModal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// Close modal on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+
+/* ===================================================================
+   INIT
+   =================================================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  loadSkipReasons();
+});
+</script>
+</body>
+</html>
