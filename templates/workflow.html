@@ -755,9 +755,28 @@ document.addEventListener('DOMContentLoaded', () => {
       if (fresh.error || fresh.cacheStatus === 'computing') return;
       // Only re-render if data actually changed (compare generated_at timestamp)
       if (fresh.generated_at && trackerData && fresh.generated_at !== trackerData.generated_at) {
+        // Preserve expanded cards and scroll position before re-render
+        const container = document.getElementById('trackerContent');
+        const scrollTop = container ? container.scrollTop : 0;
+        const expanded = new Set();
+        if (container) {
+          container.querySelectorAll('.property-card.expanded').forEach(el => {
+            const title = el.querySelector('.property-header')?.textContent?.trim();
+            if (title) expanded.add(title);
+          });
+        }
         trackerData = fresh;
-        renderTracker();
         updateStatusCards();
+        renderTracker();
+        // Restore expanded state
+        if (container && expanded.size > 0) {
+          container.querySelectorAll('.property-card').forEach(el => {
+            const title = el.querySelector('.property-header')?.textContent?.trim();
+            if (title && expanded.has(title)) el.classList.add('expanded');
+          });
+        }
+        // Restore scroll
+        if (container) container.scrollTop = scrollTop;
       }
     } catch(e) { /* silent background poll */ }
   }, 60000);
@@ -2080,12 +2099,13 @@ async function ct_confirmSkip() {
     }
     showToast('Skip reason saved for ' + month, 'ok');
     // Update trackerData in-place and re-render so UI reflects immediately
+    // Only set skip_reason — don't change status_label (backend computes it from dates,
+    // and there's no CSS/icon/filter support for a 'SKIPPED' status)
     if (trackerData && trackerData.properties) {
       for (const prop of trackerData.properties) {
         for (const item of (prop.items || [])) {
           if (item.account_number === account && item.vendor_name === vendor && item.month === month) {
             item.skip_reason = comment;
-            item.status_label = 'SKIPPED';
           }
         }
       }
