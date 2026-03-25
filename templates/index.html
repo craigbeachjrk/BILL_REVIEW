@@ -105,7 +105,16 @@
       </div>
     </div>
   </div>
-  <!-- ===IMPROVE-HTML-END=== -->  <div class="wrap">
+  <!-- ===IMPROVE-HTML-END=== -->
+  <!-- Pipeline Status Bar -->
+  <div id="pipelineBar" style="max-width:1200px;margin:12px auto 0;padding:0 20px;display:none">
+    <div style="background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:12px;padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px">
+      <span style="font-weight:600;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.3)">PIPELINE</span>
+      <div id="pipelineStages" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      <a href="/pipeline" style="margin-left:auto;color:#fff;font-size:11px;text-decoration:underline;opacity:.8">Details</a>
+    </div>
+  </div>
+  <div class="wrap">
     <h2>Parse Dates</h2>
 
     <!-- Date Range Filter -->
@@ -143,6 +152,33 @@
     {% endif %}
   </div>
   <script>
+
+    // Pipeline status bar
+    async function loadPipelineStatus() {
+      try {
+        const resp = await fetch('/api/pipeline/queue');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const bar = document.getElementById('pipelineBar');
+        const container = document.getElementById('pipelineStages');
+        const labels = {S1:'Pending',S1_Std:'Standard',S1_Lg:'Large',S3:'Parsed',S4:'Enriched'};
+        let html = '';
+        let hasData = false;
+        for (const s of (data.stages || [])) {
+          const age = s.oldest_age_minutes || 0;
+          const color = s.count === 0 ? '#64748b' : age > 60 ? '#ef4444' : age > 30 ? '#f59e0b' : '#22c55e';
+          const bg = s.count === 0 ? 'rgba(100,116,139,.15)' : age > 60 ? 'rgba(239,68,68,.2)' : age > 30 ? 'rgba(245,158,11,.2)' : 'rgba(34,197,94,.2)';
+          if (s.count > 0) hasData = true;
+          html += `<span style="background:${bg};border:1px solid ${color}40;color:#fff;padding:3px 8px;border-radius:6px;white-space:nowrap">
+            <span style="color:${color};font-weight:700">${s.count}</span> ${labels[s.stage]||s.stage}${s.count > 0 && age > 0 ? ` <span style="opacity:.6;font-size:10px">${age}m</span>` : ''}
+          </span>`;
+        }
+        container.innerHTML = html;
+        bar.style.display = '';
+      } catch(e) { /* silent */ }
+    }
+    loadPipelineStatus();
+    setInterval(loadPipelineStatus, 30000);
 
     // Date filter and pagination functions
     function applyDateFilter() {
