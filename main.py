@@ -12113,12 +12113,13 @@ def api_autonomy_sim_run(user: str = Depends(require_user)):
         except Exception as e:
             print(f"[AUTONOMY SIM] S3 save failed: {e}")
 
-        # Update in-memory cache
-        _CACHE[("autonomy_sim",)] = {"ts": time.time(), "data": sim_data}
+        # Invalidate in-memory cache so next read fetches fresh S3 data
+        _CACHE.pop(("autonomy_sim",), None)
 
-    # Run in background thread
+    # Run in background thread — S3 is the persistent store (survives deploys).
+    # TODO: Move to Lambda for better performance (AppRunner S3 GETs are 2-5s each).
     threading.Thread(target=_run_sim, daemon=True).start()
-    return {"status": "started", "message": "Simulation running in background. Results will appear in 1-5 minutes."}
+    return {"status": "started", "message": "Simulation running in background. Results will appear in a few minutes."}
 
 
 @app.get("/api/autonomy/sim/bill/{pdf_id}")
