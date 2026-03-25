@@ -224,13 +224,15 @@
     // No default date range - index is in-memory so searching everything is instant
     // Users can optionally narrow by date if needed
 
-    // Check for URL parameter and auto-search
+    // Check for URL parameters and auto-search
     const urlParams = new URLSearchParams(window.location.search);
-    const qParam = urlParams.get('q');
-    if (qParam) {
-      document.getElementById('searchAccount').value = qParam;
-      doSearch();
-    }
+    const acctParam = urlParams.get('account') || urlParams.get('q') || '';
+    const vendorParam = urlParams.get('vendor') || '';
+    const propParam = urlParams.get('property') || '';
+    if (acctParam) document.getElementById('searchAccount').value = acctParam;
+    if (vendorParam) document.getElementById('searchVendor').value = vendorParam;
+    if (propParam) document.getElementById('searchProperty').value = propParam;
+    if (acctParam || vendorParam || propParam) doSearch();
   </script>
 </body>
 </html>
