@@ -26,7 +26,7 @@ s3 = boto3.client("s3", config=_boto_cfg)
 # Configuration
 BUCKET = os.getenv("BUCKET", "jrk-analytics-billing")
 CONFIG_BUCKET = os.getenv("CONFIG_BUCKET", "jrk-analytics-billing")
-CONFIG_PREFIX = os.getenv("CONFIG_PREFIX", "config/")
+CONFIG_PREFIX = os.getenv("CONFIG_PREFIX", "Bill_Parser_Config/")
 BILL_INDEX_CACHE_KEY = os.getenv("BILL_INDEX_CACHE_KEY", CONFIG_PREFIX + "bill_index_cache.json.gz")
 COMPLETION_TRACKER_CACHE_KEY = os.getenv("COMPLETION_TRACKER_CACHE_KEY", CONFIG_PREFIX + "completion_tracker_cache.json.gz")
 
@@ -169,31 +169,34 @@ def _build_bill_index():
     start_time = time.time()
     today = dt.date.today()
 
-    # Load existing cache for incremental update
+    # Load existing cache for incremental update (skip if clear_cache requested)
     cached_index = None
     cached_keys_seen = set()
-    try:
-        obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY)
-        payload = json.loads(gzip.decompress(obj["Body"].read()))
-        cached_index = {}
-        for k_str, months_data in payload.get("index", {}).items():
-            parts = k_str.split("|", 1)
-            if len(parts) == 2:
-                cached_index[tuple(parts)] = {}
-                for m, info in months_data.items():
-                    bd = _parse_date_any(info["bill_date"]) if info.get("bill_date") else None
-                    cached_index[tuple(parts)][m] = {
-                        "stage": info.get("stage"),
-                        "bill_date": bd,
-                        "service_days": info.get("service_days", 0),
-                    }
-        cached_keys_seen = set(payload.get("keys_seen", []))
-        print(f"[BILL INDEX] Loaded cache: {len(cached_index)} accounts, {len(cached_keys_seen)} keys")
-    except Exception as e:
-        if "NoSuchKey" not in str(e):
-            print(f"[BILL INDEX] Cache load failed: {e}")
-        else:
-            print("[BILL INDEX] No existing cache, full scan")
+    if _CLEAR_CACHE:
+        print("[BILL INDEX] clear_cache=true — full rescan from scratch")
+    else:
+        try:
+            obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=BILL_INDEX_CACHE_KEY)
+            payload = json.loads(gzip.decompress(obj["Body"].read()))
+            cached_index = {}
+            for k_str, months_data in payload.get("index", {}).items():
+                parts = k_str.split("|", 1)
+                if len(parts) == 2:
+                    cached_index[tuple(parts)] = {}
+                    for m, info in months_data.items():
+                        bd = _parse_date_any(info["bill_date"]) if info.get("bill_date") else None
+                        cached_index[tuple(parts)][m] = {
+                            "stage": info.get("stage"),
+                            "bill_date": bd,
+                            "service_days": info.get("service_days", 0),
+                        }
+            cached_keys_seen = set(payload.get("keys_seen", []))
+            print(f"[BILL INDEX] Loaded cache: {len(cached_index)} accounts, {len(cached_keys_seen)} keys")
+        except Exception as e:
+            if "NoSuchKey" not in str(e):
+                print(f"[BILL INDEX] Cache load failed: {e}")
+            else:
+                print("[BILL INDEX] No existing cache, full scan")
 
     # Build month list: 6 months back + 3 extra for prior-bill lookup + current
     months_back = 6
@@ -299,8 +302,12 @@ def _build_bill_index():
     }
 
 
+_CLEAR_CACHE = False
+
 def handler(event, context):
     """Lambda handler — invoked by EventBridge schedule or manual trigger."""
+    global _CLEAR_CACHE
+    _CLEAR_CACHE = bool(event.get("clear_cache", False))
     print(f"[BILL INDEX] Lambda invoked: {json.dumps(event)}")
     try:
         result = _build_bill_index()
