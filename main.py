@@ -10222,8 +10222,8 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
 
 def _workflow_tracker_refresh_loop():
     """Background loop that keeps workflow tracker cache warm.
-    Loads from S3 on startup for instant availability, then refreshes once daily."""
-    _REFRESH_INTERVAL = 86400  # 24 hours
+    Loads from S3 on startup for instant availability, then refreshes every 4 hours."""
+    _REFRESH_INTERVAL = 14400  # 4 hours
 
     # Try S3 first for instant startup
     loaded = _load_completion_tracker_from_s3()
@@ -10271,16 +10271,14 @@ def _workflow_tracker_refresh_loop():
         finally:
             _TRACKER_REBUILD_LOCK.release()
 
-        # Refresh aging accounts every ~15 cycles (60 min)
-        _cycle += 1
-        if _cycle % 15 == 0:
-            try:
-                aging_data = _compute_workflow_data()
-                _s3_put_workflow_cache(aging_data)
-                _WORKFLOW_DATA_CACHE.clear()
-                print("[WORKFLOW BG] Aging accounts auto-refreshed to S3")
-            except Exception as e:
-                print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
+        # Refresh aging accounts every cycle (same interval as tracker)
+        try:
+            aging_data = _compute_workflow_data()
+            _s3_put_workflow_cache(aging_data)
+            _WORKFLOW_DATA_CACHE.clear()
+            print("[WORKFLOW BG] Aging accounts auto-refreshed to S3")
+        except Exception as e:
+            print(f"[WORKFLOW BG] Aging accounts refresh failed: {e}")
 
 
 BILL_INDEX_LAMBDA = os.getenv("BILL_INDEX_LAMBDA", "jrk-bill-index-builder")
