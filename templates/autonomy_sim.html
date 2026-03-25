@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Autonomy Simulation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#7c3aed; --bg2:#4c1d95; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    *,*::before,*::after{box-sizing:border-box}
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;background:linear-gradient(135deg,var(--bg),var(--bg2));backdrop-filter:blur(8px)}
+    header a{color:#fff;text-decoration:none;font-weight:600}
+    header .back-arrow{font-size:20px;margin-right:8px;vertical-align:middle}
+    header .header-left{display:flex;align-items:center;gap:12px}
+    header .header-title{font-size:18px;font-weight:700}
+    header .header-sub{font-size:12px;opacity:.8;margin-top:2px}
+    .btn{display:inline-block;padding:8px 16px;border-radius:10px;border:none;background:#fff;color:#7c3aed;cursor:pointer;text-decoration:none;font-weight:600;font-family:inherit;font-size:14px;transition:background .15s,transform .1s}
+    .btn:hover{background:#f3f4f6;transform:translateY(-1px)}
+    .btn:active{transform:translateY(0)}
+    .btn.primary{background:#7c3aed;color:#fff}
+    .btn.primary:hover{background:#6d28d9}
+    .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+    .wrap{max-width:1400px;margin:20px auto;padding:0 24px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:24px;margin-bottom:20px}
+    h1{margin:0 0 8px 0;font-size:28px;color:#1e1b4b}
+    h2{margin:0 0 16px 0;font-size:18px;color:#5b21b6}
+    .subtitle{color:#6b7280;margin-bottom:24px;font-size:14px}
+
+    /* Stat cards */
+    .stats-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;margin-bottom:24px}
+    .stat-card{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:20px;text-align:center;transition:transform .15s}
+    .stat-card:hover{transform:translateY(-2px)}
+    .stat-card.success{background:#d1fae5;border-color:#6ee7b7}
+    .stat-card.warning{background:#fef3c7;border-color:#fcd34d}
+    .stat-card.danger{background:#fee2e2;border-color:#fca5a5}
+    .stat-value{font-size:36px;font-weight:700;color:#1e1b4b;margin-bottom:4px}
+    .stat-label{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px}
+    .progress-bar{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden;margin:8px 0}
+    .progress-fill{height:100%;border-radius:5px;transition:width .5s}
+    .progress-fill.good{background:linear-gradient(90deg,#10b981,#34d399)}
+    .progress-fill.medium{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+    .progress-fill.bad{background:linear-gradient(90deg,#ef4444,#f87171)}
+
+    /* Table */
+    .vendor-table{width:100%;border-collapse:collapse;font-size:13px}
+    .vendor-table th{text-align:left;padding:10px 12px;background:#f8fafc;border-bottom:2px solid #e2e8f0;color:#64748b;text-transform:uppercase;font-size:11px;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap}
+    .vendor-table th:hover{background:#f1f5f9}
+    .vendor-table th .sort-arrow{margin-left:4px;opacity:.4;font-size:10px}
+    .vendor-table th.sorted .sort-arrow{opacity:1;color:#7c3aed}
+    .vendor-table td{padding:10px 12px;border-bottom:1px solid #e2e8f0}
+    .vendor-table tr.vendor-row{cursor:pointer;transition:background .1s}
+    .vendor-table tr.vendor-row:hover{background:rgba(124,58,237,.06)}
+    .vendor-table tr.vendor-row.expanded{background:rgba(124,58,237,.08);font-weight:600}
+    .vendor-table tr.bill-row{background:#fafafe}
+    .vendor-table tr.bill-row td{padding:8px 12px 8px 32px;font-size:12px;border-bottom:1px solid #f1f5f9}
+    .vendor-table tr.bill-row:hover{background:rgba(124,58,237,.04)}
+    .vendor-table tr.bill-row{cursor:pointer}
+
+    /* Badges */
+    .badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap}
+    .badge.pass{background:#d1fae5;color:#047857}
+    .badge.review{background:#fef3c7;color:#b45309}
+    .badge.shadow{background:#e2e8f0;color:#475569}
+    .badge.assisted{background:#fef3c7;color:#92400e}
+    .badge.autonomous{background:#d1fae5;color:#047857}
+    .badge.correct{background:#d1fae5;color:#047857}
+    .badge.wrong{background:#fee2e2;color:#b91c1c}
+    .badge.unchanged{background:#e0e7ff;color:#3730a3}
+    .badge.changed{background:#fce7f3;color:#9d174d}
+
+    /* Loading / empty / error */
+    .loading{text-align:center;padding:40px;color:#7c3aed;font-size:16px}
+    .spinner{display:inline-block;width:24px;height:24px;border:3px solid rgba(124,58,237,.3);border-top-color:#7c3aed;border-radius:50%;animation:spin .8s linear infinite;margin-right:10px;vertical-align:middle}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .error{background:#fee2e2;color:#b91c1c;padding:16px;border-radius:8px;margin:20px 0}
+    .empty-state{background:#f8fafc;color:#64748b;padding:60px 24px;text-align:center;border-radius:12px}
+    .empty-state h3{color:#1e1b4b;margin:16px 0 8px}
+    .empty-state p{margin:0 0 20px;font-size:14px}
+    .empty-state .icon{font-size:48px;opacity:.5;margin-bottom:8px}
+
+    /* Auto-refresh indicator */
+    .auto-refresh{display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,.8)}
+    .pulse{width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+    /* Modal overlay */
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+    .modal-overlay.open{display:flex}
+    .modal{background:#fff;border-radius:16px;box-shadow:0 25px 60px rgba(0,0,0,.3);max-width:900px;width:100%;max-height:85vh;overflow-y:auto;position:relative}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;padding:20px 24px;border-bottom:1px solid #e5e7eb;position:sticky;top:0;background:#fff;border-radius:16px 16px 0 0;z-index:1}
+    .modal-header h2{margin:0;font-size:18px;color:#1e1b4b}
+    .modal-close{width:32px;height:32px;border:none;background:#f1f5f9;border-radius:8px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#64748b}
+    .modal-close:hover{background:#e2e8f0;color:#0f172a}
+    .modal-body{padding:24px}
+    .modal-panels{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+    .modal-panel{border:1px solid #e5e7eb;border-radius:12px;padding:16px}
+    .modal-panel h3{margin:0 0 12px;font-size:14px;text-transform:uppercase;letter-spacing:.5px}
+    .modal-panel.ai{border-color:#ddd6fe;background:#faf5ff}
+    .modal-panel.ai h3{color:#7c3aed}
+    .modal-panel.human{border-color:#bfdbfe;background:#eff6ff}
+    .modal-panel.human h3{color:#1d4ed8}
+    .modal-panel .detail-row{padding:8px 0;border-bottom:1px solid rgba(0,0,0,.06);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+    .modal-panel .detail-row:last-child{border-bottom:none}
+    .modal-panel .detail-label{color:#64748b;font-size:11px;text-transform:uppercase}
+    .modal-panel .detail-value{font-weight:600}
+    .line-item{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center}
+    .line-item.garbage{background:#fee2e2;border:1px solid #fca5a5}
+    .line-item.clean{background:#f0fdf4;border:1px solid #86efac}
+    .line-item .line-desc{flex:1;margin-right:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .line-item .line-tag{font-size:10px;font-weight:600;text-transform:uppercase;white-space:nowrap}
+    .result-banner{padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;text-align:center;font-size:14px}
+    .result-banner.match{background:#d1fae5;color:#047857;border:1px solid #6ee7b7}
+    .result-banner.mismatch{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}
+
+    /* Toast */
+    .toast-container{position:fixed;top:80px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px}
+    .toast{padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:slideIn .3s ease;max-width:360px}
+    .toast.success{background:#059669}
+    .toast.error{background:#dc2626}
+    .toast.info{background:#7c3aed}
+    @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+    @keyframes slideOut{from{transform:translateX(0);opacity:1}to{transform:translateX(100%);opacity:0}}
+
+    @media(max-width:768px){
+      .stats-grid{grid-template-columns:1fr 1fr}
+      .modal-panels{grid-template-columns:1fr}
+      .wrap{padding:0 12px}
+      header.top{padding:10px 12px}
+    }
+    @media(max-width:480px){
+      .stats-grid{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="header-left">
+      <a href="/" class="back-arrow" title="Back to Dashboard">&#8592;</a>
+      <div>
+        <div class="header-title">Autonomy Simulation</div>
+        <div class="header-sub">AI vs Human &mdash; what would have happened?</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <span class="auto-refresh"><span class="pulse"></span> Auto-refresh 60s</span>
+      <button class="btn" id="btnRunSim" onclick="runSimulation()">Run Simulation</button>
+      <a href="/" class="btn" style="background:rgba(255,255,255,.2);color:#fff">Home</a>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div id="content">
+      <div class="loading"><span class="spinner"></span> Loading simulation data...</div>
+    </div>
+  </div>
+
+  <!-- Bill detail modal -->
+  <div class="modal-overlay" id="billModal" onclick="closeBillModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2 id="modalTitle">Bill Detail</h2>
+        <button class="modal-close" onclick="closeBillModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <div class="loading"><span class="spinner"></span> Loading bill details...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toasts"></div>
+
+  <script>
+    /* ===== State ===== */
+    let simData = null;
+    let sortCol = 'vendor_name';
+    let sortDir = 'asc';
+    let expandedVendor = null;
+    let refreshTimer = null;
+
+    /* ===== Utilities ===== */
+    function esc(s) {
+      const el = document.createElement('span');
+      el.textContent = String(s || '');
+      return el.innerHTML;
+    }
+
+    function toast(msg, type) {
+      type = type || 'info';
+      const container = document.getElementById('toasts');
+      const el = document.createElement('div');
+      el.className = 'toast ' + type;
+      el.textContent = msg;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.style.animation = 'slideOut .3s ease forwards';
+        setTimeout(() => el.remove(), 300);
+      }, 4000);
+    }
+
+    function pctClass(val, goodThresh, warnThresh) {
+      if (val >= goodThresh) return 'success';
+      if (val >= warnThresh) return 'warning';
+      return 'danger';
+    }
+
+    function progressClass(val, goodThresh, warnThresh) {
+      if (val >= goodThresh) return 'good';
+      if (val >= warnThresh) return 'medium';
+      return 'bad';
+    }
+
+    function fmtPct(val) {
+      if (val == null) return '--';
+      return Number(val).toFixed(1) + '%';
+    }
+
+    /* ===== Data Loading ===== */
+    async function loadSimData() {
+      try {
+        const resp = await fetch('/api/autonomy/sim', { credentials: 'same-origin' });
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => ({}));
+          if (errBody.error === 'no_simulation_data') {
+            renderEmptyState();
+            return;
+          }
+          throw new Error(errBody.error || errBody.detail || ('HTTP ' + resp.status));
+        }
+        simData = await resp.json();
+        if (!simData || simData.error === 'no_simulation_data') {
+          renderEmptyState();
+          return;
+        }
+        renderDashboard();
+      } catch (err) {
+        console.error('Error loading sim data:', err);
+        document.getElementById('content').innerHTML =
+          '<div class="error">Failed to load simulation data: ' + esc(err.message) + '</div>';
+      }
+    }
+
+    async function runSimulation() {
+      const btn = document.getElementById('btnRunSim');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      toast('Simulation started. This may take a moment.', 'info');
+      try {
+        const resp = await fetch('/api/autonomy/sim/run', {
+          method: 'POST',
+          credentials: 'same-origin'
+        });
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => ({}));
+          throw new Error(errBody.error || errBody.detail || ('HTTP ' + resp.status));
+        }
+        const result = await resp.json();
+        toast('Simulation complete!', 'success');
+        await loadSimData();
+      } catch (err) {
+        console.error('Error running simulation:', err);
+        toast('Simulation failed: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Simulation';
+      }
+    }
+
+    async function loadBillDetail(pdfId) {
+      const modal = document.getElementById('billModal');
+      const body = document.getElementById('modalBody');
+      const title = document.getElementById('modalTitle');
+      modal.classList.add('open');
+      body.innerHTML = '<div class="loading"><span class="spinner"></span> Loading bill details...</div>';
+      title.textContent = 'Bill Detail';
+
+      try {
+        const resp = await fetch('/api/autonomy/sim/bill/' + encodeURIComponent(pdfId), {
+          credentials: 'same-origin'
+        });
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => ({}));
+          throw new Error(errBody.error || errBody.detail || ('HTTP ' + resp.status));
+        }
+        const bill = await resp.json();
+        renderBillModal(bill);
+      } catch (err) {
+        console.error('Error loading bill detail:', err);
+        body.innerHTML = '<div class="error">Failed to load bill details: ' + esc(err.message) + '</div>';
+      }
+    }
+
+    /* ===== Rendering ===== */
+    function renderEmptyState() {
+      document.getElementById('content').innerHTML = `
+        <div class="card">
+          <div class="empty-state">
+            <div class="icon">&#128300;</div>
+            <h3>No Simulation Data Yet</h3>
+            <p>Run a simulation to compare AI decisions against human actions on recently processed bills.</p>
+            <button class="btn primary" onclick="runSimulation()">Run Simulation</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDashboard() {
+      const d = simData;
+      const billsAnalyzed = d.bills_analyzed || 0;
+      const autoPassPct = d.auto_pass_pct != null ? Number(d.auto_pass_pct) : 0;
+      const accuracyPct = d.accuracy_pct != null ? Number(d.accuracy_pct) : 0;
+      const billsEvaluated = d.bills_evaluated || 0;
+
+      const apClass = pctClass(autoPassPct, 70, 50);
+      const accClass = pctClass(accuracyPct, 90, 80);
+
+      let html = '';
+
+      /* --- Stat cards --- */
+      html += `
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value">${billsAnalyzed.toLocaleString()}</div>
+            <div class="stat-label">Bills Analyzed</div>
+          </div>
+          <div class="stat-card ${apClass}">
+            <div class="stat-value">${fmtPct(autoPassPct)}</div>
+            <div class="stat-label">Would Auto-Pass</div>
+            <div class="progress-bar"><div class="progress-fill ${progressClass(autoPassPct, 70, 50)}" style="width:${Math.min(autoPassPct, 100)}%"></div></div>
+          </div>
+          <div class="stat-card ${accClass}">
+            <div class="stat-value">${fmtPct(accuracyPct)}</div>
+            <div class="stat-label">AI Accuracy</div>
+            <div class="progress-bar"><div class="progress-fill ${progressClass(accuracyPct, 90, 80)}" style="width:${Math.min(accuracyPct, 100)}%"></div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${billsEvaluated.toLocaleString()}</div>
+            <div class="stat-label">Bills Evaluated</div>
+          </div>
+        </div>
+      `;
+
+      /* --- Vendor table --- */
+      html += `
+        <div class="card">
+          <h2>Vendor Breakdown</h2>
+          <div id="vendorTableWrap">${buildVendorTable()}</div>
+        </div>
+      `;
+
+      document.getElementById('content').innerHTML = html;
+
+      /* Attach sort listeners after rendering */
+      document.querySelectorAll('.vendor-table th[data-col]').forEach(th => {
+        th.addEventListener('click', () => handleSort(th.dataset.col));
+      });
+    }
+
+    function buildVendorTable() {
+      const vendors = simData.vendors || [];
+      if (!vendors.length) {
+        return '<div class="empty-state" style="padding:30px"><p>No vendor data available.</p></div>';
+      }
+
+      const sorted = [...vendors].sort((a, b) => {
+        let va = a[sortCol], vb = b[sortCol];
+        if (typeof va === 'string') va = va.toLowerCase();
+        if (typeof vb === 'string') vb = vb.toLowerCase();
+        if (va == null) va = '';
+        if (vb == null) vb = '';
+        if (va < vb) return sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      const arrow = (col) => {
+        const active = sortCol === col;
+        const icon = active ? (sortDir === 'asc' ? '&#9650;' : '&#9660;') : '&#9650;';
+        return '<span class="sort-arrow">' + icon + '</span>';
+      };
+      const cls = (col) => sortCol === col ? ' class="sorted"' : '';
+
+      let html = `<table class="vendor-table">
+        <thead><tr>
+          <th data-col="vendor_name"${cls('vendor_name')}>Vendor Name ${arrow('vendor_name')}</th>
+          <th data-col="bill_count"${cls('bill_count')}>Bills ${arrow('bill_count')}</th>
+          <th data-col="auto_pass_pct"${cls('auto_pass_pct')}>Auto-Pass % ${arrow('auto_pass_pct')}</th>
+          <th data-col="accuracy_pct"${cls('accuracy_pct')}>Accuracy % ${arrow('accuracy_pct')}</th>
+          <th data-col="eligibility"${cls('eligibility')}>Eligibility ${arrow('eligibility')}</th>
+        </tr></thead><tbody>`;
+
+      for (const v of sorted) {
+        const vid = esc(v.vendor_id || v.vendor_name || '');
+        const isExpanded = expandedVendor === vid;
+        const eligBadge = getEligibilityBadge(v);
+
+        html += `<tr class="vendor-row${isExpanded ? ' expanded' : ''}" data-vendor="${vid}" onclick="toggleVendor('${vid}')">
+          <td>${esc(v.vendor_name)}</td>
+          <td>${v.bill_count || 0}</td>
+          <td>${fmtPct(v.auto_pass_pct)}</td>
+          <td>${fmtPct(v.accuracy_pct)}</td>
+          <td>${eligBadge}</td>
+        </tr>`;
+
+        if (isExpanded && v.bills) {
+          for (const bill of v.bills) {
+            const decisionBadge = bill.ai_decision === 'auto_pass'
+              ? '<span class="badge pass">AUTO-PASS</span>'
+              : '<span class="badge review">NEEDS REVIEW</span>';
+            const correctBadge = bill.ai_correct
+              ? '<span class="badge correct">&#10003;</span>'
+              : '<span class="badge wrong">&#10007;</span>';
+            const confidence = bill.confidence != null ? Number(bill.confidence).toFixed(0) + '%' : '--';
+
+            html += `<tr class="bill-row" onclick="loadBillDetail('${esc(bill.pdf_id || '')}')">
+              <td>${esc(bill.bill_date || '--')}</td>
+              <td>${esc(bill.property || '--')}</td>
+              <td>${esc(bill.account || '--')}</td>
+              <td>${decisionBadge} &nbsp; ${confidence}</td>
+              <td>
+                ${esc(bill.human_action || '--')} &nbsp; ${correctBadge}
+              </td>
+            </tr>`;
+          }
+        }
+      }
+
+      html += '</tbody></table>';
+      return html;
+    }
+
+    function getEligibilityBadge(vendor) {
+      if (vendor.eligible_for_autonomous) {
+        return '<span class="badge autonomous">READY: Autonomous</span>';
+      }
+      if (vendor.eligible_for_assisted) {
+        return '<span class="badge assisted">READY: Assisted</span>';
+      }
+      return '<span class="badge shadow">SHADOW</span>';
+    }
+
+    function handleSort(col) {
+      if (sortCol === col) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortCol = col;
+        sortDir = 'asc';
+      }
+      const wrap = document.getElementById('vendorTableWrap');
+      if (wrap) {
+        wrap.innerHTML = buildVendorTable();
+        document.querySelectorAll('.vendor-table th[data-col]').forEach(th => {
+          th.addEventListener('click', () => handleSort(th.dataset.col));
+        });
+      }
+    }
+
+    function toggleVendor(vid) {
+      expandedVendor = expandedVendor === vid ? null : vid;
+      const wrap = document.getElementById('vendorTableWrap');
+      if (wrap) {
+        wrap.innerHTML = buildVendorTable();
+        document.querySelectorAll('.vendor-table th[data-col]').forEach(th => {
+          th.addEventListener('click', () => handleSort(th.dataset.col));
+        });
+      }
+    }
+
+    /* ===== Bill Detail Modal ===== */
+    function renderBillModal(bill) {
+      const title = document.getElementById('modalTitle');
+      const body = document.getElementById('modalBody');
+      title.textContent = 'Bill: ' + (bill.vendor_name || bill.pdf_id || 'Unknown');
+
+      const aiCorrect = bill.ai_correct;
+      const bannerClass = aiCorrect ? 'match' : 'mismatch';
+      const bannerText = aiCorrect ? 'AI decision matches human action' : 'AI decision differs from human action';
+
+      const decisionBadge = bill.ai_decision === 'auto_pass'
+        ? '<span class="badge pass">AUTO-PASS</span>'
+        : '<span class="badge review">NEEDS REVIEW</span>';
+
+      const humanBadge = bill.human_action === 'unchanged'
+        ? '<span class="badge unchanged">UNCHANGED</span>'
+        : '<span class="badge changed">CHANGED</span>';
+
+      /* Line items */
+      const lines = bill.line_items || [];
+      let aiLinesHtml = '';
+      let humanLinesHtml = '';
+
+      for (const line of lines) {
+        const isGarbage = line.ai_garbage;
+        const lineClass = isGarbage ? 'garbage' : 'clean';
+        const tag = isGarbage ? 'GARBAGE' : 'CLEAN';
+        const conf = line.confidence != null ? Number(line.confidence).toFixed(0) + '%' : '';
+        aiLinesHtml += `<div class="line-item ${lineClass}">
+          <span class="line-desc" title="${esc(line.description || '')}">${esc(line.description || '(no description)')}</span>
+          <span class="line-tag">${tag} ${conf}</span>
+        </div>`;
+
+        const humanKept = line.human_kept;
+        const humanClass = humanKept ? 'clean' : 'garbage';
+        const humanTag = humanKept ? 'KEPT' : 'DELETED';
+        humanLinesHtml += `<div class="line-item ${humanClass}">
+          <span class="line-desc" title="${esc(line.description || '')}">${esc(line.description || '(no description)')}</span>
+          <span class="line-tag">${humanTag}</span>
+        </div>`;
+      }
+
+      if (!lines.length) {
+        aiLinesHtml = '<div style="color:#94a3b8;font-size:13px;padding:8px 0">No line-level data available.</div>';
+        humanLinesHtml = aiLinesHtml;
+      }
+
+      body.innerHTML = `
+        <div class="result-banner ${bannerClass}">${bannerText}</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;font-size:13px">
+          <div><span style="color:#64748b">Date:</span> <strong>${esc(bill.bill_date || '--')}</strong></div>
+          <div><span style="color:#64748b">Property:</span> <strong>${esc(bill.property || '--')}</strong></div>
+          <div><span style="color:#64748b">Account:</span> <strong>${esc(bill.account || '--')}</strong></div>
+        </div>
+
+        <div class="modal-panels">
+          <div class="modal-panel ai">
+            <h3>AI Would Have Done</h3>
+            <div class="detail-row">
+              <span class="detail-label">Decision</span>
+              <span class="detail-value">${decisionBadge}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Confidence</span>
+              <span class="detail-value">${bill.confidence != null ? Number(bill.confidence).toFixed(1) + '%' : '--'}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Garbage Lines Detected</span>
+              <span class="detail-value">${bill.garbage_count != null ? bill.garbage_count : '--'}</span>
+            </div>
+            <div style="margin-top:12px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Line Items</div>
+            ${aiLinesHtml}
+          </div>
+
+          <div class="modal-panel human">
+            <h3>Human Actually Did</h3>
+            <div class="detail-row">
+              <span class="detail-label">Action</span>
+              <span class="detail-value">${humanBadge}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Lines Deleted</span>
+              <span class="detail-value">${bill.human_deleted_count != null ? bill.human_deleted_count : '--'}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Lines Kept</span>
+              <span class="detail-value">${bill.human_kept_count != null ? bill.human_kept_count : '--'}</span>
+            </div>
+            <div style="margin-top:12px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Line Items</div>
+            ${humanLinesHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    function closeBillModal(event) {
+      if (event && event.target !== document.getElementById('billModal')) return;
+      document.getElementById('billModal').classList.remove('open');
+    }
+
+    /* Close modal on Escape key */
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeBillModal();
+    });
+
+    /* ===== Init ===== */
+    loadSimData();
+
+    /* Auto-refresh every 60 seconds */
+    refreshTimer = setInterval(loadSimData, 60000);
+  </script>
+</body>
+</html>

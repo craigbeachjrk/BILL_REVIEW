@@ -19,6 +19,7 @@ PENDING_PREFIX = os.getenv("PENDING_PREFIX", "Bill_Parser_1_Pending_Parsing/")
 STANDARD_PREFIX = os.getenv("STANDARD_PREFIX", "Bill_Parser_1_Standard/")
 LARGEFILE_PREFIX = os.getenv("LARGEFILE_PREFIX", "Bill_Parser_1_LargeFile/")
 ROUTER_TABLE = os.getenv("ROUTER_TABLE", "jrk-bill-router-log")
+PIPELINE_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
 
 # Thresholds
 MAX_PAGES_STANDARD = int(os.getenv("MAX_PAGES_STANDARD", "10"))
@@ -129,6 +130,30 @@ def lambda_handler(event, context):
 
             # Log routing decision
             log_routing_decision(key, page_count, file_size_mb, route, reason)
+
+            # Pipeline tracker event
+            try:
+                import hashlib
+                key_hash = hashlib.sha1(key.encode("utf-8")).hexdigest()
+                now_iso = datetime.now(timezone.utc)
+                epoch = int(now_iso.timestamp())
+                filename = key.rsplit("/", 1)[-1] if "/" in key else key
+                stage = "S1_Std" if route == "standard" else "S1_Lg"
+                ddb.put_item(TableName=PIPELINE_TRACKER_TABLE, Item={
+                    "pk": {"S": f"BILL#{key_hash}"},
+                    "sk": {"S": f"EVENT#{now_iso.isoformat()}"},
+                    "event_type": {"S": "ROUTED"},
+                    "s3_key": {"S": key},
+                    "stage": {"S": stage},
+                    "source": {"S": "lambda:jrk-bill-router"},
+                    "timestamp_epoch": {"N": str(epoch)},
+                    "event_date": {"S": now_iso.strftime("%Y-%m-%d")},
+                    "filename": {"S": filename},
+                    "metadata": {"S": json.dumps({"page_count": page_count, "file_size_mb": round(file_size_mb, 2), "route": route, "reason": reason})},
+                    "ttl": {"N": str(epoch + 90 * 86400)},
+                })
+            except Exception as te:
+                print(f"[PIPELINE_TRACKER] ROUTED event failed: {te}")
 
             print(json.dumps({
                 "message": "PDF routed successfully",

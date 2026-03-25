@@ -20,6 +20,27 @@ STANDARD_PREFIX = os.getenv("STANDARD_PREFIX", "Bill_Parser_1_Standard/")
 PARSED_INPUTS_PREFIX = os.getenv("PARSED_INPUTS_PREFIX", "Bill_Parser_2_Parsed_Inputs/")
 PARSED_OUTPUTS_PREFIX = os.getenv("PARSED_OUTPUTS_PREFIX", "Bill_Parser_3_Parsed_Outputs/")
 ERRORS_TABLE = os.getenv("ERRORS_TABLE", "jrk-bill-parser-errors")
+KNOWLEDGE_TABLE = os.getenv("KNOWLEDGE_TABLE", "jrk-bill-knowledge-base")
+PIPELINE_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
+
+
+def _track(s3_key, event_type, stage, metadata=None):
+    """Fire-and-forget pipeline tracker event."""
+    try:
+        import hashlib
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        ddb.put_item(TableName=PIPELINE_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"}, "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type}, "s3_key": {"S": s3_key}, "stage": {"S": stage},
+            "source": {"S": "lambda:jrk-bill-parser"}, "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")}, "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})}, "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception as e:
+        print(f"[PIPELINE_TRACKER] {event_type} failed: {e}")
 FAILED_PREFIX = os.getenv("FAILED_PREFIX", "Bill_Parser_Failed_Jobs/")
 LARGEFILE_PREFIX = os.getenv("LARGEFILE_PREFIX", "Bill_Parser_1_LargeFile/")
 PARSER_SECRET_NAME = os.getenv("PARSER_SECRET_NAME", "gemini/parser-keys")
@@ -320,6 +341,63 @@ def get_matcher_keys_from_secret() -> list:
     return [p for p in parts if p][:3]
 
 
+def fetch_knowledge_notes(vendor_name: str) -> str:
+    """Fetch knowledge notes for a vendor from the knowledge base table.
+    PK format is VENDOR#{entity_id} (numeric vendor ID), so we scan by entity_name.
+    Returns a formatted string to inject into the parser prompt, or empty string if none found."""
+    if not vendor_name:
+        return ""
+    try:
+        # Scan for vendor notes matching the vendor name (case-insensitive via multiple variants)
+        # Try: exact name, title-case, upper-case, lower-case, first word variants
+        name_variants = set()
+        name_variants.add(vendor_name)
+        name_variants.add(vendor_name.title())
+        name_variants.add(vendor_name.upper())
+        name_variants.add(vendor_name.lower())
+        first_word = vendor_name.split()[0] if vendor_name else ""
+        if first_word:
+            name_variants.add(first_word)
+            name_variants.add(first_word.title())
+            name_variants.add(first_word.upper())
+            name_variants.add(first_word.lower())
+
+        items = []
+        for variant in name_variants:
+            if not variant:
+                continue
+            resp = ddb.scan(
+                TableName=KNOWLEDGE_TABLE,
+                FilterExpression="entity_type = :et AND contains(entity_name, :vn)",
+                ExpressionAttributeValues={
+                    ":et": {"S": "vendor"},
+                    ":vn": {"S": variant},
+                },
+                Limit=20
+            )
+            items = resp.get("Items", [])
+            if items:
+                break
+
+        if not items:
+            return ""
+        notes_parts = []
+        for item in items:
+            category = item.get("category", {}).get("S", "")
+            content = item.get("content", {}).get("S", "")
+            entity_name = item.get("entity_name", {}).get("S", "")
+            if content:
+                label = f"[{category}]" if category else ""
+                notes_parts.append(f"- {label} {entity_name}: {content}")
+        if not notes_parts:
+            return ""
+        return ("\n\n**KNOWLEDGE BASE NOTES FOR THIS VENDOR** (use these to improve parsing accuracy):\n"
+                + "\n".join(notes_parts))
+    except Exception as e:
+        print(json.dumps({"message": "Failed to fetch knowledge notes", "vendor": vendor_name, "error": str(e)}))
+        return ""
+
+
 def call_gemini_rest(api_key: str, pdf_bytes: bytes, prompt: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={api_key}"
     payload = {
@@ -476,9 +554,17 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
     prev_content_errors = []  # Track content validation errors for retry feedback
     rows: list[list[str]] = []
     failed_due_to_columns = False
+    # Fetch knowledge notes once before retry loop (uses global __BILL_FROM_RAW)
+    knowledge_notes = fetch_knowledge_notes(__BILL_FROM_RAW) if __BILL_FROM_RAW else ""
+    if knowledge_notes:
+        print(json.dumps({"message": "Knowledge notes found for vendor", "vendor": __BILL_FROM_RAW, "notes_length": len(knowledge_notes)}))
+
     while attempts < MAX_ATTEMPTS:
         attempts += 1
         prompt = PROMPT
+        # Add knowledge base notes if available
+        if knowledge_notes:
+            prompt += knowledge_notes
         # Add expected_lines hint if provided from rework metadata
         if __EXPECTED_LINES and __EXPECTED_LINES > 0:
             prompt += (f"\n\n**CRITICAL REQUIREMENT**: A human reviewer has verified this bill contains EXACTLY {__EXPECTED_LINES} line items. "
@@ -740,6 +826,8 @@ def lambda_handler(event, context):
         if not (is_pending or is_standard):
             continue
 
+        _track(key, "PARSING", "S1_Std")
+
         # Compute suffix and copy into Parsed_Inputs
         if is_pending:
             suffix = key[len(PENDING_PREFIX):]
@@ -840,6 +928,7 @@ def lambda_handler(event, context):
         if rows:
             key_stem = f"{dest_key_inputs.split('/',1)[-1].rsplit('.',1)[0]}"
             out_key = write_ndjson(BUCKET, key_stem, rows, dest_key_inputs, bill_from=bill_from, pdf_id=key_stem)
+            _track(key, "PARSED", "S3", {"line_count": len(rows), "out_key": out_key})
             print(json.dumps({"message": "Parsed and wrote NDJSON", "out_key": out_key, "rows": len(rows)}))
         else:
             # Check if this file has already been through the large file processor
@@ -886,6 +975,7 @@ def lambda_handler(event, context):
                 }
                 body = (json.dumps(diag, ensure_ascii=False) + "\n\n=== last_model_reply ===\n" + (last_reply if isinstance(last_reply, str) else ""))
                 s3.put_object(Bucket=bucket, Key=diag_key, Body=body.encode('utf-8'), ContentType='text/plain')
+                _track(key, "FAILED", "FAILED", {"error": last_error, "attempts": attempt, "failed_key": failed_key})
                 print(json.dumps({
                     "message": "Parsing failed after attempts; moved to failed prefix",
                     "failed_due_to_columns": failed_due_to_columns,

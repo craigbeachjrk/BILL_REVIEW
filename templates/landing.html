@@ -156,6 +156,16 @@
         <h2>CONFIG</h2>
         <div class="muted">Set the system up</div>
       </a>
+      <a class="tile" href="/pipeline">
+        <h2>PIPELINE TRACKER</h2>
+        <div class="muted">Real-time bill lifecycle & queue visibility</div>
+      </a>
+      {% if is_admin %}
+      <a class="tile" href="/autonomy-sim">
+        <h2>AUTONOMY SIM</h2>
+        <div class="muted">AI vs Human — simulation dashboard</div>
+      </a>
+      {% endif %}
     </div>
   </div>
 

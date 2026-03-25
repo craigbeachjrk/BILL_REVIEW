@@ -26,8 +26,29 @@ CHUNKS_PREFIX = os.getenv("CHUNKS_PREFIX", "Bill_Parser_1_LargeFile_Chunks/")
 CHUNK_RESULTS_PREFIX = os.getenv("CHUNK_RESULTS_PREFIX", "Bill_Parser_1_LargeFile_Results/")
 JOBS_TABLE = os.getenv("JOBS_TABLE", "jrk-bill-parser-jobs")
 ERRORS_TABLE = os.getenv("ERRORS_TABLE", "jrk-bill-parser-errors")
+KNOWLEDGE_TABLE = os.getenv("KNOWLEDGE_TABLE", "jrk-bill-knowledge-base")
 PARSER_SECRET_NAME = os.getenv("PARSER_SECRET_NAME", "gemini/parser-keys")
+PIPELINE_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3-pro-preview")
+
+
+def _track(s3_key, event_type, stage, metadata=None):
+    """Fire-and-forget pipeline tracker event."""
+    try:
+        import hashlib
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        ddb.put_item(TableName=PIPELINE_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"}, "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type}, "s3_key": {"S": s3_key}, "stage": {"S": stage},
+            "source": {"S": "lambda:jrk-bill-chunk-processor"}, "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")}, "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})}, "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception as e:
+        print(f"[PIPELINE_TRACKER] {event_type} failed: {e}")
 MAX_DROPPED_ROWS_BEFORE_RETRY = 5  # Retry parsing if more than this many rows dropped
 
 # Columns (same as standard parser)
@@ -121,6 +142,61 @@ def get_keys_from_secret() -> list:
     except Exception as e:
         print(f"Error getting keys: {e}")
         return []
+
+
+def fetch_knowledge_notes(vendor_name: str) -> str:
+    """Fetch knowledge notes for a vendor from the knowledge base table.
+    PK format is VENDOR#{entity_id} (numeric vendor ID), so we scan by entity_name.
+    Returns a formatted string to inject into the parser prompt, or empty string if none found."""
+    if not vendor_name:
+        return ""
+    try:
+        name_variants = set()
+        name_variants.add(vendor_name)
+        name_variants.add(vendor_name.title())
+        name_variants.add(vendor_name.upper())
+        name_variants.add(vendor_name.lower())
+        first_word = vendor_name.split()[0] if vendor_name else ""
+        if first_word:
+            name_variants.add(first_word)
+            name_variants.add(first_word.title())
+            name_variants.add(first_word.upper())
+            name_variants.add(first_word.lower())
+
+        items = []
+        for variant in name_variants:
+            if not variant:
+                continue
+            resp = ddb.scan(
+                TableName=KNOWLEDGE_TABLE,
+                FilterExpression="entity_type = :et AND contains(entity_name, :vn)",
+                ExpressionAttributeValues={
+                    ":et": {"S": "vendor"},
+                    ":vn": {"S": variant},
+                },
+                Limit=20
+            )
+            items = resp.get("Items", [])
+            if items:
+                break
+
+        if not items:
+            return ""
+        notes_parts = []
+        for item in items:
+            category = item.get("category", {}).get("S", "")
+            content = item.get("content", {}).get("S", "")
+            entity_name = item.get("entity_name", {}).get("S", "")
+            if content:
+                label = f"[{category}]" if category else ""
+                notes_parts.append(f"- {label} {entity_name}: {content}")
+        if not notes_parts:
+            return ""
+        return ("\n\n**KNOWLEDGE BASE NOTES FOR THIS VENDOR** (use these to improve parsing accuracy):\n"
+                + "\n".join(notes_parts))
+    except Exception as e:
+        print(json.dumps({"message": "Failed to fetch knowledge notes", "vendor": vendor_name, "error": str(e)}))
+        return ""
 
 
 def get_job_info(job_id: str) -> dict:
@@ -425,7 +501,7 @@ def _remaining_ms(deadline_epoch_ms: int) -> int:
 MIN_TIME_FOR_ATTEMPT_MS = 30_000  # 30 seconds — generous buffer for API + S3 write
 
 
-def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0) -> tuple[list[list[str]], str]:
+def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0, knowledge_notes: str = "") -> tuple[list[list[str]], str]:
     """
     Parse a PDF chunk with key rotation and exponential backoff.
 
@@ -481,6 +557,10 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
 Use the vendor, account number, bill dates, and service address from the previous context and include them on EVERY row you output from this chunk. Continue extracting line items from this chunk, maintaining consistency with previous data."""
     else:
         context_note = f"This is chunk {chunk_num} of {total_chunks} from a multi-page invoice. Extract header information (vendor, account, dates, addresses) and include them on EVERY row."
+
+    # Append knowledge notes to context_note if available
+    if knowledge_notes:
+        context_note += knowledge_notes
 
     prompt = PROMPT_TEMPLATE.format(context_note=context_note)
 
@@ -803,6 +883,8 @@ def lambda_handler(event, context):
         if not key.startswith(CHUNKS_PREFIX):
             continue
 
+        _track(key, "PARSING", "S1_Lg", {"type": "chunk"})
+
         # Extract job_id and chunk_num from key
         # Format: Bill_Parser_1_LargeFile_Chunks/{job_id}/chunk_001.pdf
         path_parts = key[len(CHUNKS_PREFIX):].split('/')
@@ -869,6 +951,12 @@ def lambda_handler(event, context):
         else:
             context_for_chunk = ''  # Chunk 1 has no prior context
 
+        # Fetch knowledge notes for this vendor (once per invocation)
+        bill_from = job_info.get('bill_from', '')
+        knowledge_notes = fetch_knowledge_notes(bill_from)
+        if knowledge_notes:
+            print(json.dumps({"message": "Knowledge notes found for vendor", "vendor": bill_from, "notes_length": len(knowledge_notes)}))
+
         # Parse chunk with key rotation and exponential backoff
         rows, context_summary = parse_chunk_with_retry(
             keys,  # Pass all keys for rotation
@@ -878,6 +966,7 @@ def lambda_handler(event, context):
             context_for_chunk,
             job_info.get('expected_lines', 0),
             deadline_ms=deadline_ms,
+            knowledge_notes=knowledge_notes,
         )
 
         timing["geminiMs"] = int((time.time() - t0) * 1000)
@@ -921,6 +1010,7 @@ def lambda_handler(event, context):
                 Body=json.dumps(result_data, ensure_ascii=False).encode('utf-8'),
                 ContentType='application/json'
             )
+            _track(key, "PARSED", "S1_Lg", {"type": "chunk", "chunk_num": chunk_num, "rows": len(rows), "job_id": job_id})
             print(json.dumps({"message": "Chunk result saved", "result_key": result_key, "rows": len(rows), "failed": chunk_failed}))
             # Write timing sidecar
             timing["totalMs"] = int((time.time() - t0) * 1000)

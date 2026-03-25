@@ -24,6 +24,28 @@ DIM_UOM_PREFIX = os.getenv("DIM_UOM_PREFIX", ENRICH_PREFIX + "dim_uom_mapping/")
 MATCHER_SECRET_NAME = os.getenv("MATCHER_SECRET_NAME", "gemini/matcher-keys")
 ENRICH_MODEL = os.getenv("ENRICH_MODEL", "gemini-1.5-flash")
 PARSED_INPUTS_PREFIX = os.getenv("PARSED_INPUTS_PREFIX", "Bill_Parser_2_Parsed_Inputs/")
+PIPELINE_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
+_ddb_tracker = boto3.client("dynamodb")
+
+
+def _track(s3_key, event_type, stage, metadata=None):
+    """Fire-and-forget pipeline tracker event."""
+    try:
+        import hashlib
+        from datetime import timezone
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        _ddb_tracker.put_item(TableName=PIPELINE_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"}, "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type}, "s3_key": {"S": s3_key}, "stage": {"S": stage},
+            "source": {"S": "lambda:jrk-bill-enricher"}, "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")}, "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})}, "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception as e:
+        print(f"[PIPELINE_TRACKER] {event_type} failed: {e}")
 SHORTENER_URL = os.getenv("SHORTENER_URL", "")  # e.g., https://abc123.execute-api.us-east-1.amazonaws.com
 
 _VENDOR_CANDIDATES = None
@@ -928,6 +950,7 @@ def lambda_handler(event, context):
         key = unquote_plus(record["s3"]["object"]["key"])
         if not key.startswith(INPUT_PREFIX):
             continue
+        _track(key, "ENRICHING", "S3")
         obj = s3.get_object(Bucket=bucket, Key=key)
         body = obj["Body"].read().decode("utf-8", errors="ignore")
         lines = [ln for ln in body.splitlines() if ln.strip()]
@@ -936,5 +959,6 @@ def lambda_handler(event, context):
         stem = key.split("/", 1)[-1]  # drop prefix
         out_key = f"{OUTPUT_PREFIX}{stem}"
         s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
+        _track(key, "ENRICHED", "S4", {"out_key": out_key, "line_count": len(enriched_lines)})
         print(json.dumps({"message": "Enriched file written", "out_key": out_key, "lines": len(enriched_lines)}))
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

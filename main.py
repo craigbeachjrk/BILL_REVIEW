@@ -132,6 +132,7 @@ SHORT_TABLE = os.getenv("SHORT_TABLE", "jrk-url-short")
 CONFIG_TABLE = os.getenv("CONFIG_TABLE", "jrk-bill-config")
 KNOWLEDGE_TABLE = os.getenv("KNOWLEDGE_TABLE", "jrk-bill-knowledge-base")
 AI_SUGGESTIONS_TABLE = os.getenv("AI_SUGGESTIONS_TABLE", "jrk-bill-ai-suggestions")
+PIPELINE_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
 DEBUG_TABLE = os.getenv("DEBUG_TABLE", "jrk-bill-review-debug")
 STAGE4_PREFIX = os.getenv("STAGE4_PREFIX", "Bill_Parser_4_Enriched_Outputs/")
 STAGE6_PREFIX = os.getenv("STAGE6_PREFIX", "Bill_Parser_6_PreEntrata_Submission/")
@@ -11714,6 +11715,480 @@ def api_parser_queue_depth(user: str = Depends(require_user)):
         return {"queues": counts, "total_waiting": sum(counts.values())}
 
     return _metrics_serve("queue_depth", _compute)
+
+
+# -------- Pipeline Queue Tracker (Phase 1A) --------
+
+def _pipeline_track(s3_key: str, event_type: str, source: str, stage: str, metadata: dict | None = None):
+    """Fire-and-forget pipeline lifecycle event from the app. Non-blocking."""
+    import hashlib as _hl
+    try:
+        key_hash = _hl.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = dt.datetime.now(dt.timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        ddb.put_item(TableName=PIPELINE_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"},
+            "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type},
+            "s3_key": {"S": s3_key},
+            "stage": {"S": stage},
+            "source": {"S": source},
+            "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")},
+            "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})},
+            "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception as e:
+        print(f"[PIPELINE_TRACKER] {event_type} write failed for {s3_key}: {e}")
+
+
+@app.get("/pipeline", response_class=HTMLResponse)
+def pipeline_view(request: Request, user: str = Depends(require_user)):
+    """Pipeline queue tracker page — shows every bill's lifecycle."""
+    return templates.TemplateResponse("pipeline.html", {"request": request, "user": user, "is_admin": user in ADMIN_USERS})
+
+
+@app.get("/api/pipeline/queue")
+def api_pipeline_queue(user: str = Depends(require_user)):
+    """Real-time queue status — count + oldest age per stage. 30s cache."""
+    cache_key = ("pipeline_queue",)
+    cached = _CACHE.get(cache_key)
+    if cached and (time.time() - cached.get("ts", 0) < 30):
+        return cached["data"]
+
+    active_stages = ["S1", "S1_Std", "S1_Lg", "S3", "S4"]
+    now_epoch = int(time.time())
+    stages = []
+    total = 0
+    for st in active_stages:
+        try:
+            resp = ddb.query(
+                TableName=PIPELINE_TRACKER_TABLE,
+                IndexName="gsi-stage-time",
+                KeyConditionExpression="stage = :s",
+                ExpressionAttributeValues={":s": {"S": st}},
+                ScanIndexForward=True,  # oldest first
+                Limit=100,
+            )
+            items = resp.get("Items", [])
+            # Deduplicate by pk — keep only latest event per bill
+            latest_by_bill = {}
+            for it in items:
+                pk = it["pk"]["S"]
+                ts = int(it["timestamp_epoch"]["N"])
+                if pk not in latest_by_bill or ts > latest_by_bill[pk]["ts"]:
+                    latest_by_bill[pk] = {"ts": ts, "item": it}
+            # Filter: only bills whose LATEST event is in this stage
+            # (bills that moved on will have a later event in a different stage)
+            count = len(latest_by_bill)
+            oldest_epoch = min((v["ts"] for v in latest_by_bill.values()), default=now_epoch)
+            oldest_age_min = max(0, (now_epoch - oldest_epoch) // 60)
+            stages.append({"stage": st, "count": count, "oldest_age_minutes": oldest_age_min})
+            total += count
+        except Exception as e:
+            print(f"[PIPELINE] Queue query for {st} failed: {e}")
+            stages.append({"stage": st, "count": 0, "oldest_age_minutes": 0})
+
+    result = {"stages": stages, "total_in_flight": total, "as_of": dt.datetime.now(dt.timezone.utc).isoformat()}
+    _CACHE[cache_key] = {"ts": time.time(), "data": result}
+    return result
+
+
+@app.get("/api/pipeline/bill/{pdf_id}")
+def api_pipeline_bill(pdf_id: str, user: str = Depends(require_user)):
+    """Full lifecycle timeline for one bill. Query by pdf_id (SHA1 hash)."""
+    try:
+        resp = _ddb_client.query(
+            TableName=PIPELINE_TRACKER_TABLE,
+            KeyConditionExpression="pk = :pk",
+            ExpressionAttributeValues={":pk": {"S": f"BILL#{pdf_id}"}},
+            ScanIndexForward=True,
+        )
+        events = []
+        for it in resp.get("Items", []):
+            meta = {}
+            try:
+                meta = json.loads(it.get("metadata", {}).get("S", "{}"))
+            except Exception:
+                pass
+            events.append({
+                "event_type": it.get("event_type", {}).get("S", ""),
+                "timestamp": it.get("sk", {}).get("S", "").replace("EVENT#", ""),
+                "stage": it.get("stage", {}).get("S", ""),
+                "source": it.get("source", {}).get("S", ""),
+                "filename": it.get("filename", {}).get("S", ""),
+                "s3_key": it.get("s3_key", {}).get("S", ""),
+                "metadata": meta,
+            })
+        current_stage = events[-1]["stage"] if events else "unknown"
+        first_ts = events[0]["timestamp"] if events else ""
+        last_ts = events[-1]["timestamp"] if events else ""
+        return {
+            "pdf_id": pdf_id,
+            "filename": events[0]["filename"] if events else "",
+            "events": events,
+            "current_stage": current_stage,
+            "event_count": len(events),
+            "first_seen": first_ts,
+            "last_event": last_ts,
+        }
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "pipeline bill lookup")}, status_code=500)
+
+
+@app.get("/api/pipeline/stuck")
+def api_pipeline_stuck(threshold_minutes: int = 60, user: str = Depends(require_user)):
+    """Find bills stuck in a stage longer than threshold."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    cutoff_epoch = int(time.time()) - (threshold_minutes * 60)
+    now_epoch = int(time.time())
+    stuck = []
+    for st in ["S1", "S1_Std", "S1_Lg", "S3"]:
+        try:
+            resp = ddb.query(
+                TableName=PIPELINE_TRACKER_TABLE,
+                IndexName="gsi-stage-time",
+                KeyConditionExpression="stage = :s AND timestamp_epoch < :cutoff",
+                ExpressionAttributeValues={
+                    ":s": {"S": st},
+                    ":cutoff": {"N": str(cutoff_epoch)},
+                },
+                ScanIndexForward=True,
+                Limit=50,
+            )
+            for it in resp.get("Items", []):
+                ts = int(it.get("timestamp_epoch", {}).get("N", "0"))
+                age_min = (now_epoch - ts) // 60
+                meta = {}
+                try:
+                    meta = json.loads(it.get("metadata", {}).get("S", "{}"))
+                except Exception:
+                    pass
+                stuck.append({
+                    "pdf_id": it.get("pk", {}).get("S", "").replace("BILL#", ""),
+                    "filename": it.get("filename", {}).get("S", ""),
+                    "stage": st,
+                    "age_minutes": age_min,
+                    "event_type": it.get("event_type", {}).get("S", ""),
+                    "s3_key": it.get("s3_key", {}).get("S", ""),
+                    "metadata": meta,
+                })
+        except Exception as e:
+            print(f"[PIPELINE] Stuck query for {st} failed: {e}")
+    stuck.sort(key=lambda x: x["age_minutes"], reverse=True)
+    return {"stuck": stuck, "threshold_minutes": threshold_minutes}
+
+
+@app.get("/api/pipeline/stats")
+def api_pipeline_stats(hours: int = 24, user: str = Depends(require_user)):
+    """Aggregate pipeline throughput by hour for the last N hours."""
+    def _compute():
+        from collections import defaultdict
+        cutoff_epoch = int(time.time()) - (hours * 3600)
+        today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+        yesterday = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).strftime("%Y-%m-%d")
+        by_hour = defaultdict(lambda: defaultdict(int))
+        for day in [yesterday, today]:
+            try:
+                resp = _ddb_client.query(
+                    TableName=PIPELINE_TRACKER_TABLE,
+                    IndexName="gsi-date",
+                    KeyConditionExpression="event_date = :d",
+                    ExpressionAttributeValues={":d": {"S": day}},
+                )
+                for it in resp.get("Items", []):
+                    ts = int(it.get("timestamp_epoch", {}).get("N", "0"))
+                    if ts < cutoff_epoch:
+                        continue
+                    hour_key = dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%dT%H")
+                    evt = it.get("event_type", {}).get("S", "")
+                    by_hour[hour_key][evt.lower()] += 1
+            except Exception as e:
+                print(f"[PIPELINE] Stats query for {day} failed: {e}")
+        result = []
+        for hour_key in sorted(by_hour.keys()):
+            entry = {"hour": hour_key}
+            entry.update(by_hour[hour_key])
+            result.append(entry)
+        return {"by_hour": result, "hours": hours}
+    return _metrics_serve("pipeline_stats", _compute)
+
+
+# -------- Autonomy Simulation (Phase 1B) --------
+
+AUTONOMY_SIM_CACHE_KEY = CONFIG_PREFIX + "autonomy_sim_results.json.gz"
+
+@app.get("/autonomy-sim", response_class=HTMLResponse)
+def autonomy_sim_view(request: Request, user: str = Depends(require_user)):
+    """Autonomy simulation dashboard — shows what AI would have done vs what humans did."""
+    if user not in ADMIN_USERS:
+        return RedirectResponse("/")
+    return templates.TemplateResponse("autonomy_sim.html", {"request": request, "user": user})
+
+
+@app.get("/api/autonomy/sim")
+def api_autonomy_sim(user: str = Depends(require_user)):
+    """Get cached simulation results. Returns S3-persisted data via _metrics_serve pattern."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+
+    def _load():
+        import gzip
+        try:
+            resp = s3.get_object(Bucket=BUCKET, Key=AUTONOMY_SIM_CACHE_KEY)
+            return json.loads(gzip.decompress(resp["Body"].read()))
+        except s3.exceptions.NoSuchKey:
+            return {"error": "no_simulation_data", "message": "No simulation has been run yet. Click 'Run Simulation' to generate data."}
+        except Exception:
+            return {"error": "no_simulation_data", "message": "No simulation has been run yet. Click 'Run Simulation' to generate data."}
+
+    return _metrics_serve("autonomy_sim", _load)
+
+
+@app.post("/api/autonomy/sim/run")
+def api_autonomy_sim_run(user: str = Depends(require_user)):
+    """Run autonomy simulation in-process (deterministic checks only, no Gemini).
+    Analyzes recent Stage 4 bills and compares AI predictions to human actions."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+
+    def _run_sim():
+        import gzip
+        from collections import defaultdict
+
+        results = []
+        vendor_stats = defaultdict(lambda: {
+            "vendor_name": "", "bills": 0, "would_auto_pass": 0,
+            "garbage_tp": 0, "garbage_fp": 0, "garbage_fn": 0,
+            "ai_correct": 0
+        })
+
+        # Scan last 14 days of Stage 4 bills
+        today = dt.date.today()
+        for day_offset in range(14):
+            d = today - dt.timedelta(days=day_offset)
+            y, m, dd = str(d.year), f"{d.month:02d}", f"{d.day:02d}"
+            try:
+                day_rows = load_day(y, m, dd)
+            except Exception:
+                continue
+            if not day_rows:
+                continue
+
+            # Group by pdf_id
+            by_pdf = {}
+            for row in day_rows:
+                key = row.get("__s3_key__", "")
+                pid = pdf_id_from_key(key) if key else ""
+                if pid and pid != "(unknown)":
+                    by_pdf.setdefault(pid, []).append(row)
+
+            for pid, lines in by_pdf.items():
+                if not lines:
+                    continue
+                first = lines[0]
+                vendor_id = str(first.get("EnrichedVendorID", "") or "")
+                vendor_name = str(first.get("EnrichedVendorName", "") or first.get("Vendor Name", "") or "")
+                property_name = str(first.get("EnrichedPropertyName", "") or "")
+
+                # Run deterministic garbage detection
+                garbage = _detect_garbage_lines(lines, vendor_id=vendor_id)
+                garbage_ids = {g.get("line_id", "") for g in garbage if g.get("line_id")}
+
+                # Check account history
+                account_no = str(first.get("Account Number", "") or "")
+                property_id = str(first.get("EnrichedPropertyID", "") or "")
+                historical_flags = []
+                try:
+                    history = _get_account_history(vendor_id, property_id, account_no)
+                    if history:
+                        total = sum(float(r.get("Line Item Charge", 0) or 0) for r in lines
+                                    if not any(g.get("line_id") == r.get("__id__") for g in garbage))
+                        avg_hist = sum(h.get("total_amount", 0) for h in history) / max(len(history), 1)
+                        if avg_hist > 0 and total > avg_hist * 3:
+                            historical_flags.append("amount_spike")
+                except Exception:
+                    pass
+
+                # Compute would_auto_pass (simplified deterministic version)
+                confidence = 80
+                if not history:
+                    confidence -= 20
+                if garbage:
+                    confidence -= 5
+                if historical_flags:
+                    confidence -= 15
+
+                would_auto_pass = (
+                    len(garbage) == 0
+                    and len(historical_flags) == 0
+                    and confidence >= 85
+                )
+
+                # Check if human has already submitted this bill (look for AI suggestion record)
+                human_action = "pending_review"
+                ai_was_correct = None
+                try:
+                    suggestion = _get_ai_suggestion(pid)
+                    if suggestion:
+                        human_changed = suggestion.get("human_changed", None)
+                        if human_changed is not None:
+                            human_action = "submitted_with_changes" if human_changed else "submitted_unchanged"
+                            ai_was_correct = (
+                                (would_auto_pass and not human_changed) or
+                                (not would_auto_pass and human_changed)
+                            )
+                except Exception:
+                    pass
+
+                bill_result = {
+                    "pdf_id": pid,
+                    "date": f"{y}-{m}-{dd}",
+                    "vendor_id": vendor_id,
+                    "vendor_name": vendor_name,
+                    "property_name": property_name,
+                    "account_number": account_no,
+                    "line_count": len(lines),
+                    "ai_decision": "auto_pass" if would_auto_pass else "needs_review",
+                    "confidence": confidence,
+                    "garbage_detected": len(garbage),
+                    "garbage_details": [{"desc": g.get("description", ""), "charge": g.get("charge", 0), "reason": g.get("reason", "")} for g in garbage[:10]],
+                    "historical_flags": historical_flags,
+                    "human_action": human_action,
+                    "ai_was_correct": ai_was_correct,
+                }
+                results.append(bill_result)
+
+                # Vendor aggregates
+                vs = vendor_stats[vendor_id]
+                vs["vendor_name"] = vendor_name
+                vs["bills"] += 1
+                if would_auto_pass:
+                    vs["would_auto_pass"] += 1
+                if ai_was_correct is True:
+                    vs["ai_correct"] += 1
+
+        # Compute aggregate stats
+        total_bills = len(results)
+        auto_pass_count = sum(1 for r in results if r["ai_decision"] == "auto_pass")
+        correct_count = sum(1 for r in results if r["ai_was_correct"] is True)
+        evaluated_count = sum(1 for r in results if r["ai_was_correct"] is not None)
+
+        sim_data = {
+            "computed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "date_range": {
+                "start": (today - dt.timedelta(days=13)).isoformat(),
+                "end": today.isoformat(),
+            },
+            "bills_analyzed": total_bills,
+            "aggregate": {
+                "would_auto_pass_pct": round(auto_pass_count / max(total_bills, 1) * 100, 1),
+                "auto_pass_accuracy": round(correct_count / max(evaluated_count, 1) * 100, 1) if evaluated_count else None,
+                "evaluated_bills": evaluated_count,
+            },
+            "by_vendor": sorted([
+                {
+                    "vendor_id": vid,
+                    "vendor_name": vs["vendor_name"],
+                    "bills": vs["bills"],
+                    "would_auto_pass": vs["would_auto_pass"],
+                    "auto_pass_pct": round(vs["would_auto_pass"] / max(vs["bills"], 1) * 100, 1),
+                    "accuracy": round(vs["ai_correct"] / max(vs["bills"], 1) * 100, 1),
+                    "eligible_for_assisted": vs["bills"] >= 10 and vs["ai_correct"] / max(vs["bills"], 1) >= 0.8,
+                    "eligible_for_autonomous": vs["bills"] >= 20 and vs["ai_correct"] / max(vs["bills"], 1) >= 0.95,
+                }
+                for vid, vs in vendor_stats.items() if vs["bills"] > 0
+            ], key=lambda x: x["bills"], reverse=True),
+            "recent_bills": sorted(results, key=lambda x: x["date"], reverse=True)[:200],
+        }
+
+        # Persist to S3
+        try:
+            compressed = gzip.compress(json.dumps(sim_data).encode())
+            s3.put_object(Bucket=BUCKET, Key=AUTONOMY_SIM_CACHE_KEY, Body=compressed, ContentType="application/json", ContentEncoding="gzip")
+            print(f"[AUTONOMY SIM] Saved {total_bills} bill results to S3")
+        except Exception as e:
+            print(f"[AUTONOMY SIM] S3 save failed: {e}")
+
+        # Update in-memory cache
+        _CACHE[("autonomy_sim",)] = {"ts": time.time(), "data": sim_data}
+
+    # Run in background thread
+    threading.Thread(target=_run_sim, daemon=True).start()
+    return {"status": "started", "message": "Simulation running in background. Results will appear in 1-5 minutes."}
+
+
+@app.get("/api/autonomy/sim/bill/{pdf_id}")
+def api_autonomy_sim_bill(pdf_id: str, user: str = Depends(require_user)):
+    """Real-time deterministic analysis for a single bill."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+
+    # Find the bill in recent days
+    today = dt.date.today()
+    lines = None
+    bill_date = None
+    for day_offset in range(30):
+        d = today - dt.timedelta(days=day_offset)
+        y, m, dd = str(d.year), f"{d.month:02d}", f"{d.day:02d}"
+        try:
+            day_rows = load_day(y, m, dd)
+        except Exception:
+            continue
+        for row in day_rows:
+            key = row.get("__s3_key__", "")
+            if pdf_id_from_key(key) == pdf_id:
+                if lines is None:
+                    lines = []
+                    bill_date = f"{y}-{m}-{dd}"
+                lines.append(row)
+
+    if not lines:
+        return JSONResponse({"error": f"Bill {pdf_id} not found in last 30 days"}, status_code=404)
+
+    first = lines[0]
+    vendor_id = str(first.get("EnrichedVendorID", "") or "")
+    vendor_name = str(first.get("EnrichedVendorName", "") or "")
+    property_name = str(first.get("EnrichedPropertyName", "") or "")
+    account_no = str(first.get("Account Number", "") or "")
+    property_id = str(first.get("EnrichedPropertyID", "") or "")
+
+    # Garbage detection
+    garbage = _detect_garbage_lines(lines, vendor_id=vendor_id)
+
+    # Historical comparison
+    history = []
+    historical_flags = []
+    try:
+        history = _get_account_history(vendor_id, property_id, account_no)
+    except Exception:
+        pass
+
+    # Confidence
+    confidence = 80
+    if not history:
+        confidence -= 20
+    if garbage:
+        confidence -= 5
+    would_auto_pass = len(garbage) == 0 and len(historical_flags) == 0 and confidence >= 85
+
+    return {
+        "pdf_id": pdf_id,
+        "date": bill_date,
+        "vendor_name": vendor_name,
+        "property_name": property_name,
+        "account_number": account_no,
+        "line_count": len(lines),
+        "garbage_lines": [{"index": g.get("line_index"), "desc": g.get("description", ""), "charge": g.get("charge", 0), "reason": g.get("reason", ""), "confidence": g.get("confidence", 0)} for g in garbage],
+        "history": history[:5],
+        "historical_flags": historical_flags,
+        "would_auto_pass": would_auto_pass,
+        "confidence": confidence,
+        "lines": [{"id": r.get("__id__", ""), "desc": str(r.get("Line Item Description", "")), "charge": str(r.get("Line Item Charge", "")), "gl": str(r.get("EnrichedGLAccountName", ""))} for r in lines],
+    }
 
 
 @app.get("/api/metrics/submitter-stats")
@@ -25919,6 +26394,11 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                             s3.delete_object(Bucket=BUCKET, Key=k)
 
                 _write_jsonl(PRE_ENTRATA_PREFIX, y, m, d, basename, merged_with_meta)
+
+                # Pipeline tracker: SUBMITTED event
+                s3_key = first.get("__s3_key__", "")
+                if s3_key:
+                    _pipeline_track(s3_key, "SUBMITTED", "S6", {"user": user, "line_count": len(merged_with_meta), "vendor": str(first.get("EnrichedVendorName", ""))})
 
                 # Append extra lines to Stage 4 if needed
                 if extra_lines and first.get("__s3_key__"):

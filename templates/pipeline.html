@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pipeline Tracker &middot; Bill Review @ JRK</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0f766e; --bg2:#1e3a5f; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+
+    /* ── Header ── */
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;
+      background:linear-gradient(135deg,var(--bg),var(--bg2));backdrop-filter:blur(6px)}
+    header.top .title-group{display:flex;align-items:center;gap:12px}
+    header.top .back-arrow{color:#fff;text-decoration:none;font-size:20px;line-height:1;opacity:.8;transition:opacity .15s}
+    header.top .back-arrow:hover{opacity:1}
+    header.top h1{margin:0;font-size:18px;font-weight:700;letter-spacing:.3px}
+    header.top .subtitle{font-size:12px;opacity:.7;margin-top:2px}
+
+    /* ── Buttons ── */
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0f766e;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:14px}
+    .btn.secondary{background:#64748b}
+    .btn.small{padding:6px 10px;font-size:12px;border-radius:8px}
+    .btn.danger{background:#dc2626}
+
+    /* ── Layout ── */
+    .wrap{max-width:1400px;margin:20px auto;padding:0 20px}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:20px;margin-bottom:20px}
+    .muted{opacity:.7;font-size:12px}
+    .mono{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px}
+    .empty{text-align:center;padding:30px;color:#64748b}
+
+    /* ── Auto-refresh indicator ── */
+    .auto-refresh{display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,.7)}
+    .pulse{width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+    /* ── Stage cards grid ── */
+    .stage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+    .stage-card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:14px;padding:18px 16px;text-align:center;transition:transform .12s,box-shadow .12s}
+    .stage-card:hover{transform:translateY(-2px);box-shadow:0 12px 32px rgba(0,0,0,.16)}
+    .stage-count{font-size:36px;font-weight:700;line-height:1.1}
+    .stage-label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+    .stage-oldest{font-size:11px;margin-top:8px;padding:3px 8px;border-radius:6px;display:inline-block;font-weight:600}
+    .age-green{background:#dcfce7;color:#166534}
+    .age-yellow{background:#fef3c7;color:#92400e}
+    .age-red{background:#fee2e2;color:#991b1b}
+    .stage-card.color-green{border-bottom:3px solid #10b981}
+    .stage-card.color-yellow{border-bottom:3px solid #f59e0b}
+    .stage-card.color-red{border-bottom:3px solid #ef4444}
+
+    /* ── Stuck bills alert ── */
+    .stuck-banner{background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;cursor:pointer;transition:transform .12s;display:none}
+    .stuck-banner:hover{transform:translateY(-1px)}
+    .stuck-banner.visible{display:block}
+    .stuck-banner .stuck-title{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
+    .stuck-banner .stuck-chevron{transition:transform .2s;font-size:14px}
+    .stuck-banner.expanded .stuck-chevron{transform:rotate(90deg)}
+    .stuck-list{max-height:0;overflow:hidden;transition:max-height .3s ease}
+    .stuck-banner.expanded .stuck-list{max-height:600px;overflow-y:auto}
+    .stuck-item{background:rgba(255,255,255,.12);border-radius:8px;padding:10px 14px;margin-top:8px;font-size:13px;cursor:pointer;transition:background .15s}
+    .stuck-item:hover{background:rgba(255,255,255,.22)}
+    .stuck-item .stuck-file{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .stuck-item .stuck-meta{opacity:.8;font-size:11px;margin-top:2px}
+
+    /* ── Search bar ── */
+    .search-row{display:flex;gap:10px;margin-bottom:20px}
+    .search-row input{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:12px;font-size:14px;font-family:inherit;background:var(--glass);backdrop-filter:blur(10px);outline:none;transition:border-color .15s}
+    .search-row input:focus{border-color:#0f766e}
+    .search-row input::placeholder{color:#94a3b8}
+
+    /* ── Chart ── */
+    .chart-wrap{position:relative;height:300px}
+
+    /* ── Lifecycle modal (drawer) ── */
+    .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:640px;width:94%;padding:0;max-height:calc(100vh - 60px);overflow:hidden;display:flex;flex-direction:column}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;border-bottom:1px solid #e5e7eb}
+    .modal-header h2{margin:0;font-size:16px}
+    .modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:#64748b;padding:0 4px;line-height:1}
+    .modal-close:hover{color:#0f172a}
+    .modal-body{padding:24px;overflow-y:auto;flex:1}
+
+    /* ── Timeline (vertical) ── */
+    .timeline{position:relative;padding-left:28px}
+    .timeline::before{content:'';position:absolute;left:9px;top:0;bottom:0;width:2px;background:#e5e7eb}
+    .tl-event{position:relative;padding-bottom:20px}
+    .tl-event:last-child{padding-bottom:0}
+    .tl-dot{position:absolute;left:-28px;top:2px;width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px #e5e7eb}
+    .tl-dot.s1{background:#3b82f6}
+    .tl-dot.s3{background:#8b5cf6}
+    .tl-dot.s4{background:#f59e0b}
+    .tl-dot.s6{background:#10b981}
+    .tl-dot.s7{background:#0ea5e9}
+    .tl-dot.s8{background:#06b6d4}
+    .tl-dot.s9{background:#ef4444}
+    .tl-dot.default{background:#64748b}
+    .tl-time{font-size:11px;color:#64748b;margin-bottom:2px}
+    .tl-label{font-weight:600;font-size:13px}
+    .tl-meta{font-size:12px;color:#64748b;margin-top:2px}
+    .tl-total{margin-top:16px;padding:10px 14px;background:#f1f5f9;border-radius:10px;font-size:13px;font-weight:600;text-align:center}
+
+    /* ── Toast ── */
+    .toast{position:fixed;top:20px;right:20px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.25);z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}
+    .toast.show{opacity:.96;pointer-events:auto}
+    .toast.ok{background:#0f766e}
+    .toast.err{background:#b91c1c}
+
+    /* ── Badge ── */
+    .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+    .badge.fast{background:#dcfce7;color:#166534}
+    .badge.medium{background:#fef3c7;color:#92400e}
+    .badge.slow{background:#fee2e2;color:#991b1b}
+
+    /* ── Responsive ── */
+    @media (max-width:768px){
+      .wrap{padding:0 12px}
+      .stage-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+      .stage-count{font-size:28px}
+      .chart-wrap{height:220px}
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ HEADER ═══ -->
+  <header class="top">
+    <div class="title-group">
+      <a href="/" class="back-arrow" title="Back to Home">&larr;</a>
+      <div>
+        <h1>PIPELINE TRACKER</h1>
+        <div class="subtitle">Real-time bill lifecycle visibility</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="auto-refresh"><span class="pulse"></span> Auto-refresh 30s</span>
+      <span style="font-size:12px;opacity:.7">Last: <span id="lastUpdated">--</span></span>
+      <a class="btn secondary" href="/">Home</a>
+    </div>
+  </header>
+
+  <!-- ═══ TOAST ═══ -->
+  <div id="toast" class="toast"></div>
+
+  <div class="wrap">
+
+    <!-- ═══ STAGE CARDS ═══ -->
+    <div class="stage-grid" id="stageGrid">
+      <div class="stage-card" id="card-s1">
+        <div class="stage-count" id="count-s1">--</div>
+        <div class="stage-label">S1 Pending</div>
+        <div class="stage-oldest" id="oldest-s1">--</div>
+      </div>
+      <div class="stage-card" id="card-s1_std">
+        <div class="stage-count" id="count-s1_std">--</div>
+        <div class="stage-label">S1 Standard</div>
+        <div class="stage-oldest" id="oldest-s1_std">--</div>
+      </div>
+      <div class="stage-card" id="card-s1_lg">
+        <div class="stage-count" id="count-s1_lg">--</div>
+        <div class="stage-label">S1 Large</div>
+        <div class="stage-oldest" id="oldest-s1_lg">--</div>
+      </div>
+      <div class="stage-card" id="card-s3">
+        <div class="stage-count" id="count-s3">--</div>
+        <div class="stage-label">S3 Parsed</div>
+        <div class="stage-oldest" id="oldest-s3">--</div>
+      </div>
+      <div class="stage-card" id="card-s4">
+        <div class="stage-count" id="count-s4">--</div>
+        <div class="stage-label">S4 Enriched</div>
+        <div class="stage-oldest" id="oldest-s4">--</div>
+      </div>
+    </div>
+
+    <!-- ═══ STUCK BILLS ALERT ═══ -->
+    <div class="stuck-banner" id="stuckBanner" onclick="toggleStuck()">
+      <div class="stuck-title">
+        <span class="stuck-chevron" id="stuckChevron">&#9654;</span>
+        <span id="stuckTitle">0 bills stuck for &gt;60 minutes</span>
+      </div>
+      <div class="stuck-list" id="stuckList"></div>
+    </div>
+
+    <!-- ═══ SEARCH BAR ═══ -->
+    <div class="search-row">
+      <input type="text" id="searchInput" placeholder="Search by pdf_id or filename..." autocomplete="off" />
+      <button class="btn" id="searchBtn" onclick="doSearch()">Search</button>
+    </div>
+
+    <!-- ═══ THROUGHPUT CHART ═══ -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 style="margin:0;font-size:16px">Throughput (24h)</h2>
+        <select id="chartHours" onchange="loadStats()" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit">
+          <option value="6">Last 6h</option>
+          <option value="12">Last 12h</option>
+          <option value="24" selected>Last 24h</option>
+          <option value="48">Last 48h</option>
+        </select>
+      </div>
+      <div class="chart-wrap"><canvas id="throughputChart"></canvas></div>
+    </div>
+
+  </div>
+
+  <!-- ═══ LIFECYCLE MODAL ═══ -->
+  <div class="modal-overlay" id="lifecycleModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modalTitle">Bill Lifecycle</h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <div class="empty">No data</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   Pipeline Tracker — client-side logic
+   ═══════════════════════════════════════════════════════════ */
+
+const STAGE_KEYS = ['s1','s1_std','s1_lg','s3','s4'];
+let throughputChart = null;
+let stuckBills = [];
+
+/* ── Helpers ── */
+function esc(s) {
+  const el = document.createElement('span');
+  el.textContent = String(s || '');
+  return el.innerHTML;
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type === 'ok' ? 'ok' : 'err');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function fmtAge(minutes) {
+  if (minutes == null || minutes < 0) return '--';
+  if (minutes < 1) return '<1m ago';
+  if (minutes < 60) return Math.round(minutes) + 'm ago';
+  if (minutes < 1440) return Math.round(minutes / 60) + 'h ago';
+  return Math.round(minutes / 1440) + 'd ago';
+}
+
+function ageClass(minutes) {
+  if (minutes == null || minutes < 0) return 'age-green';
+  if (minutes < 30) return 'age-green';
+  if (minutes < 60) return 'age-yellow';
+  return 'age-red';
+}
+
+function ageColorClass(minutes) {
+  if (minutes == null || minutes < 0) return 'color-green';
+  if (minutes < 30) return 'color-green';
+  if (minutes < 60) return 'color-yellow';
+  return 'color-red';
+}
+
+function stageDotClass(stage) {
+  if (!stage) return 'default';
+  const s = String(stage).toLowerCase().replace(/[^a-z0-9]/g,'');
+  if (s.startsWith('s1') || s.includes('pending')) return 's1';
+  if (s.startsWith('s3') || s.includes('parsed') || s.includes('pars')) return 's3';
+  if (s.startsWith('s4') || s.includes('enriched') || s.includes('enrich')) return 's4';
+  if (s.startsWith('s6') || s.includes('pre')) return 's6';
+  if (s.startsWith('s7') || s.includes('post')) return 's7';
+  if (s.startsWith('s8') || s.includes('ubi') || s.includes('assigned')) return 's8';
+  if (s.startsWith('s9') || s.includes('flag') || s.includes('review')) return 's9';
+  return 'default';
+}
+
+function fmtTimestamp(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  return d.toLocaleString('en-US', {month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true});
+}
+
+function fmtDuration(ms) {
+  if (ms == null || ms < 0) return '--';
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return sec + 's';
+  const min = Math.round(sec / 60);
+  if (min < 60) return min + 'm';
+  const hr = (min / 60).toFixed(1);
+  return hr + 'h';
+}
+
+/* ═══ QUEUE DATA ═══ */
+async function loadQueue() {
+  try {
+    const resp = await fetch('/api/pipeline/queue');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    renderQueue(data);
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+  } catch (e) {
+    console.error('loadQueue error:', e);
+    showToast('Failed to load queue data: ' + e.message, 'err');
+  }
+}
+
+function renderQueue(data) {
+  const stages = data.stages || data;
+  for (const key of STAGE_KEYS) {
+    const info = stages[key] || {};
+    const count = info.count != null ? info.count : 0;
+    const oldestMin = info.oldest_minutes != null ? info.oldest_minutes : -1;
+
+    const countEl = document.getElementById('count-' + key);
+    const oldestEl = document.getElementById('oldest-' + key);
+    const cardEl = document.getElementById('card-' + key);
+
+    if (countEl) countEl.textContent = count.toLocaleString();
+    if (oldestEl) {
+      if (count === 0) {
+        oldestEl.textContent = 'empty';
+        oldestEl.className = 'stage-oldest age-green';
+      } else {
+        oldestEl.textContent = 'oldest: ' + fmtAge(oldestMin);
+        oldestEl.className = 'stage-oldest ' + ageClass(oldestMin);
+      }
+    }
+    if (cardEl) {
+      cardEl.className = 'stage-card ' + (count === 0 ? 'color-green' : ageColorClass(oldestMin));
+    }
+  }
+}
+
+/* ═══ STUCK BILLS ═══ */
+async function loadStuck() {
+  try {
+    const resp = await fetch('/api/pipeline/stuck?threshold_minutes=60');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    stuckBills = data.bills || [];
+    renderStuck();
+  } catch (e) {
+    console.error('loadStuck error:', e);
+    /* non-critical — don't toast */
+  }
+}
+
+function renderStuck() {
+  const banner = document.getElementById('stuckBanner');
+  const titleEl = document.getElementById('stuckTitle');
+  const listEl = document.getElementById('stuckList');
+
+  if (!stuckBills.length) {
+    banner.classList.remove('visible');
+    return;
+  }
+
+  banner.classList.add('visible');
+  titleEl.textContent = stuckBills.length + ' bill' + (stuckBills.length !== 1 ? 's' : '') + ' stuck for >60 minutes';
+
+  let html = '';
+  for (const bill of stuckBills) {
+    const filename = bill.filename || bill.pdf_id || 'Unknown';
+    const stage = bill.stage || '--';
+    const age = bill.age_minutes != null ? fmtAge(bill.age_minutes) : '--';
+    html += `<div class="stuck-item" onclick="event.stopPropagation(); openBill('${esc(bill.pdf_id || '')}')">
+      <div class="stuck-file" title="${esc(filename)}">${esc(filename)}</div>
+      <div class="stuck-meta">Stage: ${esc(stage)} &middot; Age: ${age}</div>
+    </div>`;
+  }
+  listEl.innerHTML = html;
+}
+
+function toggleStuck() {
+  document.getElementById('stuckBanner').classList.toggle('expanded');
+}
+
+/* ═══ SEARCH ═══ */
+function doSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) return;
+  openBill(q);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+  });
+});
+
+async function openBill(pdfId) {
+  if (!pdfId) return;
+  const modal = document.getElementById('lifecycleModal');
+  const body = document.getElementById('modalBody');
+  const title = document.getElementById('modalTitle');
+
+  title.textContent = 'Bill Lifecycle';
+  body.innerHTML = '<div class="empty">Loading...</div>';
+  modal.classList.add('show');
+
+  try {
+    const resp = await fetch('/api/pipeline/bill/' + encodeURIComponent(pdfId));
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        body.innerHTML = '<div class="empty">No lifecycle data found for this bill.</div>';
+        return;
+      }
+      throw new Error('HTTP ' + resp.status);
+    }
+    const data = await resp.json();
+    renderLifecycle(data);
+  } catch (e) {
+    console.error('openBill error:', e);
+    body.innerHTML = '<div class="empty">Error loading bill: ' + esc(e.message) + '</div>';
+    showToast('Failed to load bill lifecycle', 'err');
+  }
+}
+
+function renderLifecycle(data) {
+  const body = document.getElementById('modalBody');
+  const title = document.getElementById('modalTitle');
+
+  const billId = data.pdf_id || data.bill_id || '--';
+  const filename = data.filename || '';
+  title.textContent = filename ? filename : 'Bill ' + billId.substring(0, 12) + '...';
+
+  const events = data.events || [];
+  if (!events.length) {
+    body.innerHTML = '<div class="empty">No lifecycle events recorded.</div>';
+    return;
+  }
+
+  /* Sort events by timestamp ascending */
+  events.sort((a, b) => {
+    const ta = new Date(a.timestamp || 0).getTime();
+    const tb = new Date(b.timestamp || 0).getTime();
+    return ta - tb;
+  });
+
+  let html = '<div class="timeline">';
+  for (const ev of events) {
+    const dotCls = stageDotClass(ev.stage);
+    const label = ev.event_type || ev.stage || 'Event';
+    const time = fmtTimestamp(ev.timestamp);
+    const source = ev.source ? 'Source: ' + esc(ev.source) : '';
+    const meta = ev.metadata ? (typeof ev.metadata === 'object' ? JSON.stringify(ev.metadata) : String(ev.metadata)) : '';
+
+    html += `<div class="tl-event">
+      <div class="tl-dot ${dotCls}"></div>
+      <div class="tl-time">${esc(time)}</div>
+      <div class="tl-label">${esc(label)}${ev.stage ? ' <span class="muted">(' + esc(ev.stage) + ')</span>' : ''}</div>
+      ${source || meta ? '<div class="tl-meta">' + (source ? esc(source) : '') + (source && meta ? ' &middot; ' : '') + (meta ? esc(meta) : '') + '</div>' : ''}
+    </div>`;
+  }
+  html += '</div>';
+
+  /* Total time */
+  const firstTs = new Date(events[0].timestamp).getTime();
+  const lastTs = new Date(events[events.length - 1].timestamp).getTime();
+  if (!isNaN(firstTs) && !isNaN(lastTs) && lastTs > firstTs) {
+    const totalMs = lastTs - firstTs;
+    html += `<div class="tl-total">Total pipeline time: ${fmtDuration(totalMs)}</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function closeModal() {
+  document.getElementById('lifecycleModal').classList.remove('show');
+}
+
+/* Close modal on overlay click */
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('lifecycleModal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+});
+
+/* Close modal on Escape */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+
+/* ═══ THROUGHPUT CHART ═══ */
+async function loadStats() {
+  try {
+    const hours = document.getElementById('chartHours').value;
+    const resp = await fetch('/api/pipeline/stats?hours=' + hours);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    renderChart(data);
+  } catch (e) {
+    console.error('loadStats error:', e);
+    showToast('Failed to load throughput data: ' + e.message, 'err');
+  }
+}
+
+function renderChart(data) {
+  const buckets = data.buckets || data.hours || [];
+  if (!buckets.length) return;
+
+  const labels = buckets.map(b => {
+    const d = new Date(b.hour || b.timestamp || b.label);
+    if (isNaN(d.getTime())) return b.hour || b.label || '';
+    return d.toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', hour12:true});
+  });
+
+  const routedData   = buckets.map(b => b.routed   ?? b.s1 ?? 0);
+  const parsedData   = buckets.map(b => b.parsed   ?? b.s3 ?? 0);
+  const enrichedData = buckets.map(b => b.enriched ?? b.s4 ?? 0);
+  const submittedData = buckets.map(b => b.submitted ?? b.s6 ?? 0);
+
+  if (throughputChart) throughputChart.destroy();
+
+  const ctx = document.getElementById('throughputChart').getContext('2d');
+  throughputChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Routed',
+          data: routedData,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,0.08)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          borderWidth: 2
+        },
+        {
+          label: 'Parsed',
+          data: parsedData,
+          borderColor: '#8b5cf6',
+          backgroundColor: 'rgba(139,92,246,0.08)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          borderWidth: 2
+        },
+        {
+          label: 'Enriched',
+          data: enrichedData,
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245,158,11,0.08)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          borderWidth: 2
+        },
+        {
+          label: 'Submitted',
+          data: submittedData,
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,0.08)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          borderWidth: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { usePointStyle: true, padding: 16, font: { family: 'Inter', size: 12 } } },
+        tooltip: { backgroundColor: '#0f172a', titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' }, padding: 10, cornerRadius: 8 }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { family: 'Inter', size: 11 }, maxRotation: 45, maxTicksLimit: 12 }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: 'rgba(0,0,0,.06)' },
+          title: { display: true, text: 'Bills', font: { family: 'Inter', size: 12 } },
+          ticks: { font: { family: 'Inter', size: 11 } }
+        }
+      }
+    }
+  });
+}
+
+/* ═══ INITIAL LOAD + AUTO-REFRESH ═══ */
+async function refreshAll() {
+  await Promise.allSettled([loadQueue(), loadStuck()]);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  refreshAll();
+  loadStats();
+  setInterval(refreshAll, 30000);
+});
+</script>
+</body>
+</html>
