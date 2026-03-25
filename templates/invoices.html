@@ -385,6 +385,8 @@
 
       // Auto-refresh on load so vendor/account/count reflect latest edits
       refreshStatuses();
+      // Auto-poll every 10s so bills update as colleagues submit them
+      setInterval(refreshStatuses, 10000);
     });
 
     async function deleteSelected(){
