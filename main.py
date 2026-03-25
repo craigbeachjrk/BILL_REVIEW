@@ -11950,176 +11950,20 @@ def api_autonomy_sim(user: str = Depends(require_user)):
 
 @app.post("/api/autonomy/sim/run")
 def api_autonomy_sim_run(user: str = Depends(require_user)):
-    """Run autonomy simulation in-process (deterministic checks only, no Gemini).
-    Analyzes recent Stage 4 bills and compares AI predictions to human actions."""
+    """Trigger autonomy simulation Lambda (async). Results persisted to S3."""
     if user not in ADMIN_USERS:
         return JSONResponse({"error": "Admin access required"}, status_code=403)
-
-    def _run_sim():
-        import gzip
-        from collections import defaultdict
-
-        results = []
-        vendor_stats = defaultdict(lambda: {
-            "vendor_name": "", "bills": 0, "would_auto_pass": 0,
-            "garbage_tp": 0, "garbage_fp": 0, "garbage_fn": 0,
-            "ai_correct": 0
-        })
-
-        # Scan last 14 days of Stage 4 bills
-        today = dt.date.today()
-        for day_offset in range(14):
-            d = today - dt.timedelta(days=day_offset)
-            y, m, dd = str(d.year), f"{d.month:02d}", f"{d.day:02d}"
-            try:
-                day_rows = load_day(y, m, dd)
-            except Exception:
-                continue
-            if not day_rows:
-                continue
-
-            # Group by pdf_id
-            by_pdf = {}
-            for row in day_rows:
-                key = row.get("__s3_key__", "")
-                pid = pdf_id_from_key(key) if key else ""
-                if pid and pid != "(unknown)":
-                    by_pdf.setdefault(pid, []).append(row)
-
-            for pid, lines in by_pdf.items():
-                if not lines:
-                    continue
-                first = lines[0]
-                vendor_id = str(first.get("EnrichedVendorID", "") or "")
-                vendor_name = str(first.get("EnrichedVendorName", "") or first.get("Vendor Name", "") or "")
-                property_name = str(first.get("EnrichedPropertyName", "") or "")
-
-                # Run deterministic garbage detection
-                garbage = _detect_garbage_lines(lines, vendor_id=vendor_id)
-                garbage_ids = {g.get("line_id", "") for g in garbage if g.get("line_id")}
-
-                # Check account history
-                account_no = str(first.get("Account Number", "") or "")
-                property_id = str(first.get("EnrichedPropertyID", "") or "")
-                historical_flags = []
-                try:
-                    history = _get_account_history(vendor_id, property_id, account_no)
-                    if history:
-                        total = sum(float(r.get("Line Item Charge", 0) or 0) for r in lines
-                                    if not any(g.get("line_id") == r.get("__id__") for g in garbage))
-                        avg_hist = sum(h.get("total_amount", 0) for h in history) / max(len(history), 1)
-                        if avg_hist > 0 and total > avg_hist * 3:
-                            historical_flags.append("amount_spike")
-                except Exception:
-                    pass
-
-                # Compute would_auto_pass (simplified deterministic version)
-                confidence = 80
-                if not history:
-                    confidence -= 20
-                if garbage:
-                    confidence -= 5
-                if historical_flags:
-                    confidence -= 15
-
-                would_auto_pass = (
-                    len(garbage) == 0
-                    and len(historical_flags) == 0
-                    and confidence >= 85
-                )
-
-                # Check if human has already submitted this bill (look for AI suggestion record)
-                human_action = "pending_review"
-                ai_was_correct = None
-                try:
-                    suggestion = _get_ai_suggestion(pid)
-                    if suggestion:
-                        human_changed = suggestion.get("human_changed", None)
-                        if human_changed is not None:
-                            human_action = "submitted_with_changes" if human_changed else "submitted_unchanged"
-                            ai_was_correct = (
-                                (would_auto_pass and not human_changed) or
-                                (not would_auto_pass and human_changed)
-                            )
-                except Exception:
-                    pass
-
-                bill_result = {
-                    "pdf_id": pid,
-                    "date": f"{y}-{m}-{dd}",
-                    "vendor_id": vendor_id,
-                    "vendor_name": vendor_name,
-                    "property_name": property_name,
-                    "account_number": account_no,
-                    "line_count": len(lines),
-                    "ai_decision": "auto_pass" if would_auto_pass else "needs_review",
-                    "confidence": confidence,
-                    "garbage_detected": len(garbage),
-                    "garbage_details": [{"desc": g.get("description", ""), "charge": g.get("charge", 0), "reason": g.get("reason", "")} for g in garbage[:10]],
-                    "historical_flags": historical_flags,
-                    "human_action": human_action,
-                    "ai_was_correct": ai_was_correct,
-                }
-                results.append(bill_result)
-
-                # Vendor aggregates
-                vs = vendor_stats[vendor_id]
-                vs["vendor_name"] = vendor_name
-                vs["bills"] += 1
-                if would_auto_pass:
-                    vs["would_auto_pass"] += 1
-                if ai_was_correct is True:
-                    vs["ai_correct"] += 1
-
-        # Compute aggregate stats
-        total_bills = len(results)
-        auto_pass_count = sum(1 for r in results if r["ai_decision"] == "auto_pass")
-        correct_count = sum(1 for r in results if r["ai_was_correct"] is True)
-        evaluated_count = sum(1 for r in results if r["ai_was_correct"] is not None)
-
-        sim_data = {
-            "computed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "date_range": {
-                "start": (today - dt.timedelta(days=13)).isoformat(),
-                "end": today.isoformat(),
-            },
-            "bills_analyzed": total_bills,
-            "aggregate": {
-                "would_auto_pass_pct": round(auto_pass_count / max(total_bills, 1) * 100, 1),
-                "auto_pass_accuracy": round(correct_count / max(evaluated_count, 1) * 100, 1) if evaluated_count else None,
-                "evaluated_bills": evaluated_count,
-            },
-            "by_vendor": sorted([
-                {
-                    "vendor_id": vid,
-                    "vendor_name": vs["vendor_name"],
-                    "bills": vs["bills"],
-                    "would_auto_pass": vs["would_auto_pass"],
-                    "auto_pass_pct": round(vs["would_auto_pass"] / max(vs["bills"], 1) * 100, 1),
-                    "accuracy": round(vs["ai_correct"] / max(vs["bills"], 1) * 100, 1),
-                    "eligible_for_assisted": vs["bills"] >= 10 and vs["ai_correct"] / max(vs["bills"], 1) >= 0.8,
-                    "eligible_for_autonomous": vs["bills"] >= 20 and vs["ai_correct"] / max(vs["bills"], 1) >= 0.95,
-                }
-                for vid, vs in vendor_stats.items() if vs["bills"] > 0
-            ], key=lambda x: x["bills"], reverse=True),
-            "recent_bills": sorted(results, key=lambda x: x["date"], reverse=True)[:200],
-        }
-
-        # Persist to S3
-        try:
-            compressed = gzip.compress(json.dumps(sim_data).encode())
-            s3.put_object(Bucket=BUCKET, Key=AUTONOMY_SIM_CACHE_KEY, Body=compressed, ContentType="application/json", ContentEncoding="gzip")
-            print(f"[AUTONOMY SIM] Saved {total_bills} bill results to S3")
-        except Exception as e:
-            print(f"[AUTONOMY SIM] S3 save failed: {e}")
-
+    try:
+        _lambda_client.invoke(
+            FunctionName="jrk-bill-autonomy-sim",
+            InvocationType="Event",  # async — returns immediately
+            Payload=json.dumps({"days_back": 14, "triggered_by": user}).encode(),
+        )
         # Invalidate in-memory cache so next read fetches fresh S3 data
         _CACHE.pop(("autonomy_sim",), None)
-
-    # Run in background thread — S3 is the persistent store (survives deploys).
-    # TODO: Move to Lambda for better performance (AppRunner S3 GETs are 2-5s each).
-    threading.Thread(target=_run_sim, daemon=True).start()
-    return {"status": "started", "message": "Simulation running in background. Results will appear in a few minutes."}
+        return {"status": "started", "message": "Simulation Lambda invoked. Results will appear in 1-2 minutes."}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "invoke autonomy sim")}, status_code=500)
 
 
 @app.get("/api/autonomy/sim/bill/{pdf_id}")
