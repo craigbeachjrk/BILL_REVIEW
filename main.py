@@ -6852,6 +6852,10 @@ async def api_billback_ubi_reassign_account(request: Request, user: str = Depend
         # duplicate warnings and suggestions after reassign
 
         print(f"[UBI REASSIGN ACCOUNT] COMPLETED: Reassigned {total_reassigned} items for {account_number} from {old_period} to {new_period}")
+
+        # Invalidate UBI cache so the change is reflected immediately
+        _CACHE.pop(("ubi_unassigned",), None)
+
         return {"ok": True, "reassigned": total_reassigned}
 
     except Exception as e:
@@ -6991,6 +6995,10 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
 
 
         print(f"[UBI REASSIGN] COMPLETED: Updated {total_updated} items to period {new_period}")
+
+        # Invalidate UBI cache so the change is reflected immediately
+        _CACHE.pop(("ubi_unassigned",), None)
+
         return {"ok": True, "reassigned": total_updated, "new_period": new_period}
 
     except Exception as e:
