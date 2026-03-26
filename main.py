@@ -8522,13 +8522,15 @@ def api_acctmgr_duplicate_bills(days: int = 90, user: str = Depends(require_user
                 "invoice_date": parts[2] if len(parts) > 2 else "",
                 "invoice_total": amount,
                 "vendor_name": invoices[0].get("vendor_name", ""),
+                "property_name": invoices[0].get("property_name", ""),
+                "posted_by": ", ".join(sorted(set(i.get("posted_by", "") for i in invoices if i.get("posted_by")))),
                 "count": len(invoices),
                 "invoices": invoices,
             })
             total_dup_amount += amount * (len(invoices) - 1)
             total_dup_invoices += len(invoices) - 1
 
-        dupes.sort(key=lambda x: x["count"], reverse=True)
+        dupes.sort(key=lambda x: x["invoice_date"], reverse=True)
         return {
             "groups": dupes[:200],
             "total_groups": len(dupes),

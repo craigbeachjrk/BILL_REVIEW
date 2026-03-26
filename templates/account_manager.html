@@ -310,15 +310,17 @@
             <thead>
               <tr>
                 <th style="width:30px"></th>
+                <th>Property</th>
                 <th>Vendor</th>
                 <th>Account #</th>
                 <th>Invoice Date</th>
                 <th class="num">Total</th>
+                <th>Posted By</th>
                 <th class="num">Count</th>
               </tr>
             </thead>
             <tbody id="dupTableBody">
-              <tr><td colspan="6" class="empty"><span class="spinner"></span> Loading...</td></tr>
+              <tr><td colspan="8" class="empty"><span class="spinner"></span> Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -710,7 +712,7 @@ document.addEventListener('click', (e) => {
 async function loadDuplicateBills() {
   const days = document.getElementById('dupDays').value;
   const tbody = document.getElementById('dupTableBody');
-  tbody.innerHTML = '<tr><td colspan="6" class="empty"><span class="spinner"></span> Scanning for duplicates...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="empty"><span class="spinner"></span> Scanning for duplicates...</td></tr>';
 
   try {
     const resp = await fetchJSON(`/api/account-manager/duplicate-bills?days=${days}`);
@@ -729,14 +731,14 @@ async function loadDuplicateBills() {
 
     renderDupTable();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty">Error: ${esc(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty">Error: ${esc(e.message)}</td></tr>`;
   }
 }
 
 function renderDupTable() {
   const tbody = document.getElementById('dupTableBody');
   if (dupData.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No duplicate bills found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No duplicate bills found</td></tr>';
     return;
   }
 
@@ -745,16 +747,18 @@ function renderDupTable() {
     const rowClass = g.count > 2 ? ' class="highlight-red"' : '';
     html += `<tr${rowClass} style="cursor:pointer" onclick="toggleDupExpand(${gi})">
       <td style="text-align:center;font-size:14px" id="dupArrow${gi}">&#9654;</td>
-      <td>${esc(g.vendor)}</td>
-      <td class="mono">${esc(g.account_number || g.account)}</td>
+      <td>${esc(g.property_name || '')}</td>
+      <td>${esc(g.vendor_name || '')}</td>
+      <td class="mono">${esc(g.account_number || '')}</td>
       <td>${fmtDate(g.invoice_date)}</td>
-      <td class="num">${fmtMoney(g.total)}</td>
+      <td class="num">${fmtMoney(g.invoice_total)}</td>
+      <td>${esc(g.posted_by || '')}</td>
       <td class="num" style="font-weight:600;${g.count > 2 ? 'color:#dc2626' : ''}">${g.count}</td>
     </tr>`;
 
     // Expandable detail row
     html += `<tr class="expand-row" id="dupExpand${gi}">
-      <td colspan="6" class="expand-cell">
+      <td colspan="8" class="expand-cell">
         <table class="sub-table">
           <thead><tr><th>PDF ID</th><th>Posted By</th><th>Posted At</th><th>Property</th></tr></thead>
           <tbody>`;
