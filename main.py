@@ -494,8 +494,8 @@ def _record_audit_event(event_type: str, user: str, details: dict):
     sk = f"{now.strftime('%Y-%m-%dT%H:%M:%S')}Z#{uuid.uuid4().hex[:12]}"
     ttl = int(now.timestamp()) + 90 * 86400
     item = {
-        "pk": {"S": "AUDIT_EVENT"},
-        "sk": {"S": sk},
+        "PK": {"S": "AUDIT_EVENT"},
+        "SK": {"S": sk},
         "event_type": {"S": event_type},
         "user": {"S": user},
         "timestamp_utc": {"S": now.isoformat() + "Z"},
@@ -8438,7 +8438,7 @@ def api_acctmgr_rename_history(days: int = 90, user: str = Depends(require_user)
         cutoff = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%d")
         resp = ddb.query(
             TableName=CONFIG_TABLE,
-            KeyConditionExpression="pk = :pk AND sk > :cutoff",
+            KeyConditionExpression="PK = :pk AND SK > :cutoff",
             ExpressionAttributeValues={":pk": {"S": "AUDIT_EVENT"}, ":cutoff": {"S": cutoff}},
             ScanIndexForward=False,
         )
@@ -8478,7 +8478,7 @@ def api_acctmgr_duplicate_bills(days: int = 90, user: str = Depends(require_user
         all_items = []
         kwargs = {
             "TableName": CONFIG_TABLE,
-            "KeyConditionExpression": "pk = :pk AND sk > :cutoff",
+            "KeyConditionExpression": "PK = :pk AND SK > :cutoff",
             "ExpressionAttributeValues": {":pk": {"S": "POSTED_INVOICES"}, ":cutoff": {"S": cutoff}},
         }
         while True:
