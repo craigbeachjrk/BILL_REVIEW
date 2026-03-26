@@ -474,11 +474,17 @@ async function loadSkipReasons() {
     const resp = await fetchJSON('/api/account-manager/skip-reasons');
     skipData = resp.items || resp.data || [];
 
-    // Update stat cards
-    const uniqueAccounts = new Set();
-    skipData.forEach(r => uniqueAccounts.add(`${r.property_id || r.property}|${r.vendor_id || r.vendor}|${r.account_number || r.account}`));
-    document.getElementById('skipAcctCount').textContent = uniqueAccounts.size.toLocaleString();
-    document.getElementById('skipEntryCount').textContent = skipData.length.toLocaleString();
+    // Update stat cards — prefer API-provided totals, fall back to local computation
+    const apiAcctCount = resp.total_accounts_with_skips;
+    const apiEntryCount = resp.total_skip_entries;
+    if (apiAcctCount != null) {
+      document.getElementById('skipAcctCount').textContent = Number(apiAcctCount).toLocaleString();
+    } else {
+      const uniqueAccounts = new Set();
+      skipData.forEach(r => uniqueAccounts.add(`${r.property_id || r.property}|${r.vendor_id || r.vendor}|${r.account_number || r.account}`));
+      document.getElementById('skipAcctCount').textContent = uniqueAccounts.size.toLocaleString();
+    }
+    document.getElementById('skipEntryCount').textContent = (apiEntryCount != null ? Number(apiEntryCount) : skipData.length).toLocaleString();
 
     // Populate reason filter dropdown
     const reasons = [...new Set(skipData.map(r => r.reason_label).filter(Boolean))].sort();
@@ -565,7 +571,7 @@ function sortSkipTable(col) {
 async function loadAccountList() {
   try {
     const resp = await fetchJSON('/api/config/accounts-to-track');
-    accountList = resp.data || resp.accounts || resp || [];
+    accountList = Array.isArray(resp) ? resp : (resp.items || resp.data || []);
   } catch (e) {
     showToast('Failed to load account list: ' + e.message, 'err');
   }
@@ -586,7 +592,7 @@ function filterAccountList() {
   dd.classList.add('open');
 
   const matches = accountList.filter(a => {
-    const haystack = [a.property_name || a.property, a.vendor_name || a.vendor, a.account_number || a.account].join(' ').toLowerCase();
+    const haystack = [a.property_name || a.propertyName || a.property || '', a.vendor_name || a.vendorName || a.vendor || '', a.account_number || a.accountNumber || a.account || ''].join(' ').toLowerCase();
     return haystack.includes(q);
   }).slice(0, 50);
 
@@ -596,9 +602,9 @@ function filterAccountList() {
   }
 
   dd.innerHTML = matches.map((a, i) => `<div class="account-option" onclick="selectAccount(${i})" data-idx="${i}">
-    <span class="prop">${esc(a.property_name || a.property)}</span> &mdash;
-    ${esc(a.vendor_name || a.vendor)}
-    <span class="acct">(${esc(a.account_number || a.account)})</span>
+    <span class="prop">${esc(a.property_name || a.propertyName || a.property)}</span> &mdash;
+    ${esc(a.vendor_name || a.vendorName || a.vendor)}
+    <span class="acct">(${esc(a.account_number || a.accountNumber || a.account)})</span>
   </div>`).join('');
 
   // Store filtered list for selection
@@ -613,15 +619,15 @@ function selectAccount(idx) {
 
   selectedAccount = a;
   document.getElementById('accountSearchInput').value =
-    (a.property_name || a.property) + ' - ' + (a.vendor_name || a.vendor) + ' - ' + (a.account_number || a.account);
+    (a.property_name || a.propertyName || a.property) + ' - ' + (a.vendor_name || a.vendorName || a.vendor) + ' - ' + (a.account_number || a.accountNumber || a.account);
   dd.classList.remove('open');
 
   // Show selected account details
   const card = document.getElementById('selectedAccountCard');
   card.style.display = 'block';
-  document.getElementById('selProperty').textContent = a.property_name || a.property || '--';
-  document.getElementById('selVendor').textContent = a.vendor_name || a.vendor || '--';
-  document.getElementById('selAccount').textContent = a.account_number || a.account || '--';
+  document.getElementById('selProperty').textContent = a.property_name || a.propertyName || a.property || '--';
+  document.getElementById('selVendor').textContent = a.vendor_name || a.vendorName || a.vendor || '--';
+  document.getElementById('selAccount').textContent = a.account_number || a.accountNumber || a.account || '--';
 
   document.getElementById('renameBtn').disabled = false;
 }
@@ -631,7 +637,7 @@ async function renameAccount() {
   const newNum = document.getElementById('newAccountNumber').value.trim();
   if (!newNum) { showToast('Please enter a new account number', 'err'); return; }
 
-  const oldNum = selectedAccount.account_number || selectedAccount.account;
+  const oldNum = selectedAccount.account_number || selectedAccount.accountNumber || selectedAccount.account;
   if (newNum === oldNum) { showToast('New account number is the same as the current one', 'err'); return; }
 
   document.getElementById('renameBtn').disabled = true;
@@ -639,8 +645,8 @@ async function renameAccount() {
 
   try {
     const resp = await postJSON('/api/account-manager/rename-account', {
-      property_id: selectedAccount.property_id || selectedAccount.property,
-      vendor_id: selectedAccount.vendor_id || selectedAccount.vendor,
+      property_id: selectedAccount.property_id || selectedAccount.propertyId || selectedAccount.property,
+      vendor_id: selectedAccount.vendor_id || selectedAccount.vendorId || selectedAccount.vendor,
       old_account_number: oldNum,
       new_account_number: newNum
     });
@@ -768,7 +774,7 @@ function renderDupTable() {
           <td class="mono">${esc(inv.pdf_id || '--')}</td>
           <td>${esc(inv.posted_by || '--')}</td>
           <td>${fmtDate(inv.posted_at)}</td>
-          <td>${esc(inv.property || '--')}</td>
+          <td>${esc(inv.property_name || inv.property || '--')}</td>
         </tr>`;
       });
     } else {
@@ -826,7 +832,7 @@ function renderClosedTable() {
     <td>${esc(a.property_name || a.property)}</td>
     <td>${esc(a.vendor_name || a.vendor)}</td>
     <td class="mono">${esc(a.account_number || a.account)}</td>
-    <td class="num">${a.months_closed != null ? a.months_closed : '--'}</td>
+    <td class="num">${Array.isArray(a.closed_months) ? a.closed_months.join(', ') : (a.closed_months || '--')}</td>
     <td>${esc(a.marked_by || '--')}</td>
     <td>${fmtDate(a.marked_date || a.date)}</td>
     <td>${a.is_ubi ? '<span class="badge yes">Yes</span>' : '<span class="badge no">No</span>'}</td>
@@ -880,11 +886,7 @@ async function confirmAction() {
   const { removeFrom, selected } = _pendingConfirm;
   closeModal();
 
-  const accountKeys = selected.map(a => ({
-    property_id: a.property_id || a.property,
-    vendor_id: a.vendor_id || a.vendor,
-    account_number: a.account_number || a.account
-  }));
+  const accountKeys = selected.map(a => a.account_key);
 
   try {
     await postJSON('/api/account-manager/remove-closed-accounts', {

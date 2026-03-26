@@ -248,7 +248,7 @@ function showToast(msg, type) {
 
 function fmtAge(minutes) {
   if (minutes == null || minutes < 0) return '--';
-  if (minutes < 1) return '<1m ago';
+  if (minutes < 1) return 'under 1m';
   if (minutes < 60) return Math.round(minutes) + 'm ago';
   if (minutes < 1440) return Math.round(minutes / 60) + 'h ago';
   return Math.round(minutes / 1440) + 'd ago';
@@ -351,7 +351,7 @@ async function loadStuck() {
     const resp = await fetch('/api/pipeline/stuck?threshold_minutes=60');
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
-    stuckBills = data.bills || [];
+    stuckBills = data.stuck || [];
     renderStuck();
   } catch (e) {
     console.error('loadStuck error:', e);
@@ -514,7 +514,7 @@ function renderChart(data) {
   if (!buckets.length) return;
 
   const labels = buckets.map(b => {
-    const d = new Date(b.hour || b.timestamp || b.label);
+    const d = new Date((b.hour || b.timestamp || b.label || '') + (String(b.hour || '').match(/^\d{4}-\d{2}-\d{2}T\d{2}$/) ? ':00:00Z' : ''));
     if (isNaN(d.getTime())) return b.hour || b.label || '';
     return d.toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', hour12:true});
   });
@@ -606,7 +606,7 @@ async function refreshAll() {
 document.addEventListener('DOMContentLoaded', () => {
   refreshAll();
   loadStats();
-  setInterval(refreshAll, 30000);
+  setInterval(() => { refreshAll(); loadStats(); }, 30000);
 });
 </script>
 </body>

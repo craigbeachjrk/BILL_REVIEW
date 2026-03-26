@@ -259,7 +259,7 @@
           throw new Error(errBody.error || errBody.detail || ('HTTP ' + resp.status));
         }
         const result = await resp.json();
-        toast('Simulation complete!', 'success');
+        toast(result.message || 'Simulation started', 'success');
         await loadSimData();
       } catch (err) {
         console.error('Error running simulation:', err);
@@ -310,10 +310,11 @@
 
     function renderDashboard() {
       const d = simData;
+      const agg = d.aggregate || {};
       const billsAnalyzed = d.bills_analyzed || 0;
-      const autoPassPct = d.auto_pass_pct != null ? Number(d.auto_pass_pct) : 0;
-      const accuracyPct = d.accuracy_pct != null ? Number(d.accuracy_pct) : 0;
-      const billsEvaluated = d.bills_evaluated || 0;
+      const autoPassPct = agg.would_auto_pass_pct != null ? Number(agg.would_auto_pass_pct) : 0;
+      const accuracyPct = agg.auto_pass_accuracy != null ? Number(agg.auto_pass_accuracy) : 0;
+      const billsEvaluated = agg.evaluated_bills || 0;
 
       const apClass = pctClass(autoPassPct, 70, 50);
       const accClass = pctClass(accuracyPct, 90, 80);
@@ -361,7 +362,7 @@
     }
 
     function buildVendorTable() {
-      const vendors = simData.vendors || [];
+      const vendors = simData.by_vendor || [];
       if (!vendors.length) {
         return '<div class="empty-state" style="padding:30px"><p>No vendor data available.</p></div>';
       }
@@ -400,26 +401,27 @@
 
         html += `<tr class="vendor-row${isExpanded ? ' expanded' : ''}" data-vendor="${vid}" onclick="toggleVendor('${vid}')">
           <td>${esc(v.vendor_name)}</td>
-          <td>${v.bill_count || 0}</td>
+          <td>${v.bills || 0}</td>
           <td>${fmtPct(v.auto_pass_pct)}</td>
-          <td>${fmtPct(v.accuracy_pct)}</td>
+          <td>${fmtPct(v.accuracy)}</td>
           <td>${eligBadge}</td>
         </tr>`;
 
-        if (isExpanded && v.bills) {
-          for (const bill of v.bills) {
+        if (isExpanded) {
+          const vendorBills = (simData.recent_bills || []).filter(b => b.vendor_id === v.vendor_id);
+          for (const bill of vendorBills) {
             const decisionBadge = bill.ai_decision === 'auto_pass'
               ? '<span class="badge pass">AUTO-PASS</span>'
               : '<span class="badge review">NEEDS REVIEW</span>';
-            const correctBadge = bill.ai_correct
+            const correctBadge = bill.ai_was_correct
               ? '<span class="badge correct">&#10003;</span>'
               : '<span class="badge wrong">&#10007;</span>';
             const confidence = bill.confidence != null ? Number(bill.confidence).toFixed(0) + '%' : '--';
 
             html += `<tr class="bill-row" onclick="loadBillDetail('${esc(bill.pdf_id || '')}')">
-              <td>${esc(bill.bill_date || '--')}</td>
-              <td>${esc(bill.property || '--')}</td>
-              <td>${esc(bill.account || '--')}</td>
+              <td>${esc(bill.date || '--')}</td>
+              <td>${esc(bill.property_name || '--')}</td>
+              <td>${esc(bill.account_number || '--')}</td>
               <td>${decisionBadge} &nbsp; ${confidence}</td>
               <td>
                 ${esc(bill.human_action || '--')} &nbsp; ${correctBadge}
