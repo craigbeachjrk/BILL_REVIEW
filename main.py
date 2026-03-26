@@ -12149,12 +12149,20 @@ def api_pipeline_queue(user: str = Depends(require_user)):
         if pk not in latest_by_bill or ts > latest_by_bill[pk]["ts"]:
             latest_by_bill[pk] = {"ts": ts, "stage": it["stage"]["S"]}
 
-    # Count bills per current stage
+    # Count bills per current stage.
+    # For pre-submission stages (S1/S3/S4), only count bills from the last 4 hours.
+    # Older bills either completed without instrumentation or are genuinely stuck
+    # (the /stuck endpoint handles those). This prevents historical events from
+    # inflating the "active queue" count.
     from collections import Counter
+    active_cutoff = now_epoch - 4 * 3600  # 4 hours
     stage_counts = Counter()
     stage_oldest = {}
     for pk, info in latest_by_bill.items():
         st = info["stage"]
+        # Skip old events in pre-submission stages
+        if st in ("S1", "S1_Std", "S1_Lg", "S3", "S4") and info["ts"] < active_cutoff:
+            continue
         stage_counts[st] += 1
         if st not in stage_oldest or info["ts"] < stage_oldest[st]:
             stage_oldest[st] = info["ts"]
