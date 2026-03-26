@@ -5769,7 +5769,7 @@ def api_billback_ubi_suggestions(user: str = Depends(require_user), page: int = 
         # Sort by confidence (high first), then by amount
         confidence_order = {"high": 0, "medium": 1, "low": 2}
         bills_with_suggestions.sort(
-            key=lambda x: (confidence_order.get(x["suggestion"]["confidence"], 3), -x["total_amount"])
+            key=lambda x: (confidence_order.get((x.get("suggestion") or {}).get("confidence", ""), 3), -x.get("total_amount", 0))
         )
 
         # Pagination
@@ -7469,7 +7469,10 @@ async def api_flagged_unflag(request: Request, user: str = Depends(require_user)
 
         # Update Stage 9 file: rewrite with remaining items or delete if empty
         if remaining_flagged:
-            _write_jsonl(FLAGGED_REVIEW_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_flagged)
+            new_key = _write_jsonl(FLAGGED_REVIEW_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_flagged)
+            # Delete original if _write_jsonl created a new file (different timestamp)
+            if new_key and new_key != s3_key:
+                s3.delete_object(Bucket=BUCKET, Key=s3_key)
         else:
             s3.delete_object(Bucket=BUCKET, Key=s3_key)
             print(f"[UNFLAG] Deleted empty flagged file {s3_key}")
@@ -7691,7 +7694,9 @@ async def api_flagged_confirm(request: Request, user: str = Depends(require_user
 
         if is_mistake:
             # Confirmed as MISTAKE - keep in flagged with confirmed status
-            _write_jsonl(FLAGGED_REVIEW_PREFIX, y, m, d, base.replace('.jsonl', ''), all_recs)
+            new_key = _write_jsonl(FLAGGED_REVIEW_PREFIX, y, m, d, base.replace('.jsonl', ''), all_recs)
+            if new_key and new_key != s3_key:
+                s3.delete_object(Bucket=BUCKET, Key=s3_key)
             print(f"[CONFIRM FLAGGED] Marked {updated_count} items as confirmed mistakes")
         else:
             # Confirmed as NOT a mistake - move back to billback
@@ -7725,7 +7730,9 @@ async def api_flagged_confirm(request: Request, user: str = Depends(require_user
 
             # Then update Stage 9: rewrite with remaining or delete if empty
             if remaining_items:
-                _write_jsonl(FLAGGED_REVIEW_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_items)
+                new_key = _write_jsonl(FLAGGED_REVIEW_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_items)
+                if new_key and new_key != s3_key:
+                    s3.delete_object(Bucket=BUCKET, Key=s3_key)
             else:
                 s3.delete_object(Bucket=BUCKET, Key=s3_key)
                 print(f"[CONFIRM FLAGGED] Deleted empty flagged file {s3_key}")
@@ -17487,6 +17494,10 @@ def _put_accounts_to_track(arr: list[dict]) -> bool:
             print(f"[ACCOUNTS] DynamoDB cache failed (non-fatal): {e}")
     else:
         print(f"[ACCOUNTS] Skipping DynamoDB cache - data too large ({data_size} bytes > {DDB_SIZE_LIMIT})")
+
+    # Always invalidate in-memory caches after saving
+    _CACHE.pop(("accounts_to_track",), None)
+    _CACHE.pop(("workflow_tracker",), None)
 
     return True
 
