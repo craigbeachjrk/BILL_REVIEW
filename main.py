@@ -10447,8 +10447,11 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
             # Look for the most recent bill before this cycle across all known bills
             best_prev_date = None
             best_prev_svc = effective_days_between
+            def _month_key_to_tuple(ms):
+                parts = ms.split("/")
+                return (int(parts[1]), int(parts[0]))
             for bm_str, bm_info in acct_bills.items():
-                if bm_str >= cycle_months[0][0]:
+                if _month_key_to_tuple(bm_str) >= _month_key_to_tuple(cycle_months[0][0]):
                     continue  # Skip current/future months
                 bd = bm_info.get("bill_date")
                 if bd and (best_prev_date is None or bd > best_prev_date):
@@ -11276,11 +11279,10 @@ def api_directed_plan(user: str = Depends(require_user)):
 
 
 @app.post("/api/directed/complete")
-def api_directed_complete(request: Request, user: str = Depends(require_user)):
+async def api_directed_complete(request: Request, user: str = Depends(require_user)):
     """Mark a task as completed."""
     try:
-        import asyncio
-        body = asyncio.get_event_loop().run_until_complete(request.json())
+        body = await request.json()
         task_id = body.get("taskId", "")
         action = body.get("action", "")
         duration_sec = int(body.get("durationSec", 0))
@@ -11358,11 +11360,10 @@ def api_directed_complete(request: Request, user: str = Depends(require_user)):
 
 
 @app.post("/api/directed/incomplete")
-def api_directed_incomplete(request: Request, user: str = Depends(require_user)):
+async def api_directed_incomplete(request: Request, user: str = Depends(require_user)):
     """Mark a task as incomplete with reason code and optional notes."""
     try:
-        import asyncio
-        body = asyncio.get_event_loop().run_until_complete(request.json())
+        body = await request.json()
         task_id = body.get("taskId", "")
         reason_code = body.get("reasonCode", "")
         notes = body.get("notes", "")
@@ -11409,11 +11410,10 @@ def api_directed_incomplete(request: Request, user: str = Depends(require_user))
 
 
 @app.post("/api/directed/end-of-day")
-def api_directed_end_of_day(request: Request, user: str = Depends(require_user)):
+async def api_directed_end_of_day(request: Request, user: str = Depends(require_user)):
     """Bulk submit incomplete reasons for all remaining pending tasks."""
     try:
-        import asyncio
-        body = asyncio.get_event_loop().run_until_complete(request.json())
+        body = await request.json()
         incompletes = body.get("incompletes", [])
 
         today = dt.date.today()
@@ -11461,11 +11461,10 @@ def api_directed_end_of_day(request: Request, user: str = Depends(require_user))
 
 
 @app.post("/api/directed/batch-history")
-def api_directed_batch_history(request: Request, user: str = Depends(require_user)):
+async def api_directed_batch_history(request: Request, user: str = Depends(require_user)):
     """Return invoice history from search index (all pipeline invoices) + Snowflake INVOICES_MAT."""
     try:
-        import asyncio
-        body = asyncio.get_event_loop().run_until_complete(request.json())
+        body = await request.json()
         accounts_list = body.get("accounts", [])
         if not isinstance(accounts_list, list):
             return JSONResponse({"error": "accounts must be a list"}, status_code=400)
@@ -11543,11 +11542,10 @@ def api_directed_batch_history(request: Request, user: str = Depends(require_use
 
 
 @app.post("/api/directed/bulk-complete")
-def api_directed_bulk_complete(request: Request, user: str = Depends(require_user)):
+async def api_directed_bulk_complete(request: Request, user: str = Depends(require_user)):
     """Bulk-complete multiple tasks at once."""
     try:
-        import asyncio
-        body = asyncio.get_event_loop().run_until_complete(request.json())
+        body = await request.json()
         task_ids = body.get("taskIds", [])
         action = body.get("action", "completed")
         if not isinstance(task_ids, list) or not task_ids:
@@ -12360,7 +12358,7 @@ def api_autonomy_sim_run(user: str = Depends(require_user)):
             Payload=json.dumps({"days_back": 14, "triggered_by": user}).encode(),
         )
         # Invalidate in-memory cache so next read fetches fresh S3 data
-        _CACHE.pop(("autonomy_sim",), None)
+        _METRICS_CACHE.pop("autonomy_sim", None)
         return {"status": "started", "message": "Simulation Lambda invoked. Results will appear in 1-2 minutes."}
     except Exception as e:
         return JSONResponse({"error": _sanitize_error(e, "invoke autonomy sim")}, status_code=500)
@@ -16663,9 +16661,10 @@ def _iter_stage_objects(prefix_root: str, start: dt.date, end: dt.date):
         ]
         for p in prefixes:
             try:
-                resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=p, MaxKeys=200)
-                for obj in resp.get("Contents", []) or []:
-                    yield obj["Key"]
+                paginator = s3.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=p):
+                    for obj in page.get("Contents", []) or []:
+                        yield obj["Key"]
             except Exception:
                 pass
         cur += dt.timedelta(days=1)
@@ -18753,9 +18752,7 @@ async def api_remove_from_tracker(request: Request, user: str = Depends(require_
         cache_key = ("accounts_to_track",)
         _CACHE.pop(cache_key, None)
         # Also clear completion tracker cache so refresh picks up the change
-        keys_to_clear = [k for k in _CACHE if isinstance(k, tuple) and len(k) >= 1 and k[0] == "completion_tracker"]
-        for k in keys_to_clear:
-            _CACHE.pop(k, None)
+        _CACHE.pop(("workflow_tracker",), None)
 
         return {"ok": True}
 
@@ -22947,7 +22944,7 @@ def _fetch_audit_events_for_date(date_str: str) -> list[dict]:
     sk_end = f"{date_str}T23:59:59Z#zzzzzzzzzzzz"
     kwargs = {
         "TableName": CONFIG_TABLE,
-        "KeyConditionExpression": "pk = :pk AND sk BETWEEN :start AND :end",
+        "KeyConditionExpression": "PK = :pk AND SK BETWEEN :start AND :end",
         "ExpressionAttributeValues": {
             ":pk": {"S": "AUDIT_EVENT"},
             ":start": {"S": sk_start},
@@ -22959,7 +22956,7 @@ def _fetch_audit_events_for_date(date_str: str) -> list[dict]:
         for item in resp.get("Items", []):
             try:
                 events.append({
-                    "sk": item["sk"]["S"],
+                    "sk": item["SK"]["S"],
                     "event_type": item.get("event_type", {}).get("S", ""),
                     "user": item.get("user", {}).get("S", ""),
                     "timestamp_utc": item.get("timestamp_utc", {}).get("S", ""),
@@ -23127,12 +23124,12 @@ def _audit_digest_loop():
                     ddb.put_item(
                         TableName=CONFIG_TABLE,
                         Item={
-                            "pk": {"S": "AUDIT_DIGEST_LOCK"},
-                            "sk": {"S": lock_sk},
+                            "PK": {"S": "AUDIT_DIGEST_LOCK"},
+                            "SK": {"S": lock_sk},
                             "sent_at": {"S": now_pt.isoformat()},
                             "ttl": {"N": str(int(now_pt.timestamp()) + 7 * 86400)},
                         },
-                        ConditionExpression="attribute_not_exists(pk)",
+                        ConditionExpression="attribute_not_exists(PK)",
                     )
                 except ddb.exceptions.ConditionalCheckFailedException:
                     print(f"[AUDIT DIGEST] Lock already held for {today_str}, skipping")
@@ -26157,7 +26154,7 @@ def api_overrides(date: str = Form(...), payload: str = Form(...), user: str = D
 
 
 @app.post("/api/status")
-def api_status(id: str = Form(...), status: str = Form(...), user: str = Form("reviewer")):
+def api_status(id: str = Form(...), status: str = Form(...), user: str = Depends(require_user)):
     put_status(id, status, user)
     return {"ok": True}
 
@@ -28011,9 +28008,9 @@ async def api_meters_merge(request: Request, user: str = Depends(require_user)):
         # Update readings from source meters to point to target
         readings_moved = 0
         for r in readings:
-            if r.get("meter_id") in source_meter_ids:
-                r["meter_id"] = target_meter_id
-                r["merged_from"] = r.get("meter_id")
+            if r.get("canonical_meter_id") in source_meter_ids:
+                r["merged_from"] = r.get("canonical_meter_id")
+                r["canonical_meter_id"] = target_meter_id
                 r["merged_by"] = user
                 r["merged_date"] = datetime.utcnow().isoformat()
                 readings_moved += 1
@@ -28024,7 +28021,7 @@ async def api_meters_merge(request: Request, user: str = Depends(require_user)):
                 del meters[src_id]
 
         # Update target meter reading count
-        target_readings = [r for r in readings if r.get("meter_id") == target_meter_id]
+        target_readings = [r for r in readings if r.get("canonical_meter_id") == target_meter_id]
         meters[target_meter_id]["reading_count"] = len(target_readings)
 
         _save_meter_data_to_s3(meter_data)
