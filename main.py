@@ -12120,36 +12120,49 @@ def api_pipeline_queue(user: str = Depends(require_user)):
 
     active_stages = ["S1", "S1_Std", "S1_Lg", "S3", "S4"]
     now_epoch = int(time.time())
-    stages = []
-    total = 0
-    for st in active_stages:
+
+    # Query today's + yesterday's events to find the CURRENT stage of each bill
+    today_str = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    yesterday_str = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    all_events = []
+    for day in [yesterday_str, today_str]:
         try:
             resp = ddb.query(
                 TableName=PIPELINE_TRACKER_TABLE,
-                IndexName="gsi-stage-time",
-                KeyConditionExpression="stage = :s",
-                ExpressionAttributeValues={":s": {"S": st}},
-                ScanIndexForward=True,  # oldest first
-                Limit=100,
+                IndexName="gsi-date",
+                KeyConditionExpression="event_date = :d",
+                ExpressionAttributeValues={":d": {"S": day}},
             )
-            items = resp.get("Items", [])
-            # Deduplicate by pk — keep only latest event per bill
-            latest_by_bill = {}
-            for it in items:
-                pk = it["pk"]["S"]
-                ts = int(it["timestamp_epoch"]["N"])
-                if pk not in latest_by_bill or ts > latest_by_bill[pk]["ts"]:
-                    latest_by_bill[pk] = {"ts": ts, "item": it}
-            # Filter: only bills whose LATEST event is in this stage
-            # (bills that moved on will have a later event in a different stage)
-            count = len(latest_by_bill)
-            oldest_epoch = min((v["ts"] for v in latest_by_bill.values()), default=now_epoch)
-            oldest_age_min = max(0, (now_epoch - oldest_epoch) // 60)
-            stages.append({"stage": st, "count": count, "oldest_age_minutes": oldest_age_min})
-            total += count
+            all_events.extend(resp.get("Items", []))
         except Exception as e:
-            print(f"[PIPELINE] Queue query for {st} failed: {e}")
-            stages.append({"stage": st, "count": 0, "oldest_age_minutes": 0})
+            print(f"[PIPELINE] Date query for {day} failed: {e}")
+
+    # Find the LATEST event per bill (by pk) to determine current stage
+    latest_by_bill = {}
+    for it in all_events:
+        pk = it["pk"]["S"]
+        ts = int(it["timestamp_epoch"]["N"])
+        if pk not in latest_by_bill or ts > latest_by_bill[pk]["ts"]:
+            latest_by_bill[pk] = {"ts": ts, "stage": it["stage"]["S"]}
+
+    # Count bills per current stage
+    from collections import Counter
+    stage_counts = Counter()
+    stage_oldest = {}
+    for pk, info in latest_by_bill.items():
+        st = info["stage"]
+        stage_counts[st] += 1
+        if st not in stage_oldest or info["ts"] < stage_oldest[st]:
+            stage_oldest[st] = info["ts"]
+
+    stages = []
+    total = 0
+    for st in active_stages:
+        count = stage_counts.get(st, 0)
+        oldest_epoch = stage_oldest.get(st, now_epoch)
+        oldest_age_min = max(0, (now_epoch - oldest_epoch) // 60)
+        stages.append({"stage": st, "count": count, "oldest_age_minutes": oldest_age_min})
+        total += count
 
     result = {"stages": stages, "total_in_flight": total, "as_of": dt.datetime.now(dt.timezone.utc).isoformat()}
     _CACHE[cache_key] = {"ts": time.time(), "data": result}

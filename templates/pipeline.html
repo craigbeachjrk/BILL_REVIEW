@@ -313,11 +313,17 @@ async function loadQueue() {
 }
 
 function renderQueue(data) {
-  const stages = data.stages || data;
+  // API returns array [{stage:"S1_Std", count:5, oldest_age_minutes:30}, ...]
+  // Convert to object keyed by lowercase stage name
+  const stagesArr = data.stages || [];
+  const stages = {};
+  for (const s of stagesArr) {
+    stages[(s.stage || '').toLowerCase()] = s;
+  }
   for (const key of STAGE_KEYS) {
     const info = stages[key] || {};
     const count = info.count != null ? info.count : 0;
-    const oldestMin = info.oldest_minutes != null ? info.oldest_minutes : -1;
+    const oldestMin = info.oldest_age_minutes != null ? info.oldest_age_minutes : -1;
 
     const countEl = document.getElementById('count-' + key);
     const oldestEl = document.getElementById('oldest-' + key);
