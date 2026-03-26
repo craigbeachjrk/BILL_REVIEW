@@ -470,7 +470,7 @@ async function loadSkipReasons() {
   tbody.innerHTML = '<tr><td colspan="8" class="empty"><span class="spinner"></span> Loading skip reasons...</td></tr>';
   try {
     const resp = await fetchJSON('/api/account-manager/skip-reasons');
-    skipData = resp.data || resp || [];
+    skipData = resp.items || resp.data || [];
 
     // Update stat cards
     const uniqueAccounts = new Set();
@@ -479,7 +479,7 @@ async function loadSkipReasons() {
     document.getElementById('skipEntryCount').textContent = skipData.length.toLocaleString();
 
     // Populate reason filter dropdown
-    const reasons = [...new Set(skipData.map(r => r.reason).filter(Boolean))].sort();
+    const reasons = [...new Set(skipData.map(r => r.reason_label).filter(Boolean))].sort();
     const sel = document.getElementById('skipReasonFilter');
     sel.innerHTML = '<option value="">All Reasons</option>';
     reasons.forEach(r => {
@@ -498,18 +498,20 @@ function renderSkipTable() {
   const reasonFilter = document.getElementById('skipReasonFilter').value;
 
   let filtered = skipData.filter(r => {
-    if (reasonFilter && r.reason !== reasonFilter) return false;
+    if (reasonFilter && r.reason_label !== reasonFilter) return false;
     if (search) {
-      const haystack = [r.property, r.vendor, r.account_number || r.account, r.month, r.reason, r.notes, r.user].join(' ').toLowerCase();
+      const haystack = [r.property_name, r.vendor_name, r.account_number, r.month, r.reason_label, r.notes, r.skip_user].join(' ').toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
   });
 
   // Sort
+  const colMap = {property:'property_name', vendor:'vendor_name', account:'account_number', reason:'reason_label', user:'skip_user', date:'skip_date'};
+  const sortKey = colMap[skipSortCol] || skipSortCol;
   filtered.sort((a, b) => {
-    let va = a[skipSortCol] || '';
-    let vb = b[skipSortCol] || '';
+    let va = a[sortKey] || '';
+    let vb = b[sortKey] || '';
     if (typeof va === 'string') va = va.toLowerCase();
     if (typeof vb === 'string') vb = vb.toLowerCase();
     if (va < vb) return skipSortAsc ? -1 : 1;
@@ -523,14 +525,14 @@ function renderSkipTable() {
   }
 
   tbody.innerHTML = filtered.map(r => `<tr>
-    <td>${esc(r.property)}</td>
-    <td>${esc(r.vendor)}</td>
-    <td class="mono">${esc(r.account_number || r.account)}</td>
+    <td>${esc(r.property_name)}</td>
+    <td>${esc(r.vendor_name)}</td>
+    <td class="mono">${esc(r.account_number)}</td>
     <td>${esc(r.month)}</td>
-    <td><span class="badge" style="background:#fef3c7;color:#92400e">${esc(r.reason)}</span></td>
+    <td><span class="badge" style="background:#fef3c7;color:#92400e">${esc(r.reason_label)}</span></td>
     <td>${esc(r.notes || '')}</td>
-    <td>${esc(r.user)}</td>
-    <td>${fmtDate(r.date || r.created_at)}</td>
+    <td>${esc(r.skip_user || '')}</td>
+    <td>${esc(r.skip_date || '')}</td>
   </tr>`).join('');
 }
 
@@ -673,7 +675,7 @@ async function loadRenameHistory() {
 
   try {
     const resp = await fetchJSON(`/api/account-manager/rename-history?days=${days}`);
-    renameHistoryData = resp.data || resp || [];
+    renameHistoryData = resp.items || resp.data || [];
 
     if (renameHistoryData.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" class="empty">No rename history found</td></tr>';
@@ -712,13 +714,13 @@ async function loadDuplicateBills() {
 
   try {
     const resp = await fetchJSON(`/api/account-manager/duplicate-bills?days=${days}`);
-    dupData = resp.data || resp.groups || resp || [];
+    dupData = resp.groups || resp.data || [];
 
     // Update stat cards
     const totalGroups = dupData.length;
     const totalExtra = dupData.reduce((s, g) => s + (g.count - 1), 0);
-    const totalDollars = dupData.reduce((s, g) => s + ((g.total || 0) * (g.count - 1)), 0);
-    const scanned = resp.scanned || resp.invoices_scanned || '--';
+    const totalDollars = dupData.reduce((s, g) => s + ((g.invoice_total || g.total || 0) * (g.count - 1)), 0);
+    const scanned = resp.scanned_invoices || resp.scanned || '--';
 
     document.getElementById('dupGroupCount').textContent = totalGroups.toLocaleString();
     document.getElementById('dupExtraCount').textContent = totalExtra.toLocaleString();
@@ -795,7 +797,7 @@ async function loadClosedAccounts() {
 
   try {
     const resp = await fetchJSON('/api/account-manager/closed-accounts');
-    closedData = resp.data || resp || [];
+    closedData = resp.accounts || resp.data || [];
 
     // Update stat cards
     document.getElementById('closedTotal').textContent = closedData.length.toLocaleString();
