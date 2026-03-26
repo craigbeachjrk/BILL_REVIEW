@@ -510,7 +510,7 @@ async function loadStats() {
 }
 
 function renderChart(data) {
-  const buckets = data.buckets || data.hours || [];
+  const buckets = data.by_hour || data.buckets || data.hours || [];
   if (!buckets.length) return;
 
   const labels = buckets.map(b => {
