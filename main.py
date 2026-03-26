@@ -11233,7 +11233,9 @@ async def api_directed_generate(request: Request, user: str = Depends(require_us
 def api_directed_plan_clear(user: str = Depends(require_user)):
     """Clear/cancel the current user's directed work plan."""
     try:
-        key = f"{DIRECTED_PLAN_PREFIX}{user}.json"
+        import hashlib as _hl_clear
+        user_hash = _hl_clear.sha1(user.encode()).hexdigest()[:8]
+        key = f"{DIRECTED_PLAN_PREFIX}{user_hash}.json"
         try:
             s3.delete_object(Bucket=CONFIG_BUCKET, Key=key)
         except Exception:
