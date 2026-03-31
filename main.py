@@ -2745,8 +2745,25 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
             print(f"[POST] Calling do_post for {file_name}...")
             ok, text = do_post(payload, dry_run=False)
             print(f"[POST] do_post result for {file_name}: ok={ok}, response_len={len(text) if isinstance(text, str) else '?'}")
-            # Parse body to detect silent failures (e.g., duplicates) even on HTTP 200
-            succ, reason = _entrata_post_succeeded(text if isinstance(text, str) else str(text)) if ok else (False, "http_error")
+            if not ok and isinstance(text, str):
+                print(f"[POST] Entrata error for {file_name}: {text[:300]}")
+            # Parse body to detect silent failures (e.g., duplicates) even on HTTP 200.
+            # For network errors (timeout, connection refused), do_post returns a plain-text
+            # diagnostic — map those to http_error. For actual Entrata HTTP responses
+            # (including 4xx/5xx), parse the body so the true reason is surfaced (e.g.,
+            # auth failure, duplicate) instead of misleadingly saying "did not respond in time".
+            _raw_text = text if isinstance(text, str) else str(text)
+            _is_network_error = not ok and (
+                _raw_text.startswith("Timeout after") or
+                _raw_text.startswith("Connection error:")
+            )
+            if _is_network_error:
+                succ, reason = False, "http_error"
+            else:
+                succ, reason = _entrata_post_succeeded(_raw_text)
+                if not ok and succ:
+                    # HTTP error status but body content appeared successful — trust HTTP status
+                    succ, reason = False, "http_error"
             if not succ:
                 _update_post_lock(key, "FAILED", force=True)
                 error_hints = {
