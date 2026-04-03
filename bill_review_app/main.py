@@ -480,13 +480,42 @@ def _compute_ubi_unassigned(days_back: int = 90, sort_by: str = "property_asc") 
 
 
 def _get_ubi_unassigned_cached(days_back: int = 90, force_refresh: bool = False) -> list:
-    """Get unassigned bills from cache or compute fresh."""
+    """Get unassigned bills from cache or compute fresh.
+
+    Uses a DynamoDB generation counter so that when Instance A invalidates
+    after an assignment, Instance B discovers the staleness on its next
+    request and patches its local cache (DDB scan only, no S3 reads).
+    """
     global _UBI_UNASSIGNED_CACHE
     now = time.time()
     cached = _UBI_UNASSIGNED_CACHE
-    if not force_refresh and cached.get("data") is not None and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL):
+
+    # Check if local cache looks valid by TTL
+    cache_valid = (
+        not force_refresh
+        and cached.get("data") is not None
+        and (now - cached.get("ts", 0) < _UBI_UNASSIGNED_TTL)
+    )
+
+    if cache_valid:
+        # Cross-instance staleness check via DDB generation counter
+        try:
+            gen_resp = ddb.get_item(
+                TableName=CONFIG_TABLE,
+                Key={"PK": {"S": "CONFIG#ubi-cache-gen"}, "SK": {"S": "v1"}}
+            )
+            gen_ts = float(gen_resp.get("Item", {}).get("ts", {}).get("N", "0"))
+            if gen_ts > cached.get("ts", 0):
+                # Another instance invalidated — patch locally (DDB only, no S3)
+                print("[UBI CACHE] Cross-instance staleness detected, patching from DDB")
+                patched = _patch_ubi_cache_from_ddb(cached["data"])
+                _UBI_UNASSIGNED_CACHE = {"data": patched, "ts": time.time()}
+                return patched
+        except Exception as e:
+            print(f"[UBI CACHE] Generation check error (non-fatal): {e}")
         return cached["data"]
-    # Compute fresh (under lock to prevent thundering herd)
+
+    # Full recompute (under lock to prevent thundering herd)
     with _UBI_UNASSIGNED_LOCK:
         # Double-check after acquiring lock
         cached = _UBI_UNASSIGNED_CACHE
@@ -497,10 +526,84 @@ def _get_ubi_unassigned_cached(days_back: int = 90, force_refresh: bool = False)
         return data
 
 
+def _patch_ubi_cache_from_ddb(cached_data: list) -> list:
+    """Lightweight cache patch: re-scan DDB assigned/archived hashes and
+    filter them out of the cached unassigned list.  No S3 reads needed."""
+    assigned_hashes = set()
+    try:
+        resp = ddb.scan(TableName="jrk-bill-ubi-assignments",
+                        ProjectionExpression="line_hash")
+        for item in resp.get("Items", []):
+            h = item.get("line_hash", {}).get("S", "")
+            if h:
+                assigned_hashes.add(h)
+        while "LastEvaluatedKey" in resp:
+            resp = ddb.scan(TableName="jrk-bill-ubi-assignments",
+                            ExclusiveStartKey=resp["LastEvaluatedKey"],
+                            ProjectionExpression="line_hash")
+            for item in resp.get("Items", []):
+                h = item.get("line_hash", {}).get("S", "")
+                if h:
+                    assigned_hashes.add(h)
+    except Exception as e:
+        print(f"[UBI CACHE PATCH] Error scanning assignments: {e}")
+
+    archived_hashes = set()
+    try:
+        resp = ddb.scan(TableName="jrk-bill-ubi-archived",
+                        ProjectionExpression="line_hash")
+        for item in resp.get("Items", []):
+            h = item.get("line_hash", {}).get("S", "")
+            if h:
+                archived_hashes.add(h)
+        while "LastEvaluatedKey" in resp:
+            resp = ddb.scan(TableName="jrk-bill-ubi-archived",
+                            ExclusiveStartKey=resp["LastEvaluatedKey"],
+                            ProjectionExpression="line_hash")
+            for item in resp.get("Items", []):
+                h = item.get("line_hash", {}).get("S", "")
+                if h:
+                    archived_hashes.add(h)
+    except Exception as e:
+        print(f"[UBI CACHE PATCH] Error scanning archived: {e}")
+
+    all_excluded = assigned_hashes | archived_hashes
+    print(f"[UBI CACHE PATCH] {len(all_excluded)} excluded hashes, patching {len(cached_data)} bills")
+
+    patched = []
+    for bill in cached_data:
+        remaining = [ln for ln in bill["unassigned_lines"]
+                     if ln["line_hash"] not in all_excluded]
+        if remaining:
+            patched.append({
+                **bill,
+                "unassigned_lines": remaining,
+                "line_count": len(remaining),
+                "total_amount": sum(ln["charge"] for ln in remaining),
+            })
+    print(f"[UBI CACHE PATCH] Result: {len(patched)} bills remain unassigned")
+    return patched
+
+
 def _invalidate_ubi_cache():
-    """Invalidate UBI unassigned cache (call after assign/archive/unassign)."""
+    """Invalidate UBI unassigned cache (call after assign/archive/unassign).
+
+    Also writes a generation timestamp to DynamoDB so that the *other*
+    AppRunner instance discovers staleness on its next request.
+    """
     global _UBI_UNASSIGNED_CACHE
     _UBI_UNASSIGNED_CACHE = {}
+    try:
+        ddb.put_item(
+            TableName=CONFIG_TABLE,
+            Item={
+                "PK": {"S": "CONFIG#ubi-cache-gen"},
+                "SK": {"S": "v1"},
+                "ts": {"N": str(time.time())},
+            }
+        )
+    except Exception as e:
+        print(f"[UBI CACHE] Error writing generation marker: {e}")
 
 
 # -------- Helpers --------
@@ -2217,8 +2320,29 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
         if not line_hashes:
             return JSONResponse({"error": "No line items selected"}, status_code=400)
 
+        # --- Dedup guard: load existing assigned hashes to prevent duplicates ---
+        existing_hashes = set()
+        try:
+            scan_resp = ddb.scan(TableName="jrk-bill-ubi-assignments",
+                                 ProjectionExpression="line_hash")
+            for it in scan_resp.get("Items", []):
+                h = it.get("line_hash", {}).get("S", "")
+                if h:
+                    existing_hashes.add(h)
+            while "LastEvaluatedKey" in scan_resp:
+                scan_resp = ddb.scan(TableName="jrk-bill-ubi-assignments",
+                                     ExclusiveStartKey=scan_resp["LastEvaluatedKey"],
+                                     ProjectionExpression="line_hash")
+                for it in scan_resp.get("Items", []):
+                    h = it.get("line_hash", {}).get("S", "")
+                    if h:
+                        existing_hashes.add(h)
+        except Exception as dedup_err:
+            print(f"[UBI ASSIGN] Dedup scan failed (proceeding anyway): {dedup_err}")
+
         # Save each assignment to DynamoDB
         saved_count = 0
+        skipped_dup = 0
         now_utc = datetime.utcnow().isoformat() + "Z"
 
         print(f"[UBI ASSIGN] Attempting to assign {len(line_hashes)} line(s) to period {ubi_period}")
@@ -2226,6 +2350,12 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
         print(f"[UBI ASSIGN] User: {user}")
 
         for idx, line_hash in enumerate(line_hashes):
+            # Skip if already assigned (prevents duplicates from stale cache)
+            if line_hash in existing_hashes:
+                print(f"[UBI ASSIGN] SKIP duplicate: hash={line_hash[:16]}... already assigned")
+                skipped_dup += 1
+                continue
+
             try:
                 assignment_id = str(uuid.uuid4())
 
@@ -2260,9 +2390,9 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
                 traceback.print_exc()
                 continue
 
-        print(f"[UBI ASSIGN] COMPLETED: Saved {saved_count}/{len(line_hashes)} assignments to period {ubi_period}")
+        print(f"[UBI ASSIGN] COMPLETED: Saved {saved_count}/{len(line_hashes)}, skipped {skipped_dup} duplicates, period {ubi_period}")
         _invalidate_ubi_cache()
-        return {"ok": True, "assigned": saved_count, "ubi_period": ubi_period}
+        return {"ok": True, "assigned": saved_count, "skipped_duplicates": skipped_dup, "ubi_period": ubi_period}
 
     except Exception as e:
         print(f"[UBI ASSIGN] Error: {e}")
