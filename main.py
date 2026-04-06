@@ -1628,6 +1628,17 @@ def load_day(y: str, m: str, d: str, force_refresh: bool = False) -> List[Dict[s
             if key.lower().endswith(".jsonl"):
                 keys.append(key)
 
+    # Deduplicate LARGEFILE variants: if both foo.jsonl and foo_LARGEFILE_.jsonl
+    # exist, drop the normal version (LARGEFILE was produced by the large-file
+    # processing path and supersedes the standard one).
+    largefile_superseded = set()
+    for key in keys:
+        if key.endswith("_LARGEFILE_.jsonl"):
+            normal_key = key[: -len("_LARGEFILE_.jsonl")] + ".jsonl"
+            largefile_superseded.add(normal_key)
+    if largefile_superseded:
+        keys = [k for k in keys if k not in largefile_superseded]
+
     # Fetch files in parallel (up to 50 concurrent requests)
     rows: List[Dict[str, Any]] = []
     if keys:
