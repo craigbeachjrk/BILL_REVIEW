@@ -10456,9 +10456,11 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                 bd = bm_info.get("bill_date")
                 if bd and (best_prev_date is None or bd > best_prev_date):
                     best_prev_date = bd
-                    best_prev_svc = bm_info.get("service_days") or effective_days_between
+                    _raw_svc = bm_info.get("service_days") or 0
+                    best_prev_svc = _raw_svc if _raw_svc > 0 else effective_days_between
             if best_prev_date:
-                expected_by = best_prev_date + dt.timedelta(days=best_prev_svc)
+                # Clamp service days to at least 30 to prevent nonsensical expected_by
+                expected_by = best_prev_date + dt.timedelta(days=max(best_prev_svc, 30))
 
             # Fallback: cycle_start + days_between (same as before)
             if not expected_by:
@@ -18172,14 +18174,23 @@ async def api_update_account_comment(request: Request, user: str = Depends(requi
         if not found:
             return JSONResponse({"error": "Account not found in tracker"}, status_code=404)
 
-        # Save back
+        # Snapshot the tracker cache data before _put_accounts_to_track clears it
+        _wt = _CACHE.get(("workflow_tracker",))
+        _wt_data = _wt["data"] if _wt and _wt.get("data") else None
+
         ok = _put_accounts_to_track(arr)
         if not ok:
             return JSONResponse({"error": "Failed to save"}, status_code=500)
 
-        # Clear cache
-        cache_key = ("accounts_to_track",)
-        _CACHE.pop(cache_key, None)
+        # Surgically patch and re-insert the tracker cache so comment
+        # appears immediately without a full rebuild
+        if _wt_data:
+            for _prop in _wt_data.get("properties", []):
+                for _item in _prop.get("items", []):
+                    if (_item.get("account_number") == account_number
+                            and _item.get("vendor_name") == vendor_name):
+                        _item["comment"] = comment
+            _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": _wt_data}
 
         return {"ok": True, "comment": comment}
     except Exception as e:
@@ -18222,12 +18233,24 @@ async def api_update_account_skip_reason(request: Request, user: str = Depends(r
         if not found:
             return JSONResponse({"error": "Account not found in tracker"}, status_code=404)
 
+        # Snapshot the tracker cache data before _put_accounts_to_track clears it
+        _wt = _CACHE.get(("workflow_tracker",))
+        _wt_data = _wt["data"] if _wt and _wt.get("data") else None
+
         ok = _put_accounts_to_track(arr)
         if not ok:
             return JSONResponse({"error": "Failed to save"}, status_code=500)
 
-        cache_key = ("accounts_to_track",)
-        _CACHE.pop(cache_key, None)
+        # Surgically patch and re-insert the tracker cache so skip reason
+        # appears immediately without a full rebuild
+        if _wt_data:
+            for _prop in _wt_data.get("properties", []):
+                for _item in _prop.get("items", []):
+                    if (_item.get("account_number") == account_number
+                            and _item.get("vendor_name") == vendor_name
+                            and (month == _item.get("month") or month in _item.get("month", ""))):
+                        _item["skip_reason"] = reason
+            _CACHE[("workflow_tracker",)] = {"ts": time.time(), "data": _wt_data}
 
         return {"ok": True, "month": month, "reason": reason}
     except Exception as e:
