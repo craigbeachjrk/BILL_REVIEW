@@ -2462,7 +2462,7 @@ def api_verify_entrata_sync(
             total = inv.get("InvoiceTotal") or inv.get("invoiceTotal") or inv.get("invoice_total") or inv.get("Amount") or inv.get("amount") or 0
             try:
                 total = float(str(total).replace("$", "").replace(",", ""))
-            except:
+            except Exception:
                 total = 0.0
             entrata_lookup[inv_num] = {
                 "total": total,
@@ -2476,7 +2476,7 @@ def api_verify_entrata_sync(
     if date_from:
         try:
             start = datetime.strptime(date_from, "%Y-%m-%d").date()
-        except:
+        except Exception:
             start = (datetime.utcnow() - timedelta(days=30)).date()
     else:
         start = (datetime.utcnow() - timedelta(days=30)).date()
@@ -2484,7 +2484,7 @@ def api_verify_entrata_sync(
     if date_to:
         try:
             end = datetime.strptime(date_to, "%Y-%m-%d").date()
-        except:
+        except Exception:
             end = datetime.utcnow().date()
     else:
         end = datetime.utcnow().date()
@@ -2523,9 +2523,9 @@ def api_verify_entrata_sync(
                                     "vendor": first.get("EnrichedVendorName", first.get("Vendor Name", "")),
                                     "property": first.get("EnrichedPropertyName", first.get("Property Name", "")),
                                 })
-                        except:
+                        except Exception:
                             pass
-        except:
+        except Exception:
             pass
         current += timedelta(days=1)
 
@@ -4375,7 +4375,7 @@ def _init_gemini():
             try:
                 secret_data = json.loads(secret_str)
                 api_keys = secret_data.get('keys', [])
-            except:
+            except Exception:
                 pass
 
         if not api_keys:
@@ -9309,7 +9309,7 @@ def api_vendor_correction_suspects(user: str = Depends(require_user), days: int 
                 charge_str = str(rec.get("Line Item Charge", "0")).replace("$", "").replace(",", "").strip()
                 try:
                     amount = float(charge_str)
-                except:
+                except Exception:
                     amount = 0.0
 
                 return {
@@ -13410,7 +13410,7 @@ def api_metrics_late_fees(
             posted_at = inv.get("posted_at", "")
             try:
                 posted_date = dt.datetime.fromisoformat(posted_at.replace("Z", "+00:00")).date()
-            except:
+            except Exception:
                 continue
 
             late_amt = inv.get("late_fee", 0)
@@ -17933,7 +17933,7 @@ def _ddb_get_check_slip(check_slip_id: str) -> dict | None:
         pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
         try:
             pdf_errors = json.loads(pdf_errors_str) if pdf_errors_str else []
-        except:
+        except Exception:
             pdf_errors = []
 
         return {
@@ -18045,7 +18045,7 @@ def _ddb_list_check_slips_by_status_date(status: str, date_str: str) -> list[dic
             pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
             try:
                 pdf_errors = json.loads(pdf_errors_str) if pdf_errors_str else []
-            except:
+            except Exception:
                 pdf_errors = []
             result.append({
                 "check_slip_id": item.get("check_slip_id", {}).get("S", ""),
@@ -18103,7 +18103,7 @@ def _ddb_list_check_slips_by_user(created_by: str, status: str = "") -> list[dic
             pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
             try:
                 pdf_errors = json.loads(pdf_errors_str) if pdf_errors_str else []
-            except:
+            except Exception:
                 pdf_errors = []
             result.append({
                 "check_slip_id": item.get("check_slip_id", {}).get("S", ""),
@@ -18200,7 +18200,7 @@ def _ddb_list_all_check_slips_for_date(date_str: str) -> list[dict]:
             pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
             try:
                 pdf_errors = json.loads(pdf_errors_str) if pdf_errors_str else []
-            except:
+            except Exception:
                 pdf_errors = []
             result.append({
                 "check_slip_id": item.get("check_slip_id", {}).get("S", ""),
@@ -19654,21 +19654,21 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                     try:
                         p_month, p_year = me_period.split("/")
                         period_yyyymm = f"{p_year}-{p_month.zfill(2)}"
-                    except:
+                    except Exception:
                         continue
                     if start_period:
                         try:
                             s_month, s_year = start_period.split("/")
                             if period_yyyymm < f"{s_year}-{s_month.zfill(2)}":
                                 continue
-                        except:
+                        except Exception:
                             pass
                     if end_period:
                         try:
                             e_month, e_year = end_period.split("/")
                             if period_yyyymm > f"{e_year}-{e_month.zfill(2)}":
                                 continue
-                        except:
+                        except Exception:
                             pass
 
                 # Build period dates
@@ -19678,7 +19678,7 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                     period_start = f"{p_month}/01/{p_year}"
                     last_day = calendar.monthrange(int(p_year), int(p_month))[1]
                     period_end = f"{p_month}/{last_day:02d}/{p_year}"
-                except:
+                except Exception:
                     continue
 
                 mb_key = f"{me_property_id}|{me_charge_code}|{me_utility_name}|{me_period}|{me_period}"
@@ -19930,7 +19930,7 @@ def api_manual_template():
                 seen.add(name)
                 unique_props.append((name, code))
         properties = sorted(unique_props, key=lambda x: x[0])
-    except:
+    except Exception:
         properties = [("(Error loading properties)", "")]
 
     # Load valid charge codes from CONFIG table - keep code and utility paired
@@ -19958,7 +19958,7 @@ def api_manual_template():
             # Sort billback codes first (0), then non-billback (1)
             return (0 if is_billback else 1, code)
         charge_code_pairs = sorted(unique_pairs, key=sort_key)
-    except:
+    except Exception:
         charge_code_pairs = [("(Error)", "loading charge codes")]
 
     # Valid utility types
@@ -21003,7 +21003,7 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                 fname = s3_key.split("/")[-1]  # Get just the filename
                 if "-" in fname:
                     filename_prop_name = fname.split("-")[0].strip()
-            except:
+            except Exception:
                 pass
 
             try:
@@ -21581,7 +21581,7 @@ def api_accrual_calculate(property_id: str = "", account_number: str = "", vendo
                     try:
                         hm, hy = h_period.split("/")
                         h_yyyymm = f"{hy}-{hm.zfill(2)}"
-                    except:
+                    except Exception:
                         continue
                     if cutoff_yyyymm < h_yyyymm < target_yyyymm:
                         filtered.append(h)
@@ -29961,7 +29961,7 @@ def api_print_checks_posted_invoices(
     else:
         try:
             start_date = dt.datetime.strptime(start, "%Y-%m-%d").date()
-        except:
+        except Exception:
             start_date = today - dt.timedelta(days=1)
 
     if not end:
@@ -29969,7 +29969,7 @@ def api_print_checks_posted_invoices(
     else:
         try:
             end_date = dt.datetime.strptime(end, "%Y-%m-%d").date()
-        except:
+        except Exception:
             end_date = today
 
     # Check cache first (unless refresh requested)
@@ -29998,7 +29998,7 @@ def api_print_checks_posted_invoices(
                 posted_date = dt.datetime.fromisoformat(posted_at_str.replace("Z", "")).date()
                 if not (start_date <= posted_date <= end_date):
                     continue  # Outside date range = skip
-            except:
+            except Exception:
                 continue  # Invalid date = skip
             all_invoices.append(inv)
         print(f"[PRINT CHECKS] Filtered to {len(all_invoices)} invoices for date range")
@@ -30089,10 +30089,10 @@ def api_print_checks_posted_invoices(
                             charge = item.get("Line Item Charge") or item.get("line_item_charge") or 0
                             try:
                                 total += float(str(charge).replace("$", "").replace(",", ""))
-                            except:
+                            except Exception:
                                 pass
                             line_count += 1
-                        except:
+                        except Exception:
                             pass
 
                     vid = rec.get("EnrichedVendorID") or rec.get("vendorId") or ""
@@ -30143,7 +30143,7 @@ def api_print_checks_posted_invoices(
                 posted_date = dt.datetime.fromisoformat(posted_at_str.replace("Z", "")).date()
                 if not (start_date <= posted_date <= end_date):
                     continue  # Outside date range = skip
-            except:
+            except Exception:
                 continue  # Invalid date = skip
             all_invoices.append(inv)
 
@@ -30381,7 +30381,7 @@ def api_print_checks_slip_pdf(check_slip_id: str, user: str = Depends(require_us
         from datetime import datetime
         dt_obj = datetime.fromisoformat(slip.get("created_at", "").replace("Z", "+00:00"))
         created_date = dt_obj.strftime("%B %d, %Y")
-    except:
+    except Exception:
         pass
 
     info_data = [
@@ -30406,7 +30406,7 @@ def api_print_checks_slip_pdf(check_slip_id: str, user: str = Depends(require_us
         amount = inv.get("invoice_total", 0)
         try:
             amount = float(amount)
-        except:
+        except Exception:
             amount = 0
         table_data.append([
             str(inv.get("property_name", ""))[:30],
@@ -30953,7 +30953,7 @@ async def api_review_checks_approve(
     try:
         body = await request.json()
         notes = body.get("notes", "")
-    except:
+    except Exception:
         notes = ""
 
     slip = _ddb_get_check_slip(check_slip_id)
@@ -30991,7 +30991,7 @@ async def api_review_checks_reject(
     try:
         body = await request.json()
         notes = body.get("notes", "")
-    except:
+    except Exception:
         notes = ""
 
     slip = _ddb_get_check_slip(check_slip_id)
