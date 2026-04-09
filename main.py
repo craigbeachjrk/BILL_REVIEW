@@ -17592,63 +17592,7 @@ def _read_historical_from_invoices_mat(property_id: str, account_number: str, ve
     return results, match_info
 
 
-def _get_historical_from_assignments(property_id: str, account_number: str, vendor_name: str) -> list[dict]:
-    """Fallback: scan jrk-bill-ubi-assignments and load S3 files to find historical amounts."""
-    try:
-        response = ddb.scan(TableName="jrk-bill-ubi-assignments")
-        assignments = response.get("Items", [])
-        while "LastEvaluatedKey" in response:
-            response = ddb.scan(
-                TableName="jrk-bill-ubi-assignments",
-                ExclusiveStartKey=response["LastEvaluatedKey"]
-            )
-            assignments.extend(response.get("Items", []))
-
-        s3_cache = {}
-        period_amounts = {}
-
-        for assignment in assignments:
-            s3_key = assignment.get("s3_key", {}).get("S", "")
-            line_hash = assignment.get("line_hash", {}).get("S", "")
-            ubi_period = assignment.get("ubi_period", {}).get("S", "")
-            amount = float(assignment.get("amount", {}).get("N", "0"))
-
-            if not s3_key or not line_hash:
-                continue
-
-            if s3_key not in s3_cache:
-                try:
-                    obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
-                    body = obj["Body"].read()
-                    if s3_key.endswith('.gz'):
-                        import gzip
-                        body = gzip.decompress(body)
-                    s3_cache[s3_key] = body.decode('utf-8')
-                except Exception:
-                    continue
-
-            for line_str in s3_cache[s3_key].strip().split("\n"):
-                try:
-                    parsed = json.loads(line_str)
-                    computed_hash = _compute_stable_line_hash(parsed)
-                    if computed_hash != line_hash:
-                        continue
-                    p_id = parsed.get("EnrichedPropertyID", parsed.get("Property ID", ""))
-                    acc_num = parsed.get("Account Number", parsed.get("AccountNumber", ""))
-                    if p_id == property_id and acc_num == account_number:
-                        period_key = ubi_period.split(" to ")[0].strip() if ubi_period else ""
-                        if period_key:
-                            period_amounts[period_key] = period_amounts.get(period_key, 0) + amount
-                except Exception:
-                    continue
-
-        results = [{"period": p, "amount": a} for p, a in sorted(period_amounts.items())]
-        print(f"[ACCRUAL] Assignments fallback returned {len(results)} historical records for {property_id}/{account_number}")
-        return results
-
-    except Exception as e:
-        print(f"[ACCRUAL] Assignments historical query error: {e}")
-        return []
+## _get_historical_from_assignments — REMOVED (dead code, never called, full DDB scan + sequential S3 reads)
 
 
 def _calculate_accrual(historical_amounts: list[dict], annual_inflation_rate: float = 0.03) -> dict:
@@ -22749,11 +22693,29 @@ async def api_debug_cleanup_orphaned_stage7(request: Request, user: str = Depend
 
 
 @app.get("/api/debug/reports")
+def _get_all_debug_reports_cached() -> list:
+    """Shared cached scan of DEBUG_TABLE — used by multiple debug endpoints."""
+    cache_key = ("debug_reports_all",)
+    cached = _CACHE.get(cache_key)
+    if cached and (time.time() - cached.get("ts", 0) < 300):
+        return cached["data"]
+    items = []
+    scan_params = {"TableName": DEBUG_TABLE}
+    while True:
+        response = ddb.scan(**scan_params)
+        items.extend(response.get("Items", []))
+        if "LastEvaluatedKey" not in response:
+            break
+        scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    _CACHE[cache_key] = {"ts": time.time(), "data": items}
+    return items
+
+
+@app.get("/api/debug/reports")
 def api_get_debug_reports(user: str = Depends(require_user)):
     """Get all debug reports for triage page."""
     try:
-        response = ddb.scan(TableName=DEBUG_TABLE)
-        items = response.get("Items", [])
+        items = _get_all_debug_reports_cached()
 
         reports = []
         for item in items:
@@ -22788,8 +22750,7 @@ def api_get_debug_reports(user: str = Depends(require_user)):
 def api_debug_stats(user: str = Depends(require_user)):
     """Get dashboard stats for debug reports."""
     try:
-        response = ddb.scan(TableName=DEBUG_TABLE)
-        items = response.get("Items", [])
+        items = _get_all_debug_reports_cached()
 
         stats = {"open": 0, "in_progress": 0, "completed": 0, "rejected": 0, "deferred": 0,
                  "bugs": 0, "features": 0, "enhancements": 0,
@@ -22872,8 +22833,7 @@ def api_debug_weekly_report(week: str = "", user: str = Depends(require_user)):
         except Exception:
             return JSONResponse({"error": "Invalid week format. Use YYYY-Wnn"}, status_code=400)
 
-        response = ddb.scan(TableName=DEBUG_TABLE)
-        items = response.get("Items", [])
+        items = _get_all_debug_reports_cached()
 
         completed_items = {"bugs": [], "features": [], "enhancements": []}
 
