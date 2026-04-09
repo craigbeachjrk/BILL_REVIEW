@@ -213,6 +213,10 @@
             <input type="checkbox" id="hideCompleted" onchange="toggleHideCompleted()" />
             Hide Completed
           </label>
+          <label class="toggle-label" title="Show only bills you scanned">
+            <input type="checkbox" id="myBillsOnly" onchange="toggleMyBills()" />
+            My Bills
+          </label>
           <button class="btn small" onclick="toggleSelectAll()" title="Toggle select all visible rows">Select All</button>
           <div class="filter-group">
             <select id="filterProperty" class="filter-select" onchange="applyFilters()" title="Filter by Property">
@@ -332,6 +336,24 @@
           }
         });
       }catch(e){ /* swallow for now */ }
+    }
+
+    // Current user for "My Bills" filter
+    const _currentUser = '{{ user }}'.split('@')[0].toLowerCase();
+
+    function toggleMyBills(){
+      const only = document.getElementById('myBillsOnly').checked;
+      try { localStorage.setItem('invoices_myBillsOnly', only ? '1' : '0'); } catch(e) {}
+      document.querySelectorAll('tbody tr').forEach(tr => {
+        const cells = tr.querySelectorAll('td');
+        // "Scanned By" is the last column
+        const scannedBy = (cells[cells.length - 1]?.textContent || '').trim().toLowerCase();
+        if (only && scannedBy && scannedBy !== _currentUser) {
+          tr.style.display = 'none';
+        } else if (!tr.classList.contains('hidden-complete')) {
+          tr.style.display = '';
+        }
+      });
     }
 
     function toggleHideCompleted(){
