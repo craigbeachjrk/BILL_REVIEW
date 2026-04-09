@@ -6,210 +6,285 @@
   <title>Bill Timeline &middot; Bill Review @ JRK</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
-    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
-    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    *{box-sizing:border-box}
+    :root{
+      --void:#0a0e1a;--surface:#111827;--surface2:#1e293b;--surface3:#1a2332;
+      --edge:#2a3548;--dim:#4b5c78;--text:#c8d6e5;--bright:#e8f0fe;
+      --cyan:#06d6a0;--cyan-dim:rgba(6,214,160,.15);--cyan-glow:rgba(6,214,160,.35);
+      --blue:#3a86ff;--blue-dim:rgba(58,134,255,.12);
+      --amber:#ffbe0b;--amber-dim:rgba(255,190,11,.12);
+      --red:#ef476f;--red-dim:rgba(239,71,111,.12);
+      --purple:#8338ec;--purple-dim:rgba(131,56,236,.12);
+      --orange:#fb5607;--orange-dim:rgba(251,86,7,.12);
+      --mono:'JetBrains Mono',monospace;--sans:'DM Sans',system-ui,sans-serif;
+    }
+    body{font-family:var(--sans);margin:0;background:var(--void);color:var(--text);min-height:100vh;overflow-x:hidden}
+    body::before{content:'';position:fixed;inset:0;background:
+      radial-gradient(ellipse 80% 60% at 20% 10%,rgba(58,134,255,.06),transparent),
+      radial-gradient(ellipse 60% 50% at 80% 90%,rgba(6,214,160,.04),transparent);
+      pointer-events:none;z-index:0}
 
-    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;
-      background:linear-gradient(135deg,var(--bg),var(--bg2));backdrop-filter:blur(6px)}
-    header.top .title-group{display:flex;align-items:center;gap:12px}
-    header.top .back-arrow{color:#fff;text-decoration:none;font-size:20px;line-height:1;opacity:.8;transition:opacity .15s}
-    header.top .back-arrow:hover{opacity:1}
-    header.top h1{margin:0;font-size:18px;font-weight:700;letter-spacing:.3px}
-    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:14px}
-    .btn.secondary{background:#64748b}
+    /* Header */
+    header{position:sticky;top:0;z-index:100;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;
+      background:rgba(10,14,26,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--edge)}
+    header .left{display:flex;align-items:center;gap:14px}
+    header .back{color:var(--dim);text-decoration:none;font-size:18px;transition:color .15s}
+    header .back:hover{color:var(--cyan)}
+    header h1{margin:0;font-size:15px;font-weight:700;color:var(--bright);letter-spacing:.4px}
+    header h1 span{color:var(--cyan);font-family:var(--mono);font-weight:600}
+    header .nav-link{color:var(--dim);text-decoration:none;font-size:13px;font-weight:500;padding:6px 14px;border:1px solid var(--edge);border-radius:8px;transition:all .15s}
+    header .nav-link:hover{color:var(--bright);border-color:var(--dim)}
 
-    .container{max-width:900px;margin:20px auto;padding:0 20px}
-    .card{background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:24px;backdrop-filter:blur(12px);margin-bottom:16px}
+    /* Layout */
+    .shell{max-width:920px;margin:0 auto;padding:24px 20px;position:relative;z-index:1}
 
-    /* Search bar */
-    .search-bar{display:flex;gap:10px;margin-bottom:20px}
-    .search-bar input{flex:1;padding:12px 16px;border-radius:12px;border:1px solid #cbd5e1;font-size:15px;font-family:inherit}
-    .search-bar button{padding:12px 24px}
+    /* Search */
+    .search{display:flex;gap:8px;margin-bottom:28px}
+    .search input{flex:1;padding:13px 18px;background:var(--surface);border:1px solid var(--edge);border-radius:10px;color:var(--bright);
+      font-size:14px;font-family:var(--mono);outline:none;transition:border-color .2s,box-shadow .2s}
+    .search input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px var(--cyan-dim)}
+    .search input::placeholder{color:var(--dim)}
+    .search button{padding:13px 28px;background:var(--cyan);color:var(--void);font-weight:700;font-size:13px;font-family:var(--sans);
+      border:none;border-radius:10px;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;transition:all .15s}
+    .search button:hover{filter:brightness(1.1);transform:translateY(-1px)}
 
-    /* Stage breadcrumb */
-    .stages{display:flex;gap:4px;margin-bottom:24px;flex-wrap:wrap}
-    .stage{padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569;transition:all .2s}
-    .stage.active{background:#0ea5e9;color:#fff}
-    .stage.completed{background:#10b981;color:#fff}
+    /* Pipeline viz */
+    .pipeline{display:flex;align-items:center;gap:0;margin-bottom:28px;overflow-x:auto;padding:8px 0}
+    .pipe-node{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:72px;position:relative}
+    .pipe-dot{width:14px;height:14px;border-radius:50%;background:var(--edge);border:2px solid var(--surface);position:relative;z-index:2;transition:all .4s}
+    .pipe-dot::after{content:'';position:absolute;inset:-4px;border-radius:50%;opacity:0;transition:opacity .4s}
+    .pipe-label{font-size:10px;font-family:var(--mono);color:var(--dim);text-align:center;white-space:nowrap;transition:color .3s}
+    .pipe-wire{flex:1;height:2px;background:var(--edge);min-width:16px;position:relative;top:-10px;transition:background .4s}
+    .pipe-node.visited .pipe-dot{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan-glow)}
+    .pipe-node.visited .pipe-dot::after{opacity:1;background:var(--cyan);filter:blur(6px)}
+    .pipe-node.visited .pipe-label{color:var(--cyan)}
+    .pipe-node.active .pipe-dot{background:var(--blue);border-color:var(--blue);box-shadow:0 0 12px rgba(58,134,255,.5);animation:pulse 2s infinite}
+    .pipe-node.active .pipe-label{color:var(--blue);font-weight:600}
+    .pipe-node.failed .pipe-dot{background:var(--red);border-color:var(--red);box-shadow:0 0 10px rgba(239,71,111,.4)}
+    .pipe-node.failed .pipe-label{color:var(--red)}
+    .pipe-wire.lit{background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)}
+
+    @keyframes pulse{0%,100%{box-shadow:0 0 12px rgba(58,134,255,.5)}50%{box-shadow:0 0 20px rgba(58,134,255,.8)}}
+
+    /* Info card */
+    .info{background:var(--surface);border:1px solid var(--edge);border-radius:14px;padding:20px 24px;margin-bottom:24px;
+      display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px}
+    .info-item dt{font-size:10px;font-family:var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
+    .info-item dd{margin:0;font-size:14px;font-weight:600;color:var(--bright);word-break:break-all}
 
     /* Timeline */
-    .timeline{position:relative;padding-left:32px}
-    .timeline::before{content:'';position:absolute;left:12px;top:0;bottom:0;width:2px;background:#cbd5e1}
-    .event{position:relative;padding:16px 20px;margin-bottom:16px;background:#fff;border-radius:12px;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-    .event::before{content:'';position:absolute;left:-26px;top:20px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 2px #cbd5e1}
-    .event.RECEIVED::before,.event.ENRICHED::before{background:#10b981;box-shadow:0 0 0 2px #10b981}
-    .event.PARSE_STARTED::before,.event.ROUTED_STANDARD::before,.event.ROUTED_LARGE::before{background:#f59e0b;box-shadow:0 0 0 2px #f59e0b}
-    .event.PARSE_COMPLETED::before,.event.SUBMITTED::before,.event.POSTED::before{background:#0ea5e9;box-shadow:0 0 0 2px #0ea5e9}
-    .event.UBI_ASSIGNED::before,.event.ARCHIVED::before{background:#8b5cf6;box-shadow:0 0 0 2px #8b5cf6}
-    .event.PARSE_FAILED::before,.event.DELETED::before,.event.POST_ARCHIVE_FAILED::before{background:#ef4444;box-shadow:0 0 0 2px #ef4444}
-    .event.REWORKED::before,.event.PARSE_REROUTED_LARGE::before{background:#f97316;box-shadow:0 0 0 2px #f97316}
+    .tl{position:relative;padding-left:36px;margin-top:8px}
+    .tl::before{content:'';position:absolute;left:13px;top:0;bottom:0;width:1px;
+      background:linear-gradient(to bottom,var(--edge),transparent)}
+    .tl-event{position:relative;margin-bottom:14px;opacity:0;animation:slideIn .35s ease forwards}
+    .tl-event:nth-child(1){animation-delay:.05s}
+    .tl-event:nth-child(2){animation-delay:.1s}
+    .tl-event:nth-child(3){animation-delay:.15s}
+    .tl-event:nth-child(4){animation-delay:.2s}
+    .tl-event:nth-child(5){animation-delay:.25s}
+    .tl-event:nth-child(6){animation-delay:.3s}
+    .tl-event:nth-child(7){animation-delay:.35s}
+    .tl-event:nth-child(8){animation-delay:.4s}
 
-    .event-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-    .event-type{font-weight:700;font-size:14px}
-    .event-time{font-size:12px;color:#64748b}
-    .event-details{font-size:13px;color:#475569}
-    .event-meta{margin-top:8px;font-size:12px;color:#94a3b8;display:flex;flex-wrap:wrap;gap:8px}
-    .event-meta span{background:#f1f5f9;padding:2px 8px;border-radius:6px}
+    @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
 
-    .empty{text-align:center;padding:40px;color:#64748b;font-size:15px}
-    .loading{text-align:center;padding:40px;color:#64748b}
-    .bill-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:6px}
-    .bill-info dt{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
-    .bill-info dd{margin:0;font-weight:600;font-size:14px}
+    .tl-dot{position:absolute;left:-30px;top:14px;width:10px;height:10px;border-radius:50%;border:2px solid var(--surface)}
+    .tl-card{background:var(--surface2);border:1px solid var(--edge);border-radius:10px;padding:14px 18px;transition:border-color .2s}
+    .tl-card:hover{border-color:var(--dim)}
+    .tl-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+    .tl-type{font-size:12px;font-weight:700;font-family:var(--mono);letter-spacing:.3px}
+    .tl-time{font-size:11px;color:var(--dim);font-family:var(--mono)}
+    .tl-stage{font-size:12px;color:var(--dim);margin-bottom:6px}
+    .tl-meta{display:flex;flex-wrap:wrap;gap:6px}
+    .tl-tag{font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:5px;background:var(--blue-dim);color:var(--blue)}
+
+    /* Event color coding */
+    .ev-success .tl-dot{background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)}
+    .ev-success .tl-type{color:var(--cyan)}
+    .ev-success .tl-tag{background:var(--cyan-dim);color:var(--cyan)}
+    .ev-progress .tl-dot{background:var(--amber);box-shadow:0 0 6px rgba(255,190,11,.3)}
+    .ev-progress .tl-type{color:var(--amber)}
+    .ev-progress .tl-tag{background:var(--amber-dim);color:var(--amber)}
+    .ev-action .tl-dot{background:var(--blue);box-shadow:0 0 6px rgba(58,134,255,.3)}
+    .ev-action .tl-type{color:var(--blue)}
+    .ev-error .tl-dot{background:var(--red);box-shadow:0 0 6px rgba(239,71,111,.3)}
+    .ev-error .tl-type{color:var(--red)}
+    .ev-error .tl-tag{background:var(--red-dim);color:var(--red)}
+    .ev-final .tl-dot{background:var(--purple);box-shadow:0 0 6px rgba(131,56,236,.3)}
+    .ev-final .tl-type{color:var(--purple)}
+    .ev-final .tl-tag{background:var(--purple-dim);color:var(--purple)}
+    .ev-warn .tl-dot{background:var(--orange);box-shadow:0 0 6px rgba(251,86,7,.3)}
+    .ev-warn .tl-type{color:var(--orange)}
+    .ev-warn .tl-tag{background:var(--orange-dim);color:var(--orange)}
+
+    /* Search results */
+    .results-card{background:var(--surface);border:1px solid var(--edge);border-radius:14px;padding:20px 24px}
+    .results-card h3{margin:0 0 16px;font-size:14px;color:var(--bright);font-weight:600}
+    .result-row{padding:10px 0;border-bottom:1px solid var(--edge);cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:background .15s;margin:0 -8px;padding-left:8px;padding-right:8px;border-radius:6px}
+    .result-row:hover{background:var(--blue-dim)}
+    .result-row:last-child{border:none}
+    .result-vendor{font-weight:600;color:var(--bright);font-size:13px}
+    .result-acct{color:var(--dim);font-size:12px;font-family:var(--mono)}
+    .result-date{color:var(--dim);font-size:11px;font-family:var(--mono)}
+
+    .empty-state{text-align:center;padding:60px 20px;color:var(--dim)}
+    .empty-state .icon{font-size:40px;margin-bottom:12px;opacity:.4}
+    .empty-state p{font-size:14px;max-width:400px;margin:0 auto;line-height:1.6}
+    .loading-state{text-align:center;padding:60px;color:var(--dim)}
+    .loading-state::after{content:'';display:block;width:24px;height:24px;border:2px solid var(--edge);border-top-color:var(--cyan);
+      border-radius:50%;animation:spin .6s linear infinite;margin:16px auto 0}
+    @keyframes spin{to{transform:rotate(360deg)}}
   </style>
 </head>
 <body>
-  <header class="top">
-    <div class="title-group">
-      <a href="/" class="back-arrow">&#8592;</a>
-      <div>
-        <h1>Bill Timeline</h1>
-      </div>
+  <header>
+    <div class="left">
+      <a href="/" class="back">&#8592;</a>
+      <h1><span>//</span> Bill Timeline</h1>
     </div>
-    <a href="/search" class="btn secondary">Search Bills</a>
+    <a href="/search" class="nav-link">Search Bills</a>
   </header>
 
-  <div class="container">
-    <!-- Search -->
-    <div class="search-bar">
-      <input type="text" id="searchInput" placeholder="Enter pdf_id, account number, or S3 key..." value="{{ pdf_id or '' }}" />
-      <button class="btn" onclick="searchBill()">Track</button>
+  <div class="shell">
+    <div class="search">
+      <input type="text" id="searchInput" placeholder="pdf_id, account number, or S3 key..." value="{{ pdf_id or '' }}" spellcheck="false" />
+      <button onclick="searchBill()">Track</button>
     </div>
-
     <div id="content">
-      <div class="empty">Enter a pdf_id or account number to view the bill's journey through the pipeline.</div>
+      <div class="empty-state">
+        <div class="icon">&#9776;</div>
+        <p>Enter a pdf_id or account number to trace a bill's journey through the pipeline.</p>
+      </div>
     </div>
   </div>
 
 <script>
-  const STAGE_ORDER = ['S1', 'S1_standard', 'S1_largefile', 'S3', 'S4', 'S6', 'S7', 'S8', 'ARCHIVE', 'DELETED', 'REWORK', 'FAILED'];
+  const STAGE_ORDER = ['S1','S1_standard','S1_largefile','S3','S4','S6','S7','S8','ARCHIVE','DELETED','REWORK','FAILED'];
   const STAGE_LABELS = {
-    'S1': 'Received', 'S1_standard': 'Standard Queue', 'S1_largefile': 'Large File Queue',
-    'S3': 'Parsed', 'S4': 'Enriched', 'S6': 'Pre-Entrata', 'S7': 'Posted',
-    'S8': 'UBI Assigned', 'ARCHIVE': 'Archived', 'DELETED': 'Deleted', 'REWORK': 'Rework', 'FAILED': 'Failed'
+    'S1':'Received','S1_standard':'Std Queue','S1_largefile':'Lg Queue',
+    'S3':'Parsed','S4':'Enriched','S6':'Pre-Entrata','S7':'Posted',
+    'S8':'UBI Assign','ARCHIVE':'Archived','DELETED':'Deleted','REWORK':'Rework','FAILED':'Failed'
+  };
+  const MAIN_STAGES = ['S1','S3','S4','S6','S7','S8'];
+
+  const EVENT_CLASSES = {
+    RECEIVED:'ev-success',ENRICHED:'ev-success',PARSE_COMPLETED:'ev-success',
+    PARSE_STARTED:'ev-progress',ROUTED_STANDARD:'ev-progress',ROUTED_LARGE:'ev-progress',ADVANCED_TO_POST:'ev-progress',
+    SUBMITTED:'ev-action',POSTED:'ev-action',
+    UBI_ASSIGNED:'ev-final',ARCHIVED:'ev-final',
+    PARSE_FAILED:'ev-error',DELETED:'ev-error',POST_ARCHIVE_FAILED:'ev-error',ENRICHMENT_FAILED:'ev-error',
+    REWORKED:'ev-warn',PARSE_REROUTED_LARGE:'ev-warn',
   };
 
-  function escapeHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+  function escapeHtml(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
 
-  async function searchBill() {
-    const q = document.getElementById('searchInput').value.trim();
-    if (!q) return;
-    const content = document.getElementById('content');
-    content.innerHTML = '<div class="loading">Searching...</div>';
-
-    // Try direct pdf_id lookup first
-    try {
-      const resp = await fetch(`/api/bill/${encodeURIComponent(q)}/events`);
-      if (resp.status === 401) { window.location = '/login'; return; }
-      const data = await resp.json();
-      if (data.events && data.events.length > 0) {
-        renderTimeline(data);
-        return;
-      }
-    } catch(e) {}
-
-    // If no events found, try search
-    try {
-      const resp = await fetch(`/api/search?account=${encodeURIComponent(q)}&limit=5`);
-      const data = await resp.json();
-      if (data.results && data.results.length > 0) {
-        // Found by account - show list
-        let html = '<div class="card"><h3>Bills matching "' + escapeHtml(q) + '"</h3>';
-        data.results.forEach(r => {
-          html += `<div style="padding:8px 0;border-bottom:1px solid #e2e8f0;cursor:pointer" onclick="loadTimeline('${escapeHtml(r.pdf_id)}')">
-            <strong>${escapeHtml(r.vendor)}</strong> &mdash; ${escapeHtml(r.account)} &mdash; $${(r.amount||0).toFixed(2)}
-            <span style="float:right;color:#64748b;font-size:12px">${escapeHtml(r.date)}</span>
+  async function searchBill(){
+    const q=document.getElementById('searchInput').value.trim();
+    if(!q)return;
+    const content=document.getElementById('content');
+    content.innerHTML='<div class="loading-state">Searching</div>';
+    try{
+      const resp=await fetch(`/api/bill/${encodeURIComponent(q)}/events`);
+      if(resp.status===401){window.location='/login';return}
+      const data=await resp.json();
+      if(data.events&&data.events.length>0){renderTimeline(data);return}
+    }catch(e){}
+    try{
+      const resp=await fetch(`/api/search?account=${encodeURIComponent(q)}&limit=5`);
+      const data=await resp.json();
+      if(data.results&&data.results.length>0){
+        let html='<div class="results-card"><h3>Bills matching "'+escapeHtml(q)+'"</h3>';
+        data.results.forEach(r=>{
+          html+=`<div class="result-row" onclick="loadTimeline('${escapeHtml(r.pdf_id)}')">
+            <div><span class="result-vendor">${escapeHtml(r.vendor)}</span> <span class="result-acct">${escapeHtml(r.account)}</span></div>
+            <span class="result-date">${escapeHtml(r.date)}</span>
           </div>`;
         });
-        html += '</div>';
-        content.innerHTML = html;
-        return;
+        html+='</div>';
+        content.innerHTML=html;return;
       }
-    } catch(e) {}
-
-    content.innerHTML = '<div class="empty">No bill found for "' + escapeHtml(q) + '". Try a different pdf_id or account number.</div>';
+    }catch(e){}
+    content.innerHTML='<div class="empty-state"><div class="icon">&#8709;</div><p>No bill found for "'+escapeHtml(q)+'"</p></div>';
   }
 
-  async function loadTimeline(pdfId) {
-    document.getElementById('searchInput').value = pdfId;
-    const content = document.getElementById('content');
-    content.innerHTML = '<div class="loading">Loading timeline...</div>';
-    try {
-      const resp = await fetch(`/api/bill/${encodeURIComponent(pdfId)}/events`);
-      const data = await resp.json();
-      renderTimeline(data);
-    } catch(e) {
-      content.innerHTML = '<div class="empty">Error loading timeline.</div>';
+  async function loadTimeline(pdfId){
+    document.getElementById('searchInput').value=pdfId;
+    document.getElementById('content').innerHTML='<div class="loading-state">Loading timeline</div>';
+    try{
+      const resp=await fetch(`/api/bill/${encodeURIComponent(pdfId)}/events`);
+      renderTimeline(await resp.json());
+    }catch(e){
+      document.getElementById('content').innerHTML='<div class="empty-state"><p>Error loading timeline.</p></div>';
     }
   }
 
-  function renderTimeline(data) {
-    const content = document.getElementById('content');
-    if (!data.events || data.events.length === 0) {
-      content.innerHTML = '<div class="empty">No events found for this bill.</div>';
-      return;
+  function renderTimeline(data){
+    const content=document.getElementById('content');
+    if(!data.events||!data.events.length){
+      content.innerHTML='<div class="empty-state"><p>No events found.</p></div>';return;
     }
+    const visited=new Set(data.events.map(e=>e.stage));
+    const cur=data.current_stage;
+    const isFailed=cur==='FAILED'||cur==='DELETED';
 
-    // Determine which stages this bill has passed through
-    const visitedStages = new Set(data.events.map(e => e.stage));
-    const currentStage = data.current_stage;
-
-    // Stage breadcrumb
-    let stagesHtml = '<div class="stages">';
-    STAGE_ORDER.forEach(s => {
-      const label = STAGE_LABELS[s] || s;
-      const cls = s === currentStage ? 'active' : visitedStages.has(s) ? 'completed' : '';
-      stagesHtml += `<div class="stage ${cls}">${escapeHtml(label)}</div>`;
+    // Pipeline visualization
+    let pipeHtml='<div class="pipeline">';
+    MAIN_STAGES.forEach((s,i)=>{
+      const cls=s===cur?(isFailed?'failed':'active'):visited.has(s)?'visited':'';
+      pipeHtml+=`<div class="pipe-node ${cls}"><div class="pipe-dot"></div><div class="pipe-label">${STAGE_LABELS[s]}</div></div>`;
+      if(i<MAIN_STAGES.length-1){
+        const nextVisited=visited.has(MAIN_STAGES[i+1]);
+        pipeHtml+=`<div class="pipe-wire${visited.has(s)&&nextVisited?' lit':''}"></div>`;
+      }
     });
-    stagesHtml += '</div>';
+    pipeHtml+='</div>';
 
-    // Bill info from first event
-    const first = data.events[0];
-    let infoHtml = '<div class="card"><dl class="bill-info">';
-    infoHtml += `<div><dt>PDF ID</dt><dd>${escapeHtml(data.pdf_id)}</dd></div>`;
-    infoHtml += `<div><dt>Current Stage</dt><dd>${escapeHtml(STAGE_LABELS[currentStage] || currentStage)}</dd></div>`;
-    infoHtml += `<div><dt>Events</dt><dd>${data.event_count}</dd></div>`;
-    if (first.filename) infoHtml += `<div><dt>Filename</dt><dd>${escapeHtml(first.filename)}</dd></div>`;
-    const meta0 = first.metadata || {};
-    if (meta0.submitted_by) infoHtml += `<div><dt>Submitted By</dt><dd>${escapeHtml(meta0.submitted_by)}</dd></div>`;
-    infoHtml += '</dl></div>';
+    // Info card
+    const first=data.events[0];
+    const meta0=first.metadata||{};
+    let infoHtml='<div class="info">';
+    infoHtml+=`<div class="info-item"><dt>Tracking ID</dt><dd>${escapeHtml(data.pdf_id.substring(0,16))}...</dd></div>`;
+    infoHtml+=`<div class="info-item"><dt>Current Stage</dt><dd>${escapeHtml(STAGE_LABELS[cur]||cur)}</dd></div>`;
+    infoHtml+=`<div class="info-item"><dt>Events</dt><dd>${data.event_count}</dd></div>`;
+    if(first.filename)infoHtml+=`<div class="info-item"><dt>File</dt><dd>${escapeHtml(first.filename.substring(0,30))}</dd></div>`;
+    if(meta0.submitted_by)infoHtml+=`<div class="info-item"><dt>Submitted By</dt><dd>${escapeHtml(meta0.submitted_by)}</dd></div>`;
+    infoHtml+='</div>';
 
-    // Timeline events
-    let timelineHtml = '<div class="timeline">';
-    data.events.forEach(ev => {
-      const meta = ev.metadata || {};
-      const metaParts = [];
-      if (ev.source) metaParts.push(`<span>Source: ${escapeHtml(ev.source)}</span>`);
-      for (const [k,v] of Object.entries(meta)) {
-        if (v && k !== 'submitted_by') metaParts.push(`<span>${escapeHtml(k)}: ${escapeHtml(String(v).substring(0,80))}</span>`);
+    // Timeline
+    let tlHtml='<div class="tl">';
+    data.events.forEach(ev=>{
+      const meta=ev.metadata||{};
+      const tags=[];
+      if(ev.source)tags.push(`src: ${escapeHtml(ev.source)}`);
+      for(const[k,v]of Object.entries(meta)){
+        if(v&&k!=='submitted_by')tags.push(`${escapeHtml(k)}: ${escapeHtml(String(v).substring(0,60))}`);
       }
-      const ts = ev.timestamp || '';
-      const timeStr = ts ? new Date(ts.endsWith('Z') ? ts : ts+'Z').toLocaleString() : '';
+      const ts=ev.timestamp||'';
+      const timeStr=ts?new Date(ts.endsWith('Z')?ts:ts+'Z').toLocaleString():'';
+      const evCls=EVENT_CLASSES[ev.event_type]||'ev-action';
 
-      timelineHtml += `
-        <div class="event ${escapeHtml(ev.event_type)}">
-          <div class="event-header">
-            <span class="event-type">${escapeHtml(ev.event_type.replace(/_/g, ' '))}</span>
-            <span class="event-time">${escapeHtml(timeStr)}</span>
+      tlHtml+=`<div class="tl-event ${evCls}">
+        <div class="tl-dot"></div>
+        <div class="tl-card">
+          <div class="tl-head">
+            <span class="tl-type">${escapeHtml(ev.event_type)}</span>
+            <span class="tl-time">${escapeHtml(timeStr)}</span>
           </div>
-          <div class="event-details">Stage: ${escapeHtml(STAGE_LABELS[ev.stage] || ev.stage)}</div>
-          ${metaParts.length ? '<div class="event-meta">' + metaParts.join('') + '</div>' : ''}
-        </div>`;
+          <div class="tl-stage">${escapeHtml(STAGE_LABELS[ev.stage]||ev.stage)}</div>
+          ${tags.length?'<div class="tl-meta">'+tags.map(t=>`<span class="tl-tag">${t}</span>`).join('')+'</div>':''}
+        </div>
+      </div>`;
     });
-    timelineHtml += '</div>';
+    tlHtml+='</div>';
 
-    content.innerHTML = stagesHtml + infoHtml + timelineHtml;
+    content.innerHTML=pipeHtml+infoHtml+tlHtml;
   }
 
-  // Auto-search if pdf_id provided in URL
-  window.addEventListener('DOMContentLoaded', () => {
-    const input = document.getElementById('searchInput');
-    if (input.value.trim()) searchBill();
+  window.addEventListener('DOMContentLoaded',()=>{
+    const input=document.getElementById('searchInput');
+    if(input.value.trim())searchBill();
   });
 </script>
 </body>

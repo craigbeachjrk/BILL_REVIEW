@@ -4,128 +4,122 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>My Bills &middot; Bill Review @ JRK</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
-    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
-    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
-    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;
-      background:linear-gradient(135deg,var(--bg),var(--bg2))}
-    header.top .title-group{display:flex;align-items:center;gap:12px}
-    header.top .back-arrow{color:#fff;text-decoration:none;font-size:20px;opacity:.8}
-    header.top .back-arrow:hover{opacity:1}
-    header.top h1{margin:0;font-size:18px;font-weight:700}
-    .btn{padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;font-family:inherit;font-size:14px;text-decoration:none;display:inline-block}
-    .btn.secondary{background:#64748b}
-    .container{max-width:1000px;margin:20px auto;padding:0 20px}
-    .card{background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:20px;backdrop-filter:blur(12px);margin-bottom:16px}
-    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
-    .stat{text-align:center;padding:16px;background:#fff;border-radius:12px;border:1px solid #e2e8f0}
-    .stat .num{font-size:28px;font-weight:700;color:#0ea5e9}
-    .stat .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+    *{box-sizing:border-box}
+    :root{
+      --void:#0a0e1a;--surface:#111827;--surface2:#1e293b;--edge:#2a3548;--dim:#4b5c78;
+      --text:#c8d6e5;--bright:#e8f0fe;
+      --cyan:#06d6a0;--cyan-dim:rgba(6,214,160,.12);--cyan-glow:rgba(6,214,160,.3);
+      --blue:#3a86ff;--blue-dim:rgba(58,134,255,.12);
+      --amber:#ffbe0b;--amber-dim:rgba(255,190,11,.12);
+      --red:#ef476f;--red-dim:rgba(239,71,111,.12);
+      --purple:#8338ec;--purple-dim:rgba(131,56,236,.12);
+      --orange:#fb5607;
+      --mono:'JetBrains Mono',monospace;--sans:'DM Sans',system-ui,sans-serif;
+    }
+    body{font-family:var(--sans);margin:0;background:var(--void);color:var(--text);min-height:100vh}
+    body::before{content:'';position:fixed;inset:0;background:
+      radial-gradient(ellipse 70% 50% at 30% 20%,rgba(6,214,160,.04),transparent),
+      radial-gradient(ellipse 50% 40% at 70% 80%,rgba(58,134,255,.03),transparent);pointer-events:none}
+    header{position:sticky;top:0;z-index:100;height:56px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;
+      background:rgba(10,14,26,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--edge)}
+    header .left{display:flex;align-items:center;gap:14px}
+    header .back{color:var(--dim);text-decoration:none;font-size:18px;transition:color .15s}
+    header .back:hover{color:var(--cyan)}
+    header h1{margin:0;font-size:15px;font-weight:700;color:var(--bright)}
+    header h1 span{color:var(--cyan);font-family:var(--mono)}
+    .nav-link{color:var(--dim);text-decoration:none;font-size:13px;padding:6px 14px;border:1px solid var(--edge);border-radius:8px;transition:all .15s}
+    .nav-link:hover{color:var(--bright);border-color:var(--dim)}
+    .shell{max-width:1060px;margin:0 auto;padding:24px 20px;position:relative;z-index:1}
+    .controls{display:flex;align-items:center;gap:16px;margin-bottom:20px}
+    .controls select{padding:8px 12px;background:var(--surface);border:1px solid var(--edge);border-radius:8px;color:var(--bright);font-family:var(--sans);font-size:13px}
+    .controls .user{color:var(--dim);font-size:12px;font-family:var(--mono)}
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px}
+    .kpi{background:var(--surface);border:1px solid var(--edge);border-radius:12px;padding:16px;text-align:center;transition:border-color .2s}
+    .kpi:hover{border-color:var(--dim)}
+    .kpi .num{font-size:26px;font-weight:700;color:var(--cyan);font-family:var(--mono)}
+    .kpi .label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin-top:4px;font-family:var(--mono)}
+    .card{background:var(--surface);border:1px solid var(--edge);border-radius:14px;overflow:hidden}
     table{width:100%;border-collapse:collapse;font-size:13px}
-    th{text-align:left;padding:10px 12px;background:#f1f5f9;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#475569}
-    td{padding:10px 12px;border-bottom:1px solid #e2e8f0}
-    tr:hover td{background:#f8fafc}
-    .stage-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
-    .stage-S1,.stage-S1_standard,.stage-S1_largefile{background:#fef3c7;color:#92400e}
-    .stage-S3{background:#dbeafe;color:#1e40af}
-    .stage-S4{background:#e0e7ff;color:#3730a3}
-    .stage-S6{background:#fce7f3;color:#9d174d}
-    .stage-S7{background:#d1fae5;color:#065f46}
-    .stage-S8{background:#ede9fe;color:#5b21b6}
-    .stage-FAILED,.stage-DELETED{background:#fee2e2;color:#991b1b}
-    .stage-REWORK{background:#ffedd5;color:#9a3412}
-    .stage-ARCHIVE{background:#f1f5f9;color:#475569}
-    .empty{text-align:center;padding:40px;color:#64748b}
-    .controls{display:flex;gap:12px;margin-bottom:16px;align-items:center}
-    .controls select{padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;font-family:inherit}
+    th{text-align:left;padding:12px 16px;font-size:10px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.6px;color:var(--dim);
+      background:var(--surface2);border-bottom:1px solid var(--edge)}
+    td{padding:12px 16px;border-bottom:1px solid rgba(42,53,72,.5)}
+    tr{transition:background .1s}
+    tr:hover td{background:rgba(58,134,255,.04)}
+    .fname{font-weight:600;color:var(--bright);font-size:13px}
+    .badge{display:inline-block;padding:3px 10px;border-radius:8px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.3px}
+    .badge-S1,.badge-S1_standard,.badge-S1_largefile{background:var(--amber-dim);color:var(--amber)}
+    .badge-S3,.badge-S4{background:var(--blue-dim);color:var(--blue)}
+    .badge-S6{background:var(--purple-dim);color:var(--purple)}
+    .badge-S7{background:var(--cyan-dim);color:var(--cyan)}
+    .badge-S8,.badge-ARCHIVE{background:rgba(131,56,236,.12);color:var(--purple)}
+    .badge-FAILED,.badge-DELETED{background:var(--red-dim);color:var(--red)}
+    .badge-REWORK{background:rgba(251,86,7,.12);color:var(--orange)}
+    .tl-link{color:var(--blue);text-decoration:none;font-size:11px;font-family:var(--mono);padding:4px 10px;border:1px solid var(--edge);
+      border-radius:6px;transition:all .15s;white-space:nowrap}
+    .tl-link:hover{border-color:var(--blue);background:var(--blue-dim)}
+    .time-cell{font-size:11px;color:var(--dim);font-family:var(--mono)}
+    .empty-state{text-align:center;padding:60px;color:var(--dim);font-size:14px}
   </style>
 </head>
 <body>
-  <header class="top">
-    <div class="title-group">
-      <a href="/" class="back-arrow">&#8592;</a>
-      <h1>My Bills</h1>
+  <header>
+    <div class="left">
+      <a href="/" class="back">&#8592;</a>
+      <h1><span>//</span> My Bills</h1>
     </div>
-    <a href="/bill/timeline" class="btn secondary">Bill Timeline</a>
+    <a href="/bill/timeline" class="nav-link">Bill Timeline</a>
   </header>
-
-  <div class="container">
+  <div class="shell">
     <div class="controls">
-      <label>Show last
+      <label style="color:var(--dim);font-size:13px">Period
         <select id="daysSelect" onchange="loadBills()">
           <option value="7">7 days</option>
           <option value="30" selected>30 days</option>
           <option value="90">90 days</option>
         </select>
       </label>
-      <span id="userLabel" style="color:#fff;font-size:13px;opacity:.8"></span>
+      <span class="user" id="userLabel"></span>
     </div>
-
-    <div id="stats" class="stats"></div>
-    <div class="card">
-      <div id="content"><div class="empty">Loading...</div></div>
-    </div>
+    <div id="stats" class="kpis"></div>
+    <div class="card"><div id="content"><div class="empty-state">Loading...</div></div></div>
   </div>
-
 <script>
-  const STAGE_LABELS = {
-    'S1':'Received','S1_standard':'Parsing','S1_largefile':'Large Parse',
-    'S3':'Parsed','S4':'Enriched','S6':'Pre-Entrata','S7':'Posted',
-    'S8':'UBI Assigned','ARCHIVE':'Archived','DELETED':'Deleted','REWORK':'Rework','FAILED':'Failed'
-  };
-
-  function escapeHtml(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
-
-  async function loadBills() {
-    const days = document.getElementById('daysSelect').value;
-    const content = document.getElementById('content');
-    content.innerHTML = '<div class="empty">Loading...</div>';
-
-    try {
-      const resp = await fetch(`/api/my-bills?days=${days}`);
-      if (resp.status === 401) { window.location = '/login'; return; }
-      const data = await resp.json();
-
-      document.getElementById('userLabel').textContent = `Logged in as: ${data.user || ''}`;
-
-      // Stats
-      const bills = data.bills || [];
-      const byStage = {};
-      bills.forEach(b => { byStage[b.current_stage] = (byStage[b.current_stage]||0) + 1; });
-
-      let statsHtml = `<div class="stat"><div class="num">${bills.length}</div><div class="label">Total Bills</div></div>`;
-      for (const [stage, count] of Object.entries(byStage).sort((a,b) => b[1]-a[1])) {
-        statsHtml += `<div class="stat"><div class="num">${count}</div><div class="label">${escapeHtml(STAGE_LABELS[stage]||stage)}</div></div>`;
-      }
-      document.getElementById('stats').innerHTML = statsHtml;
-
-      if (bills.length === 0) {
-        content.innerHTML = '<div class="empty">No bills found for your account in the last ' + days + ' days.</div>';
-        return;
-      }
-
-      let html = '<table><thead><tr><th>Filename</th><th>Stage</th><th>Latest Event</th><th>First Seen</th><th>Last Updated</th><th></th></tr></thead><tbody>';
-      bills.forEach(b => {
-        const stageClass = 'stage-' + (b.current_stage||'').replace(/[^a-zA-Z0-9_]/g,'');
-        const firstSeen = b.first_seen ? new Date(b.first_seen.endsWith('Z')?b.first_seen:b.first_seen+'Z').toLocaleString() : '';
-        const lastTime = b.latest_time ? new Date(b.latest_time.endsWith('Z')?b.latest_time:b.latest_time+'Z').toLocaleString() : '';
-        html += `<tr>
-          <td style="font-weight:600">${escapeHtml(b.filename||b.pdf_id.substring(0,12)+'...')}</td>
-          <td><span class="stage-badge ${stageClass}">${escapeHtml(STAGE_LABELS[b.current_stage]||b.current_stage)}</span></td>
-          <td>${escapeHtml((b.latest_event||'').replace(/_/g,' '))}</td>
-          <td style="font-size:12px;color:#64748b">${firstSeen}</td>
-          <td style="font-size:12px;color:#64748b">${lastTime}</td>
-          <td><a href="/bill/timeline?pdf_id=${encodeURIComponent(b.pdf_id)}" class="btn" style="font-size:11px;padding:4px 10px">Timeline</a></td>
+  const SL={'S1':'Received','S1_standard':'Parsing','S1_largefile':'Lg Parse','S3':'Parsed','S4':'Enriched','S6':'Pre-Entrata','S7':'Posted','S8':'UBI Assigned','ARCHIVE':'Archived','DELETED':'Deleted','REWORK':'Rework','FAILED':'Failed'};
+  function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
+  async function loadBills(){
+    const days=document.getElementById('daysSelect').value,content=document.getElementById('content');
+    content.innerHTML='<div class="empty-state">Loading...</div>';
+    try{
+      const resp=await fetch(`/api/my-bills?days=${days}`);
+      if(resp.status===401){window.location='/login';return}
+      const data=await resp.json();
+      document.getElementById('userLabel').textContent=data.user||'';
+      const bills=data.bills||[];
+      const byStage={};bills.forEach(b=>{byStage[b.current_stage]=(byStage[b.current_stage]||0)+1});
+      let sh=`<div class="kpi"><div class="num">${bills.length}</div><div class="label">Total</div></div>`;
+      Object.entries(byStage).sort((a,b)=>b[1]-a[1]).forEach(([s,c])=>{
+        sh+=`<div class="kpi"><div class="num" style="font-size:22px">${c}</div><div class="label">${esc(SL[s]||s)}</div></div>`;
+      });
+      document.getElementById('stats').innerHTML=sh;
+      if(!bills.length){content.innerHTML='<div class="empty-state">No bills found in the last '+days+' days.</div>';return}
+      let html='<table><thead><tr><th>File</th><th>Stage</th><th>Latest Event</th><th>First Seen</th><th>Updated</th><th></th></tr></thead><tbody>';
+      bills.forEach(b=>{
+        const bc='badge-'+(b.current_stage||'').replace(/[^a-zA-Z0-9_]/g,'');
+        const t1=b.first_seen?new Date(b.first_seen.endsWith('Z')?b.first_seen:b.first_seen+'Z').toLocaleString():'';
+        const t2=b.latest_time?new Date(b.latest_time.endsWith('Z')?b.latest_time:b.latest_time+'Z').toLocaleString():'';
+        html+=`<tr>
+          <td class="fname">${esc(b.filename||b.pdf_id.substring(0,14)+'...')}</td>
+          <td><span class="badge ${bc}">${esc(SL[b.current_stage]||b.current_stage)}</span></td>
+          <td style="font-size:12px">${esc((b.latest_event||'').replace(/_/g,' '))}</td>
+          <td class="time-cell">${t1}</td><td class="time-cell">${t2}</td>
+          <td><a href="/bill/timeline?pdf_id=${encodeURIComponent(b.pdf_id)}" class="tl-link">timeline</a></td>
         </tr>`;
       });
-      html += '</tbody></table>';
-      content.innerHTML = html;
-    } catch(e) {
-      content.innerHTML = '<div class="empty">Error loading bills.</div>';
-    }
+      html+='</tbody></table>';content.innerHTML=html;
+    }catch(e){content.innerHTML='<div class="empty-state">Error loading bills.</div>'}
   }
-
   loadBills();
 </script>
 </body>
