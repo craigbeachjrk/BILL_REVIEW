@@ -13,6 +13,33 @@ from datetime import datetime, timezone
 
 s3 = boto3.client("s3")
 secrets = boto3.client("secretsmanager")
+_ddb = boto3.client("dynamodb", region_name=os.getenv("AWS_REGION", "us-east-1"))
+_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
+
+
+def _pipeline_track(s3_key: str, event_type: str, source: str, stage: str, metadata: dict | None = None):
+    """Fire-and-forget pipeline lifecycle event."""
+    import hashlib
+    try:
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        _ddb.put_item(TableName=_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"},
+            "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type},
+            "s3_key": {"S": s3_key},
+            "stage": {"S": stage},
+            "source": {"S": source},
+            "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")},
+            "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})},
+            "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception:
+        pass
 
 BUCKET = os.getenv("BUCKET", "jrk-analytics-billing")
 INPUT_PREFIX = os.getenv("INPUT_PREFIX", "Bill_Parser_3_Parsed_Outputs/")
@@ -1053,6 +1080,10 @@ def lambda_handler(event, context):
         stem = key.split("/", 1)[-1]  # drop prefix
         out_key = f"{OUTPUT_PREFIX}{stem}"
         s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
+        _pipeline_track(key, "ENRICHED", "lambda:enricher", "S4", {
+            "out_key": out_key, "lines": len(enriched_lines),
+            "vendor_gemini": vendor_gemini_calls, "gl_gemini": gl_gemini_calls,
+        })
 
         # Write timing sidecar to Stage 4
         timing["totalMs"] = int((time.time() - t0) * 1000)

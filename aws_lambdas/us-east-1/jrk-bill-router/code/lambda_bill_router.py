@@ -12,6 +12,32 @@ from io import BytesIO
 
 s3 = boto3.client("s3")
 ddb = boto3.client("dynamodb")
+_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
+
+
+def _pipeline_track(s3_key: str, event_type: str, source: str, stage: str, metadata: dict | None = None):
+    """Fire-and-forget pipeline lifecycle event."""
+    import hashlib
+    try:
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        ddb.put_item(TableName=_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"},
+            "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type},
+            "s3_key": {"S": s3_key},
+            "stage": {"S": stage},
+            "source": {"S": source},
+            "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")},
+            "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})},
+            "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception:
+        pass
 
 # Configuration
 BUCKET = os.getenv("BUCKET", "jrk-analytics-billing")
@@ -165,6 +191,11 @@ def lambda_handler(event, context):
                 "file_size_mb": round(file_size_mb, 2),
                 "reason": reason
             }))
+            event_type = "ROUTED_LARGE" if route == "largefile" else "ROUTED_STANDARD"
+            _pipeline_track(key, event_type, "lambda:router", f"S1_{route}", {
+                "dest_key": dest_key, "pages": page_count,
+                "size_mb": round(file_size_mb, 2), "reason": reason,
+            })
         except Exception as e:
             print(json.dumps({
                 "error": "routing_failed",

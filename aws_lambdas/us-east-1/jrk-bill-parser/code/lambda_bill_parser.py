@@ -22,6 +22,32 @@ except ImportError:
 
 s3 = boto3.client("s3")
 ddb = boto3.client("dynamodb")
+_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
+
+
+def _pipeline_track(s3_key: str, event_type: str, source: str, stage: str, metadata: dict | None = None):
+    """Fire-and-forget pipeline lifecycle event."""
+    import hashlib
+    try:
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        ddb.put_item(TableName=_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"},
+            "sk": {"S": f"EVENT#{now.isoformat()}"},
+            "event_type": {"S": event_type},
+            "s3_key": {"S": s3_key},
+            "stage": {"S": stage},
+            "source": {"S": source},
+            "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")},
+            "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})},
+            "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception:
+        pass
 secrets = boto3.client("secretsmanager")
 
 BUCKET = os.getenv("BUCKET", "jrk-analytics-billing")
@@ -910,6 +936,8 @@ def lambda_handler(event, context):
             print(json.dumps({"message": "No valid Gemini keys found in secret; moved to failed", "failed_key": failed_key}))
             continue
 
+        _pipeline_track(key, "PARSE_STARTED", "lambda:parser", "S3", {"pages": total_pages})
+
         # Outer loop: retry with different API keys on total failure (inner loop handles content retries)
         t_gemini = time.time()
         attempt = 0
@@ -941,6 +969,7 @@ def lambda_handler(event, context):
             key_stem = f"{dest_key_inputs.split('/',1)[-1].rsplit('.',1)[0]}"
             out_key = write_ndjson(BUCKET, key_stem, rows, dest_key_inputs, bill_from=bill_from, pdf_id=key_stem, total_pages=total_pages)
             print(json.dumps({"message": "Parsed and wrote NDJSON", "out_key": out_key, "rows": len(rows), "total_pages": total_pages}))
+            _pipeline_track(key, "PARSE_COMPLETED", "lambda:parser", "S3", {"out_key": out_key, "lines": len(rows), "pages": total_pages})
             # Write timing sidecar to Stage 3
             timing["totalMs"] = int((time.time() - t0) * 1000)
             try:
@@ -978,6 +1007,7 @@ def lambda_handler(event, context):
                         "failed_due_to_columns": failed_due_to_columns,
                         "error": last_error
                     }))
+                    _pipeline_track(key, "PARSE_REROUTED_LARGE", "lambda:parser", "S1_largefile", {"large_key": large_key})
                     # Delete source after successful routing to large file processor
                     if source_to_delete:
                         try:
@@ -997,6 +1027,7 @@ def lambda_handler(event, context):
                 # Move the input to failed prefix for manual review
                 failed_key = f"{FAILED_PREFIX}{suffix}"
                 s3.copy_object(Bucket=bucket, CopySource={"Bucket": bucket, "Key": dest_key_inputs}, Key=failed_key)
+                _pipeline_track(key, "PARSE_FAILED", "lambda:parser", "FAILED", {"failed_key": failed_key, "error": last_error or ""})
                 # Emit diagnostics of last reply to help debugging
                 diag_prefix = f"{FAILED_PREFIX}diagnostics/"
                 diag_key = f"{diag_prefix}{suffix.rsplit('/',1)[-1]}.txt"

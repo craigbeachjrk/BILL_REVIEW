@@ -7,6 +7,33 @@ from email.parser import BytesParser
 from email import policy
 
 s3 = boto3.client("s3")
+_ddb = boto3.client("dynamodb", region_name=os.getenv("AWS_REGION", "us-east-1"))
+_TRACKER_TABLE = os.getenv("PIPELINE_TRACKER_TABLE", "jrk-bill-pipeline-tracker")
+
+
+def _pipeline_track(s3_key: str, event_type: str, source: str, stage: str, metadata: dict | None = None):
+    """Fire-and-forget pipeline lifecycle event."""
+    import hashlib
+    try:
+        key_hash = hashlib.sha1(s3_key.encode("utf-8")).hexdigest()
+        now = dt.datetime.utcnow()
+        epoch = int(now.timestamp())
+        filename = s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key
+        _ddb.put_item(TableName=_TRACKER_TABLE, Item={
+            "pk": {"S": f"BILL#{key_hash}"},
+            "sk": {"S": f"EVENT#{now.isoformat()}Z"},
+            "event_type": {"S": event_type},
+            "s3_key": {"S": s3_key},
+            "stage": {"S": stage},
+            "source": {"S": source},
+            "timestamp_epoch": {"N": str(epoch)},
+            "event_date": {"S": now.strftime("%Y-%m-%d")},
+            "filename": {"S": filename},
+            "metadata": {"S": json.dumps(metadata or {})},
+            "ttl": {"N": str(epoch + 90 * 86400)},
+        })
+    except Exception:
+        pass  # Non-blocking — never fail the Lambda over tracking
 
 
 def _load_canon_map() -> list[tuple[re.Pattern, str]]:
@@ -185,6 +212,10 @@ def handler(event, context):
                     _put_s3(BUCKET_BILL, bill_key, content, content_type="application/pdf",
                             metadata={"submitted-by": submitted_by, "sender-email": sender_email})
                     print(f"[MIRROR] SUCCESS: {bill_key} (submitted_by={submitted_by})")
+                    _pipeline_track(bill_key, "RECEIVED", f"email:{sender_email}", "S1", {
+                        "submitted_by": submitted_by, "sender": sender_email,
+                        "filename": safe_name, "bytes": len(content),
+                    })
             except Exception as e:
                 # Log at ALARM level so CloudWatch can catch it
                 print(json.dumps({
