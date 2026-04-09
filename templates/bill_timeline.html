@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bill Timeline &middot; Bill Review @ JRK</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;
+      background:linear-gradient(135deg,var(--bg),var(--bg2));backdrop-filter:blur(6px)}
+    header.top .title-group{display:flex;align-items:center;gap:12px}
+    header.top .back-arrow{color:#fff;text-decoration:none;font-size:20px;line-height:1;opacity:.8;transition:opacity .15s}
+    header.top .back-arrow:hover{opacity:1}
+    header.top h1{margin:0;font-size:18px;font-weight:700;letter-spacing:.3px}
+    .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;text-decoration:none;font-family:inherit;font-size:14px}
+    .btn.secondary{background:#64748b}
+
+    .container{max-width:900px;margin:20px auto;padding:0 20px}
+    .card{background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:24px;backdrop-filter:blur(12px);margin-bottom:16px}
+
+    /* Search bar */
+    .search-bar{display:flex;gap:10px;margin-bottom:20px}
+    .search-bar input{flex:1;padding:12px 16px;border-radius:12px;border:1px solid #cbd5e1;font-size:15px;font-family:inherit}
+    .search-bar button{padding:12px 24px}
+
+    /* Stage breadcrumb */
+    .stages{display:flex;gap:4px;margin-bottom:24px;flex-wrap:wrap}
+    .stage{padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;background:#e2e8f0;color:#475569;transition:all .2s}
+    .stage.active{background:#0ea5e9;color:#fff}
+    .stage.completed{background:#10b981;color:#fff}
+
+    /* Timeline */
+    .timeline{position:relative;padding-left:32px}
+    .timeline::before{content:'';position:absolute;left:12px;top:0;bottom:0;width:2px;background:#cbd5e1}
+    .event{position:relative;padding:16px 20px;margin-bottom:16px;background:#fff;border-radius:12px;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+    .event::before{content:'';position:absolute;left:-26px;top:20px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 2px #cbd5e1}
+    .event.RECEIVED::before,.event.ENRICHED::before{background:#10b981;box-shadow:0 0 0 2px #10b981}
+    .event.PARSE_STARTED::before,.event.ROUTED_STANDARD::before,.event.ROUTED_LARGE::before{background:#f59e0b;box-shadow:0 0 0 2px #f59e0b}
+    .event.PARSE_COMPLETED::before,.event.SUBMITTED::before,.event.POSTED::before{background:#0ea5e9;box-shadow:0 0 0 2px #0ea5e9}
+    .event.UBI_ASSIGNED::before,.event.ARCHIVED::before{background:#8b5cf6;box-shadow:0 0 0 2px #8b5cf6}
+    .event.PARSE_FAILED::before,.event.DELETED::before,.event.POST_ARCHIVE_FAILED::before{background:#ef4444;box-shadow:0 0 0 2px #ef4444}
+    .event.REWORKED::before,.event.PARSE_REROUTED_LARGE::before{background:#f97316;box-shadow:0 0 0 2px #f97316}
+
+    .event-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+    .event-type{font-weight:700;font-size:14px}
+    .event-time{font-size:12px;color:#64748b}
+    .event-details{font-size:13px;color:#475569}
+    .event-meta{margin-top:8px;font-size:12px;color:#94a3b8;display:flex;flex-wrap:wrap;gap:8px}
+    .event-meta span{background:#f1f5f9;padding:2px 8px;border-radius:6px}
+
+    .empty{text-align:center;padding:40px;color:#64748b;font-size:15px}
+    .loading{text-align:center;padding:40px;color:#64748b}
+    .bill-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:6px}
+    .bill-info dt{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
+    .bill-info dd{margin:0;font-weight:600;font-size:14px}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="title-group">
+      <a href="/" class="back-arrow">&#8592;</a>
+      <div>
+        <h1>Bill Timeline</h1>
+      </div>
+    </div>
+    <a href="/search" class="btn secondary">Search Bills</a>
+  </header>
+
+  <div class="container">
+    <!-- Search -->
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Enter pdf_id, account number, or S3 key..." value="{{ pdf_id or '' }}" />
+      <button class="btn" onclick="searchBill()">Track</button>
+    </div>
+
+    <div id="content">
+      <div class="empty">Enter a pdf_id or account number to view the bill's journey through the pipeline.</div>
+    </div>
+  </div>
+
+<script>
+  const STAGE_ORDER = ['S1', 'S1_standard', 'S1_largefile', 'S3', 'S4', 'S6', 'S7', 'S8', 'ARCHIVE', 'DELETED', 'REWORK', 'FAILED'];
+  const STAGE_LABELS = {
+    'S1': 'Received', 'S1_standard': 'Standard Queue', 'S1_largefile': 'Large File Queue',
+    'S3': 'Parsed', 'S4': 'Enriched', 'S6': 'Pre-Entrata', 'S7': 'Posted',
+    'S8': 'UBI Assigned', 'ARCHIVE': 'Archived', 'DELETED': 'Deleted', 'REWORK': 'Rework', 'FAILED': 'Failed'
+  };
+
+  function escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  async function searchBill() {
+    const q = document.getElementById('searchInput').value.trim();
+    if (!q) return;
+    const content = document.getElementById('content');
+    content.innerHTML = '<div class="loading">Searching...</div>';
+
+    // Try direct pdf_id lookup first
+    try {
+      const resp = await fetch(`/api/bill/${encodeURIComponent(q)}/events`);
+      if (resp.status === 401) { window.location = '/login'; return; }
+      const data = await resp.json();
+      if (data.events && data.events.length > 0) {
+        renderTimeline(data);
+        return;
+      }
+    } catch(e) {}
+
+    // If no events found, try search
+    try {
+      const resp = await fetch(`/api/search?account=${encodeURIComponent(q)}&limit=5`);
+      const data = await resp.json();
+      if (data.results && data.results.length > 0) {
+        // Found by account - show list
+        let html = '<div class="card"><h3>Bills matching "' + escapeHtml(q) + '"</h3>';
+        data.results.forEach(r => {
+          html += `<div style="padding:8px 0;border-bottom:1px solid #e2e8f0;cursor:pointer" onclick="loadTimeline('${escapeHtml(r.pdf_id)}')">
+            <strong>${escapeHtml(r.vendor)}</strong> &mdash; ${escapeHtml(r.account)} &mdash; $${(r.amount||0).toFixed(2)}
+            <span style="float:right;color:#64748b;font-size:12px">${escapeHtml(r.date)}</span>
+          </div>`;
+        });
+        html += '</div>';
+        content.innerHTML = html;
+        return;
+      }
+    } catch(e) {}
+
+    content.innerHTML = '<div class="empty">No bill found for "' + escapeHtml(q) + '". Try a different pdf_id or account number.</div>';
+  }
+
+  async function loadTimeline(pdfId) {
+    document.getElementById('searchInput').value = pdfId;
+    const content = document.getElementById('content');
+    content.innerHTML = '<div class="loading">Loading timeline...</div>';
+    try {
+      const resp = await fetch(`/api/bill/${encodeURIComponent(pdfId)}/events`);
+      const data = await resp.json();
+      renderTimeline(data);
+    } catch(e) {
+      content.innerHTML = '<div class="empty">Error loading timeline.</div>';
+    }
+  }
+
+  function renderTimeline(data) {
+    const content = document.getElementById('content');
+    if (!data.events || data.events.length === 0) {
+      content.innerHTML = '<div class="empty">No events found for this bill.</div>';
+      return;
+    }
+
+    // Determine which stages this bill has passed through
+    const visitedStages = new Set(data.events.map(e => e.stage));
+    const currentStage = data.current_stage;
+
+    // Stage breadcrumb
+    let stagesHtml = '<div class="stages">';
+    STAGE_ORDER.forEach(s => {
+      const label = STAGE_LABELS[s] || s;
+      const cls = s === currentStage ? 'active' : visitedStages.has(s) ? 'completed' : '';
+      stagesHtml += `<div class="stage ${cls}">${escapeHtml(label)}</div>`;
+    });
+    stagesHtml += '</div>';
+
+    // Bill info from first event
+    const first = data.events[0];
+    let infoHtml = '<div class="card"><dl class="bill-info">';
+    infoHtml += `<div><dt>PDF ID</dt><dd>${escapeHtml(data.pdf_id)}</dd></div>`;
+    infoHtml += `<div><dt>Current Stage</dt><dd>${escapeHtml(STAGE_LABELS[currentStage] || currentStage)}</dd></div>`;
+    infoHtml += `<div><dt>Events</dt><dd>${data.event_count}</dd></div>`;
+    if (first.filename) infoHtml += `<div><dt>Filename</dt><dd>${escapeHtml(first.filename)}</dd></div>`;
+    const meta0 = first.metadata || {};
+    if (meta0.submitted_by) infoHtml += `<div><dt>Submitted By</dt><dd>${escapeHtml(meta0.submitted_by)}</dd></div>`;
+    infoHtml += '</dl></div>';
+
+    // Timeline events
+    let timelineHtml = '<div class="timeline">';
+    data.events.forEach(ev => {
+      const meta = ev.metadata || {};
+      const metaParts = [];
+      if (ev.source) metaParts.push(`<span>Source: ${escapeHtml(ev.source)}</span>`);
+      for (const [k,v] of Object.entries(meta)) {
+        if (v && k !== 'submitted_by') metaParts.push(`<span>${escapeHtml(k)}: ${escapeHtml(String(v).substring(0,80))}</span>`);
+      }
+      const ts = ev.timestamp || '';
+      const timeStr = ts ? new Date(ts.endsWith('Z') ? ts : ts+'Z').toLocaleString() : '';
+
+      timelineHtml += `
+        <div class="event ${escapeHtml(ev.event_type)}">
+          <div class="event-header">
+            <span class="event-type">${escapeHtml(ev.event_type.replace(/_/g, ' '))}</span>
+            <span class="event-time">${escapeHtml(timeStr)}</span>
+          </div>
+          <div class="event-details">Stage: ${escapeHtml(STAGE_LABELS[ev.stage] || ev.stage)}</div>
+          ${metaParts.length ? '<div class="event-meta">' + metaParts.join('') + '</div>' : ''}
+        </div>`;
+    });
+    timelineHtml += '</div>';
+
+    content.innerHTML = stagesHtml + infoHtml + timelineHtml;
+  }
+
+  // Auto-search if pdf_id provided in URL
+  window.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('searchInput');
+    if (input.value.trim()) searchBill();
+  });
+</script>
+</body>
+</html>

@@ -12380,6 +12380,12 @@ def pipeline_view(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse("pipeline.html", {"request": request, "user": user, "is_admin": user in ADMIN_USERS})
 
 
+@app.get("/bill/timeline", response_class=HTMLResponse)
+def bill_timeline_view(request: Request, pdf_id: str = "", user: str = Depends(require_user)):
+    """Bill timeline page — shows full event history for a single bill."""
+    return templates.TemplateResponse("bill_timeline.html", {"request": request, "user": user, "pdf_id": pdf_id})
+
+
 @app.get("/api/pipeline/queue")
 def api_pipeline_queue(user: str = Depends(require_user)):
     """Real-time queue status — count + oldest age per stage. 30s cache."""

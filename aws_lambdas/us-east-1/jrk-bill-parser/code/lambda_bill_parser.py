@@ -676,7 +676,7 @@ def _norm_bf(s: str) -> str:
         return re.sub(r"\s+", " ", s).strip()
     except Exception:
         return str(s or "")
-def write_ndjson(bucket: str, key_stem: str, rows: list[list[str]], source_input_key: str, bill_from: str = "", pdf_id: str = "", total_pages: int = 0):
+def write_ndjson(bucket: str, key_stem: str, rows: list[list[str]], source_input_key: str, bill_from: str = "", pdf_id: str = "", total_pages: int = 0, submitted_by: str = ""):
     """Write parsed rows to NDJSON file in S3.
 
     Args:
@@ -687,6 +687,7 @@ def write_ndjson(bucket: str, key_stem: str, rows: list[list[str]], source_input
         bill_from: Optional vendor hint
         pdf_id: Optional PDF identifier
         total_pages: Total pages in source PDF (for page metadata)
+        submitted_by: Optional user who submitted this bill (S4 attribution)
     """
     ndjson_lines = []
     now = datetime.now(timezone.utc)
@@ -800,6 +801,8 @@ def write_ndjson(bucket: str, key_stem: str, rows: list[list[str]], source_input
             pass
         data["parsed_at_utc"] = parsed_at_utc
         data["pdf_id"] = pdf_id if pdf_id else key_stem
+        if submitted_by:
+            data["submitted_by"] = submitted_by
         # Add page metadata for UI page-to-line mapping
         # Standard parser processes entire PDF as one unit, so all lines span pages 1 to total_pages
         data["source_chunk"] = 0  # Not chunked (standard parser)
@@ -877,6 +880,7 @@ def lambda_handler(event, context):
         except Exception as e:
             # rework.json won't exist in Pending, this is expected
             pass
+        submitted_by = ""
         try:
             head = s3.head_object(Bucket=bucket, Key=key)
             md = {k.lower(): v for k,v in (head.get('Metadata') or {}).items()}
@@ -884,6 +888,7 @@ def lambda_handler(event, context):
                 bill_from = str(md.get('bill-from') or '').strip()
             if not expected_account_number:
                 expected_account_number = str(md.get('expected-account-number') or '').strip()
+            submitted_by = str(md.get('submitted-by') or '').strip()
         except Exception:
             pass
         try:
@@ -967,7 +972,7 @@ def lambda_handler(event, context):
             timing["lineCount"] = len(rows)
             timing["success"] = True
             key_stem = f"{dest_key_inputs.split('/',1)[-1].rsplit('.',1)[0]}"
-            out_key = write_ndjson(BUCKET, key_stem, rows, dest_key_inputs, bill_from=bill_from, pdf_id=key_stem, total_pages=total_pages)
+            out_key = write_ndjson(BUCKET, key_stem, rows, dest_key_inputs, bill_from=bill_from, pdf_id=key_stem, total_pages=total_pages, submitted_by=submitted_by)
             print(json.dumps({"message": "Parsed and wrote NDJSON", "out_key": out_key, "rows": len(rows), "total_pages": total_pages}))
             _pipeline_track(key, "PARSE_COMPLETED", "lambda:parser", "S3", {"out_key": out_key, "lines": len(rows), "pages": total_pages})
             # Write timing sidecar to Stage 3

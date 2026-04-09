@@ -54,6 +54,9 @@ def lambda_handler(event, context):
         filename = f"upload-{context.aws_request_id}.pdf"
     object_key = key_prefix + filename
 
+    # S4 Attribution: capture who is uploading this bill
+    submitted_by = (qs.get("user") or qs.get("submitted_by") or "").strip()
+
     conditions = [
         {"bucket": BUCKET},
         ["starts-with", "$key", key_prefix],
@@ -61,6 +64,9 @@ def lambda_handler(event, context):
         ["content-length-range", 1, MAX_SIZE_BYTES],
     ]
     fields = {"Content-Type": "application/pdf"}
+    if submitted_by:
+        fields["x-amz-meta-submitted-by"] = submitted_by
+        conditions.append({"x-amz-meta-submitted-by": submitted_by})
 
     presigned = s3.generate_presigned_post(
         Bucket=BUCKET,
