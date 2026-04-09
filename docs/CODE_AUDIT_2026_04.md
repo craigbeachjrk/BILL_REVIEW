@@ -16,7 +16,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 |---|--------|----------|-----|--------|
 | C1 | [x] | main.py:23520-23524 | `api_delete_preentrata` uses `review#{sha1}#{idx}` PK format, but `put_status()` stores with raw `{s3_key}#{idx}`. Delete is always a no-op. | Stale "Submitted" badges persist after Pre-Entrata deletion |
 | C2 | [x] | main.py:18338+18519 | Two functions named `api_add_to_tracker`. Second silently overwrites first. | Name collision, `url_for` resolves to wrong function |
-| C3 | [ ] | main.py:32680-32733 | `_compute_vendor_accuracy` ignores `vendor_id` param, aggregates ALL vendors. Comment: "Would need to look up the pdf to get vendor - for now just aggregate all" | Autonomy graduation decisions based on global accuracy, not per-vendor |
+| C3 | [x] | main.py:32680-32733 | `_compute_vendor_accuracy` ignores `vendor_id` param, aggregates ALL vendors. Comment: "Would need to look up the pdf to get vendor - for now just aggregate all" | Autonomy graduation decisions based on global accuracy, not per-vendor |
 
 ---
 
@@ -51,12 +51,12 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 |---|--------|----------|-----|
 | M1 | [x] | main.py:2494 | `list.remove()` raises `ValueError` on duplicate invoice numbers in sync verification |
 | M2 | [x] | main.py:6364,6564,6835 | `except` handler re-parses same invalid JSON line — double crash |
-| M3 | [ ] | main.py:8239 | Race condition: concurrent S3 read-modify-write on workflow notes |
+| M3 | [x] | main.py:8239 | Race condition: concurrent S3 read-modify-write on workflow notes |
 | M4 | [x] | main.py:8828,8955,9344 | Missing cache invalidation after account archive/update/vendor correction |
 | M5 | [x] | main.py:9078 | `isUBI` vs `is_ubi` field name mismatch — always returns False |
 | M6 | [x] | main.py:11766 | DynamoDB scan not paginated for user timing metrics |
 | M7 | [x] | main.py:12252 | Pipeline "stuck" query reports false positives (stale event snapshot) |
-| M8 | [ ] | main.py:15067 | Read-modify-write race on S3 UBI account history (cross-instance) |
+| M8 | [x] | main.py:15067 | Read-modify-write race on S3 UBI account history (cross-instance) |
 | M9 | [x] | main.py:17767,17912,17807 | Check slip scan functions missing DynamoDB pagination |
 | M10 | [x] | main.py:19586 | `existing['line_items']` KeyError — should be `source_line_items` |
 | M11 | [x] | main.py:20540,20567 | Delete manual entry/batch has no admin check |
@@ -396,6 +396,18 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 ### Fix 56: L2 — APP_SECRET insecure default
 - **File:** main.py:101
 - **Fix:** Added startup warning when default secret is used in deployed environment (checks `AWS_EXECUTION_ENV`)
+
+### Fix 57: C3 — `_compute_vendor_accuracy` ignores vendor_id
+- **Files:** main.py:31771 (_track_ai_accuracy), main.py:31284 (_save_ai_suggestion), main.py:32862 (_compute_vendor_accuracy)
+- **Fix:** (1) Added `vendor_id` and `property_id` fields to ACCURACY and SUGGESTION DynamoDB records at write time. (2) Updated `_compute_vendor_accuracy` to filter by `vendor_id` in the scan FilterExpression, with optional `property_id` post-filter. Old records without vendor_id will be excluded from per-vendor queries but still appear in global queries.
+
+### Fix 58: M3 — Workflow notes S3 race condition
+- **Files:** main.py:8114 (_s3_get_workflow_notes), main.py:8127 (_s3_put_workflow_notes), main.py:8217 (single save), main.py:8277 (bulk save)
+- **Fix:** Added ETag-based optimistic locking. `_s3_get_workflow_notes(return_etag=True)` returns the S3 ETag. `_s3_put_workflow_notes(notes, expected_etag=etag)` uses S3 `IfMatch` conditional write. Both save endpoints retry up to 3 times on ETag mismatch (concurrent modification).
+
+### Fix 59: M8 — UBI account history S3 race condition
+- **Files:** main.py:14812 (_s3_get_ubi_account_history), main.py:14824 (_s3_put_ubi_account_history), main.py:15204 (_update_ubi_account_history)
+- **Fix:** Same ETag-based optimistic locking pattern. `_update_ubi_account_history` now retries up to 3 times if the S3 conditional write fails due to concurrent modification from another instance.
 
 ### Verified as not-a-bug (false positives):
 - H16: Lambda parser globals — properly reset per-record at lines 820-868

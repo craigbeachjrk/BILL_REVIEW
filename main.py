@@ -8111,29 +8111,42 @@ def _s3_put_workflow_reasons(reasons: list) -> bool:
         return False
 
 
-def _s3_get_workflow_notes() -> list:
-    """Load workflow notes from S3."""
+def _s3_get_workflow_notes(return_etag: bool = False):
+    """Load workflow notes from S3. If return_etag=True, returns (notes, etag) tuple for optimistic locking."""
     try:
         obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=WORKFLOW_NOTES_KEY)
         data = json.loads(obj["Body"].read().decode("utf-8"))
-        return data.get("notes", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+        notes = data.get("notes", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+        if return_etag:
+            return notes, obj.get("ETag", "")
+        return notes
     except s3.exceptions.NoSuchKey:
-        return []
+        return ([], "") if return_etag else []
     except Exception as e:
         print(f"[_s3_get_workflow_notes] Error: {e}")
-        return []
+        return ([], "") if return_etag else []
 
 
-def _s3_put_workflow_notes(notes: list) -> bool:
-    """Save workflow notes to S3."""
+def _s3_put_workflow_notes(notes: list, expected_etag: str = "") -> bool:
+    """Save workflow notes to S3. If expected_etag is provided, uses conditional write to prevent race conditions."""
     try:
-        s3.put_object(
-            Bucket=CONFIG_BUCKET,
-            Key=WORKFLOW_NOTES_KEY,
-            Body=json.dumps({"notes": notes}, indent=2).encode("utf-8"),
-            ContentType="application/json"
-        )
+        put_kwargs = {
+            "Bucket": CONFIG_BUCKET,
+            "Key": WORKFLOW_NOTES_KEY,
+            "Body": json.dumps({"notes": notes}, indent=2).encode("utf-8"),
+            "ContentType": "application/json",
+        }
+        if expected_etag:
+            put_kwargs["IfMatch"] = expected_etag
+        s3.put_object(**put_kwargs)
         return True
+    except s3.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code == "PreconditionFailed":
+            print("[_s3_put_workflow_notes] ETag mismatch — concurrent modification detected")
+        else:
+            print(f"[_s3_put_workflow_notes] Error: {e}")
+        return False
     except Exception as e:
         print(f"[_s3_put_workflow_notes] Error: {e}")
         return False
@@ -8201,43 +8214,49 @@ async def api_save_workflow_note(request: Request, user: str = Depends(require_u
     if not account_key:
         return JSONResponse({"error": "accountKey required"}, status_code=400)
 
-    notes = _s3_get_workflow_notes()
-    now_utc = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Optimistic locking: read with ETag, retry on conflict
+    MAX_RETRIES = 3
+    for _attempt in range(MAX_RETRIES):
+        notes, etag = _s3_get_workflow_notes(return_etag=True)
+        now_utc = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Find existing note for this account
-    existing_idx = None
-    for i, n in enumerate(notes):
-        if n.get("accountKey") == account_key:
-            existing_idx = i
-            break
+        # Find existing note for this account
+        existing_idx = None
+        for i, n in enumerate(notes):
+            if n.get("accountKey") == account_key:
+                existing_idx = i
+                break
 
-    if reason_code or custom_note:
-        # Add or update note
-        note_obj = {
-            "accountKey": account_key,
-            "reasonCode": reason_code,
-            "customNote": custom_note,
-            "updatedBy": user,
-            "updatedAt": now_utc
-        }
-        if existing_idx is not None:
-            # Preserve original creator
-            note_obj["createdBy"] = notes[existing_idx].get("createdBy", user)
-            note_obj["createdAt"] = notes[existing_idx].get("createdAt", now_utc)
-            notes[existing_idx] = note_obj
+        if reason_code or custom_note:
+            # Add or update note
+            note_obj = {
+                "accountKey": account_key,
+                "reasonCode": reason_code,
+                "customNote": custom_note,
+                "updatedBy": user,
+                "updatedAt": now_utc
+            }
+            if existing_idx is not None:
+                # Preserve original creator
+                note_obj["createdBy"] = notes[existing_idx].get("createdBy", user)
+                note_obj["createdAt"] = notes[existing_idx].get("createdAt", now_utc)
+                notes[existing_idx] = note_obj
+            else:
+                note_obj["createdBy"] = user
+                note_obj["createdAt"] = now_utc
+                notes.append(note_obj)
         else:
-            note_obj["createdBy"] = user
-            note_obj["createdAt"] = now_utc
-            notes.append(note_obj)
-    else:
-        # Clear note (no reason code and no custom note)
-        if existing_idx is not None:
-            notes.pop(existing_idx)
+            # Clear note (no reason code and no custom note)
+            if existing_idx is not None:
+                notes.pop(existing_idx)
 
-    ok = _s3_put_workflow_notes(notes)
-    if not ok:
-        return JSONResponse({"error": "save_failed"}, status_code=500)
-    return {"ok": True}
+        ok = _s3_put_workflow_notes(notes, expected_etag=etag)
+        if ok:
+            return {"ok": True}
+        # ETag mismatch — retry with fresh data
+        print(f"[WORKFLOW NOTES] Retry {_attempt + 1}/{MAX_RETRIES} due to concurrent modification")
+
+    return JSONResponse({"error": "save_failed after retries"}, status_code=500)
 
 
 @app.post("/api/workflow/notes/bulk")
@@ -8255,52 +8274,57 @@ async def api_bulk_save_workflow_notes(request: Request, user: str = Depends(req
     if not account_keys:
         return JSONResponse({"error": "accountKeys required"}, status_code=400)
 
-    notes = _s3_get_workflow_notes()
-    now_utc = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Optimistic locking: read with ETag, retry on conflict
+    MAX_RETRIES = 3
+    for _attempt in range(MAX_RETRIES):
+        notes, etag = _s3_get_workflow_notes(return_etag=True)
+        now_utc = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Build index for fast lookup
-    notes_by_key = {n["accountKey"]: (i, n) for i, n in enumerate(notes)}
-    updated_count = 0
+        # Build index for fast lookup
+        notes_by_key = {n["accountKey"]: (i, n) for i, n in enumerate(notes)}
+        updated_count = 0
 
-    for akey in account_keys:
-        akey = str(akey).strip()
-        if not akey:
-            continue
+        for akey in account_keys:
+            akey = str(akey).strip()
+            if not akey:
+                continue
 
-        if reason_code or custom_note:
-            note_obj = {
-                "accountKey": akey,
-                "reasonCode": reason_code,
-                "customNote": custom_note,
-                "updatedBy": user,
-                "updatedAt": now_utc,
-            }
-            if akey in notes_by_key:
-                idx, existing = notes_by_key[akey]
-                note_obj["createdBy"] = existing.get("createdBy", user)
-                note_obj["createdAt"] = existing.get("createdAt", now_utc)
-                notes[idx] = note_obj
-            else:
-                note_obj["createdBy"] = user
-                note_obj["createdAt"] = now_utc
-                notes.append(note_obj)
-                notes_by_key[akey] = (len(notes) - 1, note_obj)
-            updated_count += 1
-        else:
-            # Clear note
-            if akey in notes_by_key:
-                idx, _ = notes_by_key[akey]
-                notes[idx] = None  # Mark for removal
+            if reason_code or custom_note:
+                note_obj = {
+                    "accountKey": akey,
+                    "reasonCode": reason_code,
+                    "customNote": custom_note,
+                    "updatedBy": user,
+                    "updatedAt": now_utc,
+                }
+                if akey in notes_by_key:
+                    idx, existing = notes_by_key[akey]
+                    note_obj["createdBy"] = existing.get("createdBy", user)
+                    note_obj["createdAt"] = existing.get("createdAt", now_utc)
+                    notes[idx] = note_obj
+                else:
+                    note_obj["createdBy"] = user
+                    note_obj["createdAt"] = now_utc
+                    notes.append(note_obj)
+                    notes_by_key[akey] = (len(notes) - 1, note_obj)
                 updated_count += 1
+            else:
+                # Clear note
+                if akey in notes_by_key:
+                    idx, _ = notes_by_key[akey]
+                    notes[idx] = None  # Mark for removal
+                    updated_count += 1
 
-    # Remove None entries (cleared notes)
-    notes = [n for n in notes if n is not None]
+        # Remove None entries (cleared notes)
+        notes = [n for n in notes if n is not None]
 
-    ok = _s3_put_workflow_notes(notes)
-    if not ok:
-        return JSONResponse({"error": "save_failed"}, status_code=500)
-    print(f"[BULK_NOTES] {user} bulk-set reason '{reason_code}' for {updated_count} accounts")
-    return {"ok": True, "updatedCount": updated_count}
+        ok = _s3_put_workflow_notes(notes, expected_etag=etag)
+        if ok:
+            print(f"[BULK_NOTES] {user} bulk-set reason '{reason_code}' for {updated_count} accounts")
+            return {"ok": True, "updatedCount": updated_count}
+        print(f"[BULK_NOTES] Retry {_attempt + 1}/{MAX_RETRIES} due to concurrent modification")
+
+    return JSONResponse({"error": "save_failed after retries"}, status_code=500)
 
 
 # Workflow Page Routes
@@ -14809,29 +14833,44 @@ def _s3_put_outlier_records(outliers: list) -> bool:
 
 # -------- Smart UBI Allocation Functions --------
 
-def _s3_get_ubi_account_history() -> dict:
-    """Load UBI account history from S3."""
+def _s3_get_ubi_account_history(return_etag: bool = False):
+    """Load UBI account history from S3. If return_etag=True, returns (data, etag) for optimistic locking."""
     try:
         obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=UBI_ACCOUNT_HISTORY_KEY)
-        return json.loads(obj['Body'].read().decode('utf-8'))
+        data = json.loads(obj['Body'].read().decode('utf-8'))
+        if return_etag:
+            return data, obj.get("ETag", "")
+        return data
     except s3.exceptions.NoSuchKey:
-        return {"accounts": {}, "last_updated": None}
+        empty = {"accounts": {}, "last_updated": None}
+        return (empty, "") if return_etag else empty
     except Exception as e:
         print(f"[UBI SUGGEST] Error loading account history: {e}")
-        return {"accounts": {}, "last_updated": None}
+        empty = {"accounts": {}, "last_updated": None}
+        return (empty, "") if return_etag else empty
 
 
-def _s3_put_ubi_account_history(data: dict) -> bool:
-    """Save UBI account history to S3."""
+def _s3_put_ubi_account_history(data: dict, expected_etag: str = "") -> bool:
+    """Save UBI account history to S3. Uses conditional write if expected_etag provided."""
     try:
         data["last_updated"] = dt.datetime.utcnow().isoformat() + "Z"
-        s3.put_object(
-            Bucket=CONFIG_BUCKET,
-            Key=UBI_ACCOUNT_HISTORY_KEY,
-            Body=json.dumps(data, indent=2),
-            ContentType="application/json"
-        )
+        put_kwargs = {
+            "Bucket": CONFIG_BUCKET,
+            "Key": UBI_ACCOUNT_HISTORY_KEY,
+            "Body": json.dumps(data, indent=2),
+            "ContentType": "application/json",
+        }
+        if expected_etag:
+            put_kwargs["IfMatch"] = expected_etag
+        s3.put_object(**put_kwargs)
         return True
+    except s3.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code == "PreconditionFailed":
+            print("[UBI SUGGEST] ETag mismatch on account history — concurrent modification")
+        else:
+            print(f"[UBI SUGGEST] Error saving account history: {e}")
+        return False
     except Exception as e:
         print(f"[UBI SUGGEST] Error saving account history: {e}")
         return False
@@ -15170,63 +15209,71 @@ def _update_ubi_account_history(
     ubi_periods: list,
     amount: float
 ) -> bool:
-    """Update UBI account history after an assignment."""
-    try:
-        history_data = _s3_get_ubi_account_history()
-        accounts = history_data.get("accounts", {})
+    """Update UBI account history after an assignment. Uses ETag-based optimistic locking."""
+    MAX_RETRIES = 3
+    for _attempt in range(MAX_RETRIES):
+        try:
+            history_data, etag = _s3_get_ubi_account_history(return_etag=True)
+            accounts = history_data.get("accounts", {})
 
-        # Get or create account entry
-        if account_key not in accounts:
-            accounts[account_key] = {
-                "lastBillDate": None,
-                "lastServiceEnd": None,
-                "lastUbiPeriods": [],
-                "avgServiceDays": None,
-                "billHistory": []
-            }
+            # Get or create account entry
+            if account_key not in accounts:
+                accounts[account_key] = {
+                    "lastBillDate": None,
+                    "lastServiceEnd": None,
+                    "lastUbiPeriods": [],
+                    "avgServiceDays": None,
+                    "billHistory": []
+                }
 
-        acct = accounts[account_key]
+            acct = accounts[account_key]
 
-        # Parse service dates for days calculation
-        service_days = None
-        if service_start and service_end:
-            try:
-                start_dt = _parse_date_any(service_start)
-                end_dt = _parse_date_any(service_end)
-                if start_dt and end_dt:
-                    service_days = (end_dt - start_dt).days + 1
-            except Exception:
-                pass
+            # Parse service dates for days calculation
+            service_days = None
+            if service_start and service_end:
+                try:
+                    start_dt = _parse_date_any(service_start)
+                    end_dt = _parse_date_any(service_end)
+                    if start_dt and end_dt:
+                        service_days = (end_dt - start_dt).days + 1
+                except Exception:
+                    pass
 
-        # Add to bill history (keep last 12)
-        acct["billHistory"].append({
-            "billDate": bill_date,
-            "serviceStart": service_start,
-            "serviceEnd": service_end,
-            "ubiPeriods": ubi_periods,
-            "amount": amount,
-            "serviceDays": service_days
-        })
+            # Add to bill history (keep last 12)
+            acct["billHistory"].append({
+                "billDate": bill_date,
+                "serviceStart": service_start,
+                "serviceEnd": service_end,
+                "ubiPeriods": ubi_periods,
+                "amount": amount,
+                "serviceDays": service_days
+            })
 
-        # Trim to last 12 entries
-        acct["billHistory"] = acct["billHistory"][-12:]
+            # Trim to last 12 entries
+            acct["billHistory"] = acct["billHistory"][-12:]
 
-        # Update rolling averages
-        acct["lastBillDate"] = bill_date
-        acct["lastServiceEnd"] = service_end
-        acct["lastUbiPeriods"] = ubi_periods
+            # Update rolling averages
+            acct["lastBillDate"] = bill_date
+            acct["lastServiceEnd"] = service_end
+            acct["lastUbiPeriods"] = ubi_periods
 
-        # Calculate average service days from history
-        valid_days = [h["serviceDays"] for h in acct["billHistory"] if h.get("serviceDays")]
-        if valid_days:
-            acct["avgServiceDays"] = round(sum(valid_days) / len(valid_days), 1)
+            # Calculate average service days from history
+            valid_days = [h["serviceDays"] for h in acct["billHistory"] if h.get("serviceDays")]
+            if valid_days:
+                acct["avgServiceDays"] = round(sum(valid_days) / len(valid_days), 1)
 
-        history_data["accounts"] = accounts
-        return _s3_put_ubi_account_history(history_data)
+            history_data["accounts"] = accounts
+            if _s3_put_ubi_account_history(history_data, expected_etag=etag):
+                return True
+            # ETag mismatch — retry with fresh data
+            print(f"[UBI SUGGEST] History update retry {_attempt + 1}/{MAX_RETRIES}")
 
-    except Exception as e:
-        print(f"[UBI SUGGEST] Error updating history: {e}")
-        return False
+        except Exception as e:
+            print(f"[UBI SUGGEST] Error updating history: {e}")
+            return False
+
+    print("[UBI SUGGEST] History update failed after retries")
+    return False
 
 
 # -------- Vendor Correction Utility Functions --------
@@ -31280,6 +31327,8 @@ def _save_ai_suggestion(pdf_id: str, suggestion: dict) -> bool:
             "would_auto_pass": {"BOOL": suggestion.get("would_auto_pass", False)},
             "auto_pass_confidence": {"N": str(suggestion.get("auto_pass_confidence", 0))},
             "ai_reasoning": {"S": suggestion.get("ai_reasoning", "")},
+            "vendor_id": {"S": suggestion.get("vendor_id", "")},
+            "property_id": {"S": suggestion.get("property_id", "")},
         }
 
         # Add garbage lines as JSON string
@@ -31754,7 +31803,7 @@ def _track_ai_accuracy(pdf_id: str, deleted_line_ids: set, human_made_changes: b
         # OR AI said review AND human made changes
         auto_pass_correct = (ai_would_pass and not human_made_changes) or (not ai_would_pass and human_made_changes)
 
-        # Build accuracy record
+        # Build accuracy record (include vendor_id/property_id for per-vendor accuracy filtering)
         now = datetime.now(timezone.utc).isoformat()
         accuracy_item = {
             "pk": {"S": pdf_id},
@@ -31768,6 +31817,8 @@ def _track_ai_accuracy(pdf_id: str, deleted_line_ids: set, human_made_changes: b
             "auto_pass_correct": {"BOOL": auto_pass_correct},
             "human_changed": {"BOOL": human_made_changes},
             "ai_confidence": {"N": str(suggestion.get("auto_pass_confidence", 0))},
+            "vendor_id": {"S": suggestion.get("vendor_id", "")},
+            "property_id": {"S": suggestion.get("property_id", "")},
         }
 
         # Add deletion details for debugging
@@ -32860,28 +32911,38 @@ def _compute_vendor_accuracy(vendor_id: str, property_id: str = "", days: int = 
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-        # Query accuracy records that include this vendor
-        # This is inefficient (scan) but works for now
         total_reviews = 0
         total_tp = 0
         total_fp = 0
         total_fn = 0
         auto_pass_correct = 0
 
+        # Build filter expression — always filter by ACCURACY prefix + timestamp
+        filter_parts = ["begins_with(sk, :prefix)", "#ts >= :cutoff"]
+        expr_vals = {
+            ":prefix": {"S": "ACCURACY#"},
+            ":cutoff": {"S": cutoff},
+        }
+        expr_names = {"#ts": "timestamp"}
+
+        # Filter by vendor_id if present on the record (new records have it)
+        if vendor_id:
+            filter_parts.append("vendor_id = :vid")
+            expr_vals[":vid"] = {"S": vendor_id}
+
         paginator = ddb.get_paginator('scan')
         for page in paginator.paginate(
             TableName=AI_SUGGESTIONS_TABLE,
-            FilterExpression="begins_with(sk, :prefix) AND #ts >= :cutoff",
-            ExpressionAttributeNames={"#ts": "timestamp"},
-            ExpressionAttributeValues={
-                ":prefix": {"S": "ACCURACY#"},
-                ":cutoff": {"S": cutoff}
-            }
+            FilterExpression=" AND ".join(filter_parts),
+            ExpressionAttributeNames=expr_names,
+            ExpressionAttributeValues=expr_vals,
         ):
             for item in page.get("Items", []):
-                # Check if this accuracy record is for our vendor
-                pdf_id = item.get("pk", {}).get("S", "")
-                # Would need to look up the pdf to get vendor - for now just aggregate all
+                # Double-check property_id if requested (not all records have it yet)
+                if property_id:
+                    rec_pid = item.get("property_id", {}).get("S", "")
+                    if rec_pid and rec_pid != property_id:
+                        continue
                 total_reviews += 1
                 total_tp += int(item.get("deletion_tp", {}).get("N", "0"))
                 total_fp += int(item.get("deletion_fp", {}).get("N", "0"))
