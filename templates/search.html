@@ -202,6 +202,7 @@
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.property || '')}">${highlightMatch(r.property, property)}</td>
             <td>${highlightMatch(r.vendor, vendor)}</td>
             <td>$${(r.amount || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+            <td><a href="/bill/timeline?pdf_id=${encodeURIComponent(r.pdf_id)}" onclick="event.stopPropagation()" style="color:#0ea5e9;font-size:11px">timeline</a></td>
           `;
           tbody.appendChild(tr);
         });

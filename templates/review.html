@@ -170,7 +170,7 @@
           <div class="timer-value" id="timerValue">0:00</div>
           <div class="timer-label">Time on invoice</div>
         </div>
-      </div>      <button class="btn secondary" id="improveBtn">IMPROVE</button>      <button class="btn secondary" onclick="history.back()">Back</button>    </div>
+      </div>      <button class="btn secondary" id="improveBtn">IMPROVE</button>      <a class="btn secondary" id="timelineBtn" href="/bill/timeline" style="font-size:12px;padding:6px 10px;text-decoration:none" title="View bill journey through pipeline">TIMELINE</a>      <button class="btn secondary" onclick="history.back()">Back</button>    </div>
   </header>
   <!-- ===IMPROVE-HTML-START=== -->
   <div id="improveToast" class="improve-toast"></div>
@@ -569,6 +569,9 @@
       if (!first){ if(helper){ helper.textContent = 'No lines found to determine PDF link.'; } return; }
       const pdf = first.getAttribute('data-pdf') || '';
       const pdfId = first.getAttribute('data-pdf-id') || '';
+      // Set timeline button href
+      const tlBtn = document.getElementById('timelineBtn');
+      if (tlBtn && pdfId) tlBtn.href = '/bill/timeline?pdf_id=' + encodeURIComponent(pdfId);
       // Build iframe URL and a clickable fallback link for the user
       let iframeUrl = '';
       try {
