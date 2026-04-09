@@ -379,7 +379,7 @@ def _to_gallons(amount_raw: str | float | int, uom_raw: str) -> float | None:
         return amt  # assume already in gallons if no UOM
     # normalize
     if "ccf" in u:
-        return amt * 748.0
+        return amt * 748.052
     if u in ("cf",) or "cubic foot" in u or "cubic feet" in u or u == "ft3":
         return amt * 7.48052
     if u in ("kgal", "kgals") or "thousand" in u or "1,000" in u:

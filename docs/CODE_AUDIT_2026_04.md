@@ -66,7 +66,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | M15 | [x] | main.py:30713 | Knowledge search uses DDB `Limit` (eval limit, not result limit) |
 | M16 | [x] | main.py:30965 | Admin check uses `jrkholding.com` — doesn't match `ADMIN_USERS` set (`jrk.com`) |
 | M17 | [x] | main.py:33310 | Submeter rates race: running check outside `_SUBMETER_RATES_LOCK` |
-| M18 | [ ] | main.py:5869 | Accept-suggestion recalculates instead of using what user saw |
+| M18 | [x] | main.py:5869 | Accept-suggestion recalculates instead of using what user saw |
 | M19 | [x] | main.py:2067 | `_POST_LOCK_NONCES` dict read/written without locking (cross-instance nonce mismatch) |
 | M20 | [ ] | main.py:2121 | `_acquire_post_lock` fails open on DDB errors — allows duplicate Entrata posts |
 | M21 | [x] | main.py:2863 | `api_advance_to_post_stage` + `api_archive_parsed` missing S3 key validation |
@@ -103,7 +103,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | L5 | [-] | Multiple (~20 locations) | Bare `except:` clauses (should be `except Exception:`) |
 | L6 | [-] | Multiple (~30 locations) | `datetime.utcnow()` deprecated in Python 3.12+ |
 | L7 | [x] | main.py:1407 | `_parse_service_address` regex: `AP` matches inside "APACHE" |
-| L8 | [ ] | main.py:1541 | `require_user` raises HTTP 307 — wrong for API POST requests |
+| L8 | [x] | main.py:1541 | `require_user` raises HTTP 307 — wrong for API POST requests |
 | L9 | [-] | main.py:10267 | `if True:` dead conditional in bill index parser |
 | L10 | [-] | main.py:9802 | JSON serialization deep copy is slow (could use shallow copies) |
 | L11 | [x] | main.py:6416 | `delete_item` never raises `ResourceNotFoundException` — dead except branch |
@@ -118,7 +118,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | L20 | [ ] | lambda_presigned_upload:39 | IP allowlist bypassable via X-Forwarded-For spoofing |
 | L21 | [-] | lambda_email_ingest:31,40 | `_CANON_MAP` assigned twice at module load |
 | L22 | [x] | lambda_vendor_notifier:343 | HTML template injection in emails (vendor names unescaped) |
-| L23 | [ ] | lambda_meter_cleaner vs enricher | CCF→gallons conversion factor inconsistency (748.0 vs 748.052) |
+| L23 | [x] | lambda_meter_cleaner vs enricher | CCF→gallons conversion factor inconsistency (748.0 vs 748.052) |
 | L24 | [ ] | billback.html:563 | Email signed "Craig Beach" regardless of who sends it |
 | L25 | [x] | review.html:2904 | `Ctrl+D` overrides browser bookmark shortcut |
 

@@ -1538,8 +1538,10 @@ def get_current_user(request: Request) -> str | None:
 def require_user(request: Request) -> str:
     user = get_current_user(request)
     if not user:
-        # Raise 307 to login
         from fastapi import HTTPException
+        # API endpoints get 401 (so JS can handle it); page requests get 307 redirect
+        if request.url.path.startswith("/api/"):
+            raise HTTPException(status_code=401, detail="Authentication required")
         raise HTTPException(status_code=307, detail="redirect", headers={"Location": "/login"})
     return user
 
@@ -5942,6 +5944,8 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
         form = await request.form()
         s3_key = form.get("s3_key", "")
         accept = form.get("accept", "true").lower() == "true"
+        # Accept the period the frontend displayed (avoid recalculating a different suggestion)
+        frontend_period = form.get("suggested_period", "").strip()
 
         if not s3_key:
             return JSONResponse({"error": "s3_key required"}, status_code=400)
@@ -5996,7 +6000,15 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
         history_data = _s3_get_ubi_account_history()
         acct_history = history_data.get("accounts", {}).get(account_key)
 
-        suggestion = _calculate_ubi_suggestion(service_start, service_end, total_amount, acct_history)
+        # Use frontend-provided period if available (matches what user saw)
+        if frontend_period:
+            suggestion = {
+                "suggested_periods": [{"period": frontend_period, "days": 30, "amount": round(total_amount, 2), "pct": 100.0}],
+                "confidence": "high",
+                "reason": f"User accepted displayed suggestion: {frontend_period}",
+            }
+        else:
+            suggestion = _calculate_ubi_suggestion(service_start, service_end, total_amount, acct_history)
 
         if not suggestion["suggested_periods"]:
             return JSONResponse({"error": "No suggested periods - assign manually"}, status_code=400)
