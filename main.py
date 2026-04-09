@@ -24193,7 +24193,8 @@ def invoices_view(request: Request, date: str, user: str = Depends(require_user)
             "pdf_id": pdf_id,
             "total_amount": 0.0,
             "s3_key": r.get("__s3_key__", ""),  # Keep original S3 key for splitting
-            "property": property_name
+            "property": property_name,
+            "submitted_by": str(r.get("submitted_by", "")).strip(),
         })
         # Update property if not set (first row may not have it)
         if not g.get("property") and property_name:

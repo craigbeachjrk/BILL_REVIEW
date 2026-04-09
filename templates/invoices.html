@@ -254,6 +254,7 @@
             <th class="sortable" data-col="6" data-type="number" style="width:60px">Lines</th>
             <th class="sortable" data-col="7" data-type="currency" style="width:100px">Total</th>
             <th class="sortable" data-col="8" data-type="string" style="width:90px">Status</th>
+            <th class="sortable" data-col="9" data-type="string" style="width:90px">Scanned By</th>
           </tr>
         </thead>
         <tbody class="initializing">
@@ -274,6 +275,7 @@
               <td style="text-align:right">{{ inv.count }}</td>
               <td style="text-align:right">${{ "%.2f"|format(inv.total_amount|default(0)) }}</td>
               <td><span class="chip status-{{ inv.status }} status-chip">{{ inv.status }}</span></td>
+              <td style="font-size:11px;color:#64748b" data-sort="{{ inv.submitted_by or '' }}">{{ inv.submitted_by or '' }}</td>
             </tr>
           {% endfor %}
         </tbody>
