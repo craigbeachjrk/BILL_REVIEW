@@ -2882,8 +2882,10 @@ def api_post_to_entrata(request: Request, keys: str = Form(...), vendor_override
                 # Delete original from source stage (data already written to Stage 7)
                 s3.delete_object(Bucket=BUCKET, Key=key)
                 results.append({"key": key, "posted": True, "moved": True, "newKey": new_key})
+                _pipeline_track(key, "POSTED", f"app:post:{user}", "S7", {"new_key": new_key})
             except Exception as e:
                 errors.append({"key": key, "error": f"Posted to Entrata but failed to archive: {e}", "code": "move_failed", "hint": "The invoice WAS posted successfully. Refresh the page - it may appear in the correct stage."})
+                _pipeline_track(key, "POST_ARCHIVE_FAILED", f"app:post:{user}", "S6", {"error": str(e)})
                 results.append({"key": key, "posted": True, "moved": False})
                 continue
         # If any unresolved vendor locations were discovered and not satisfied by overrides, prompt client
@@ -2953,6 +2955,7 @@ def api_advance_to_post_stage(keys: str = Form(...), user: str = Depends(require
                 except Exception:
                     pass  # Non-fatal — CHECK REVIEW falls back to S3
                 results.append({"key": key, "moved": True, "newKey": new_key})
+                _pipeline_track(key, "ADVANCED_TO_POST", f"app:advance:{user}", "S6", {"new_key": new_key})
             except Exception as e:
                 errors.append({"key": key, "error": str(e)})
         return {"ok": True, "results": results, "errors": errors}
@@ -2996,6 +2999,7 @@ def api_archive_parsed(keys: str = Form(...), user: str = Depends(require_user))
                 if not new_key:
                     errors.append({"key": key, "error": "Failed to archive (source preserved)", "code": "write_failed"}); continue
                 results.append({"key": key, "archived": True, "newKey": new_key})
+                _pipeline_track(key, "ARCHIVED", f"app:archive:{user}", "ARCHIVE", {"new_key": new_key})
             except Exception as e:
                 errors.append({"key": key, "error": str(e)})
         return {"ok": True, "results": results, "errors": errors}
@@ -5663,6 +5667,7 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
                 pass  # Good - file is gone (404)
 
         print(f"[UBI ASSIGN] COMPLETED: Moved {assigned_count} items to Stage 8 for {len(ubi_periods)} period(s)")
+        _pipeline_track(s3_key, "UBI_ASSIGNED", f"app:ubi_assign:{user}", "S8", {"periods": ",".join(ubi_periods), "count": assigned_count})
 
         _remove_bill_from_ubi_cache(s3_key)
 
@@ -6603,6 +6608,7 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
         _remove_bill_from_ubi_cache(s3_key)
 
         print(f"[UBI UNASSIGN] COMPLETED: Moved {total_unassigned} items back to Stage 7")
+        _pipeline_track(s3_key, "UBI_UNASSIGNED", f"app:ubi_unassign:{user}", "S7", {"count": total_unassigned})
         return {"ok": True, "unassigned": total_unassigned}
 
     except Exception as e:
@@ -12329,6 +12335,43 @@ def _pipeline_track(s3_key: str, event_type: str, source: str, stage: str, metad
         })
     except Exception as e:
         print(f"[PIPELINE_TRACKER] {event_type} write failed for {s3_key}: {e}")
+
+
+@app.get("/api/bill/{pdf_id}/events")
+def api_bill_events(pdf_id: str, user: str = Depends(require_user)):
+    """Get full event timeline for a bill by pdf_id. (S1 Observability)"""
+    try:
+        resp = ddb.query(
+            TableName=PIPELINE_TRACKER_TABLE,
+            KeyConditionExpression="pk = :pk",
+            ExpressionAttributeValues={":pk": {"S": f"BILL#{pdf_id}"}},
+            ScanIndexForward=True,  # chronological order
+        )
+        events = []
+        for item in resp.get("Items", []):
+            meta = {}
+            try:
+                meta = json.loads(item.get("metadata", {}).get("S", "{}"))
+            except Exception:
+                pass
+            events.append({
+                "event_type": item.get("event_type", {}).get("S", ""),
+                "timestamp": item.get("sk", {}).get("S", "").replace("EVENT#", ""),
+                "stage": item.get("stage", {}).get("S", ""),
+                "source": item.get("source", {}).get("S", ""),
+                "filename": item.get("filename", {}).get("S", ""),
+                "s3_key": item.get("s3_key", {}).get("S", ""),
+                "metadata": meta,
+            })
+        current_stage = events[-1]["stage"] if events else "unknown"
+        return {
+            "pdf_id": pdf_id,
+            "events": events,
+            "current_stage": current_stage,
+            "event_count": len(events),
+        }
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "bill events")}, status_code=500)
 
 
 @app.get("/pipeline", response_class=HTMLResponse)
@@ -24120,6 +24163,7 @@ def api_delete_parsed(date: str = Form(...), pdf_ids: str = Form(...), user: str
                 pass  # Archive is best-effort — don't block delete
             s3.delete_object(Bucket=BUCKET, Key=k)
             deleted += 1
+            _pipeline_track(k, "DELETED", f"app:delete:{user}", "DELETED", {"archived_to": archive_key})
         # Also delete any Pre-Entrata (Stage 6) files that match the deleted invoices
         # Match on business fields: Account Number + Bill Period Start + Bill Period End + Bill Date
         # This ensures we only delete the exact invoice, not unrelated ones with same account
@@ -25080,10 +25124,13 @@ def api_rework(
         # Remove stale entry from search index
         _search_index_remove({pdf_id})
 
+        _pipeline_track(dest_key, "REWORKED", f"app:rework:{user}", "REWORK", {"deleted_enriched": deleted, "pdf_id": pdf_id})
         return {"ok": True, "copied_key": dest_key, "meta_key": meta_key, "deleted": deleted}
     except Exception as e:
         import traceback
         return JSONResponse({"error": _sanitize_error(e, "API request")}, status_code=500)
+
+
 def get_status_map(ids: List[str]) -> Dict[str, Dict[str, str]]:
     """Returns a dict mapping id -> {"status": str, "submitted_at": str}"""
     if not ids:

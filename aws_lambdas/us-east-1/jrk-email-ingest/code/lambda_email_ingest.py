@@ -52,8 +52,11 @@ def _today_parts(ts: dt.datetime | None = None):
     return ts.strftime("%Y"), ts.strftime("%m"), ts.strftime("%d"), ts.strftime("%Y%m%dT%H%M%SZ")
 
 
-def _put_s3(bucket: str, key: str, body: bytes, content_type: str | None = None):
-    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type or "application/octet-stream")
+def _put_s3(bucket: str, key: str, body: bytes, content_type: str | None = None, metadata: dict | None = None):
+    kwargs = {"Bucket": bucket, "Key": key, "Body": body, "ContentType": content_type or "application/octet-stream"}
+    if metadata:
+        kwargs["Metadata"] = metadata
+    s3.put_object(**kwargs)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -123,6 +126,15 @@ def handler(event, context):
     raw_key = f"{part_prefix}{ts}_{_sanitize_filename(message_id or 'message')}.eml"
     _put_s3(TARGET_BUCKET, raw_key, raw_bytes, content_type="message/rfc822")
 
+    # Extract sender for bill attribution (S4)
+    sender = str(msg.get("From") or msg.get("from") or "unknown").strip()
+    # Extract just the email address from "Name <email>" format
+    import re as _re
+    _sender_match = _re.search(r'[\w.+-]+@[\w.-]+', sender)
+    sender_email = _sender_match.group(0).lower() if _sender_match else sender.lower()
+    # Extract username part for attribution
+    submitted_by = sender_email.split("@")[0] if "@" in sender_email else sender_email
+
     # Extract attachments: store only PDFs for bills@ and only CSVs for reports@
     if STORE_ATTACHMENTS:
         recipients = _extract_recipients(msg) or ["unknown@unknown"]
@@ -170,8 +182,9 @@ def handler(event, context):
                 if is_pdf and to_bills:
                     bill_key = f"{INPUT_PREFIX_BILL}{ts}_{safe_name}"
                     print(f"[MIRROR] Attempting to write PDF to {BUCKET_BILL}/{bill_key} ({len(content)} bytes)")
-                    _put_s3(BUCKET_BILL, bill_key, content, content_type="application/pdf")
-                    print(f"[MIRROR] SUCCESS: {bill_key}")
+                    _put_s3(BUCKET_BILL, bill_key, content, content_type="application/pdf",
+                            metadata={"submitted-by": submitted_by, "sender-email": sender_email})
+                    print(f"[MIRROR] SUCCESS: {bill_key} (submitted_by={submitted_by})")
             except Exception as e:
                 # Log at ALARM level so CloudWatch can catch it
                 print(json.dumps({
