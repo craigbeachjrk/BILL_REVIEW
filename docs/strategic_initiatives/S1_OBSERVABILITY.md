@@ -20,10 +20,10 @@ Complete visibility into every bill's lifecycle — from email/scan intake throu
 - [x] **1.9** Add event emission to rework/delete flows (REWORKED, DELETED, ARCHIVED)
 
 ### Phase 2: Bill Lifecycle UI
-- [ ] **2.1** Create `/bill/{pdf_id}/timeline` page showing full event history
-- [ ] **2.2** Add "View Timeline" button to review, billback, and search pages
+- [x] **2.1** Create `/bill/{pdf_id}/timeline` page showing full event history (dark Mission Control theme)
+- [x] **2.2** Add "View Timeline" button to review page header + search results + home page tile
 - [x] **2.3** Create `/api/bill/{pdf_id}/events` endpoint querying the events table
-- [ ] **2.4** Add visual stage progression indicator (breadcrumb: Received -> Parsed -> Enriched -> Reviewed -> Posted)
+- [x] **2.4** Add visual stage progression indicator (connected pipeline nodes with glow effects)
 
 ### Phase 3: Transaction Dashboard
 - [x] **3.1** Create `/transactions` page with real-time pipeline flow visualization

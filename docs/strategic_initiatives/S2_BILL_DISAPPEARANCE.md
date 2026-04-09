@@ -8,10 +8,10 @@ Users report "bills I scanned in disappear." This is the #1 user complaint. Root
 2. **[FIXED] Submit deletes old S6 files BEFORE writing new one** — if write failed, bill vanished. Fixed: write-first-then-delete order.
 3. **[FIXED] Delete parsed permanently destroys enrichment** — no archive. Fixed: copies to `Bill_Parser_Deleted_Archive/` before deleting.
 4. **Email mirror failure is silent** — email ingest Lambda swallows S3 mirror errors (line 175). Bill archived but never enters pipeline. No alerting.
-5. **Enricher crash leaves bill stuck in Stage 3** — no DLQ or failure routing for enricher Lambda.
-6. **Partial chunk upload hangs large-file jobs forever** — large parser continues on chunk upload failure, job never completes.
+5. **[FIXED] Enricher crash leaves bill stuck in Stage 3** — added try/except + fallback copy of unenriched data to S4
+6. **[FIXED] Partial chunk upload hangs large-file jobs forever** — job now marked FAILED on partial upload
 7. **No dead-letter/timeout for stuck large-file jobs** — no mechanism to detect `chunks_completed < total_chunks` stalls.
-8. **Aggregator trigger is a TODO** — chunk processor line 954 has `# TODO`. Relies on DynamoDB Streams being configured externally.
+8. **[FIXED] Aggregator trigger is a TODO** — chunk processor now directly invokes aggregator Lambda
 9. **Rework deletes enrichment with no archive** — if re-parse fails, original enrichment is gone.
 10. **No write verification before source deletion** — all stage-move operations trust _write_jsonl without head_object check.
 11. **No user attribution** — can't tell who submitted which bill (blocks "My Bills" view).
