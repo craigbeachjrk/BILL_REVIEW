@@ -1657,12 +1657,14 @@
     // Render filter checkbox list
     function renderFilterList(containerId, items, filterKey) {
       const container = document.getElementById(containerId);
-      container.innerHTML = items.map(item => `
+      container.innerHTML = items.map(item => {
+        const safe = escapeHtml(item);
+        return `
         <label>
-          <input type="checkbox" name="${filterKey}" value="${item}" onchange="applyFilters()" ${ubiFilters[filterKey].includes(item) ? 'checked' : ''}>
-          ${item}
-        </label>
-      `).join('');
+          <input type="checkbox" name="${filterKey}" value="${safe}" onchange="applyFilters()" ${ubiFilters[filterKey].includes(item) ? 'checked' : ''}>
+          ${safe}
+        </label>`;
+      }).join('');
     }
 
     // Filter individual lists

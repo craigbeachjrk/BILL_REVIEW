@@ -346,6 +346,13 @@ def _run_batch_worker(
         except Exception:
             pass
         _progress(on_progress, batch_id, f"FAILED: {e}")
+    finally:
+        # Close the Snowflake connection (owned by background thread)
+        try:
+            if snowflake_conn:
+                snowflake_conn.close()
+        except Exception:
+            pass
 
 
 def _row_to_line(row: pd.Series, batch_id: str) -> VELineReview:

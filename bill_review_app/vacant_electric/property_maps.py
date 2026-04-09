@@ -173,6 +173,8 @@ def MAP_BOJ(unit_string):
     bldg_map = {"391": "01", "381": "02", "371": "03", "411": "04", "421": "05",
                 "431": "06", "441": "07", "451": "08"}
     bldg_id = bldg_map.get(st_num)
+    if bldg_id is None:
+        return [None, None]
     apt = APT_NUM(unit_string)
     return [bldg_id, str(int(bldg_id)) + apt]
 
@@ -241,6 +243,7 @@ def MAP_CPK(unit_string):
 def MAP_CHA(unit_string):
     street_num = ST_NUM(unit_string)
     street_letter = ST_LETTER(unit_string)
+    prefix = ""
     if street_letter == "K":
         prefix = "KC"
     elif street_letter == "L":
@@ -252,6 +255,8 @@ def MAP_CHA(unit_string):
             prefix = "CA"
         elif len(street_num) == 3:
             prefix = "CT"
+    if not prefix:
+        return [None, None]
     return ["01", prefix + street_num]
 
 

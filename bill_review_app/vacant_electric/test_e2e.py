@@ -130,7 +130,7 @@ def main():
     bill_entities = set(bills_df['entityid'].dropna().unique())
     lease_entities = set(leases_df['PropertyId'].dropna().unique())
     dispatch_keys = set(MAPPING_DISPATCH.keys())
-    check("entity_ids match MAPPING_DISPATCH", bill_entities <= dispatch_keys | bill_entities,
+    check("entity_ids match MAPPING_DISPATCH", bill_entities <= dispatch_keys,
           f"{len(bill_entities & dispatch_keys)}/{len(bill_entities)} matched")
     print(f"     Bill properties: {len(bill_entities)}, Lease properties: {len(lease_entities)}, Overlap: {len(bill_entities & lease_entities)}")
 

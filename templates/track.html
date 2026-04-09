@@ -497,13 +497,16 @@
     }
     // REMOVED: adjustMonthLabelSizes() - using CSS clamp() instead for performance
     let _rszT=null; window.addEventListener('resize', ()=>{ clearTimeout(_rszT); _rszT=setTimeout(()=>{ layoutMonths(); adjustHeaderMonthLabels(); }, 80); });
+    let _renderBound = false;
     function render(data){
       currentData = data.rows || [];
       renderHeaderMonths(data.months||[]);
       populateFilterOptions();
       bindSorters();
       renderRows();
-      // Drawer wiring
+      if (_renderBound) return;
+      _renderBound = true;
+      // Drawer wiring (bind once only)
       const mask = document.getElementById('drawerMask');
       const drawer = document.getElementById('drawer');
       const open = ()=>{ drawer.classList.add('open'); mask.classList.add('open'); };

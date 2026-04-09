@@ -55,8 +55,8 @@ def load_entrata_creds() -> Dict[str, Any]:
         if not (org and base and api_key):
             raise RuntimeError("Entrata secret missing org/base_url/api_key")
         return {"org": org, "base_url": base, "api_key": api_key, "timeout": timeout}
-    except (NoCredentialsError, ClientError):
-        pass
+    except (NoCredentialsError, ClientError) as e:
+        raise RuntimeError(f"Failed to load Entrata credentials from env vars or Secrets Manager: {e}")
 
 
 def log_resp_shape(label: str, resp: Any) -> None:

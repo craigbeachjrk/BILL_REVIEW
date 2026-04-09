@@ -1404,7 +1404,7 @@ def _parse_service_address(addr: str) -> tuple[str, str, str]:
     # NOTE: # must be outside \b group because \b doesn't work with non-word chars
     # NOTE: APARTMENT must come before APT/AP to avoid partial matches
     unit = ""
-    unit_match = re.search(r'(?:\b(?:APARTMENT|APT|AP|SUITE|STE|UNIT|BLDG)|#)\.?\s*([A-Z0-9-]+)', addr, re.I)
+    unit_match = re.search(r'(?:\b(?:APARTMENT|APT|SUITE|STE|UNIT|BLDG)\b|#)\.?\s*([A-Z0-9-]+)', addr, re.I)
     if unit_match:
         unit = unit_match.group(1)
 
@@ -2065,6 +2065,7 @@ async def api_post_validate(request: Request, user: str = Depends(require_user))
 # -------- Distributed post lock (prevents duplicate Entrata submissions) --------
 # Thread-local storage for lock nonces (to verify we own the lock when updating)
 _POST_LOCK_NONCES: dict[str, str] = {}  # s3_key -> nonce
+_POST_LOCK_NONCES_LOCK = threading.Lock()
 
 
 def _acquire_post_lock(s3_key: str, user: str) -> bool:
@@ -2112,7 +2113,8 @@ def _acquire_post_lock(s3_key: str, user: str) -> bool:
                 ":user": {"S": user},
             },
         )
-        _POST_LOCK_NONCES[s3_key] = nonce  # Store nonce for later verification
+        with _POST_LOCK_NONCES_LOCK:
+            _POST_LOCK_NONCES[s3_key] = nonce  # Store nonce for later verification
         return True
     except ddb.exceptions.ConditionalCheckFailedException:
         return False
@@ -2136,7 +2138,8 @@ def _update_post_lock(s3_key: str, status: str, force: bool = False):
     """
     sk = hashlib.sha1(s3_key.encode()).hexdigest()
     file_name = s3_key.split('/')[-1] if '/' in s3_key else s3_key
-    our_nonce = _POST_LOCK_NONCES.get(s3_key)
+    with _POST_LOCK_NONCES_LOCK:
+        our_nonce = _POST_LOCK_NONCES.get(s3_key)
 
     # Force mode: unconditional update (like clear_post_locks)
     if force:
@@ -2154,7 +2157,8 @@ def _update_post_lock(s3_key: str, status: str, force: bool = False):
             print(f"[POST LOCK] Force-updated {file_name} to {status}")
         except Exception as e:
             print(f"[POST LOCK] ERROR force-updating {file_name}: {e}")
-        _POST_LOCK_NONCES.pop(s3_key, None)
+        with _POST_LOCK_NONCES_LOCK:
+            _POST_LOCK_NONCES.pop(s3_key, None)
         return
 
     if not our_nonce:
@@ -2193,7 +2197,8 @@ def _update_post_lock(s3_key: str, status: str, force: bool = False):
         )
         print(f"[POST LOCK] Updated {file_name} to {status} (nonce verified)")
         # Clean up stored nonce
-        _POST_LOCK_NONCES.pop(s3_key, None)
+        with _POST_LOCK_NONCES_LOCK:
+            _POST_LOCK_NONCES.pop(s3_key, None)
     except ddb.exceptions.ConditionalCheckFailedException:
         # Either status changed or nonce doesn't match (another request owns the lock)
         # For FAILED status, force the update anyway to prevent stuck locks
@@ -2229,12 +2234,14 @@ def _update_post_lock(s3_key: str, status: str, force: bool = False):
                     print(f"[POST LOCK] Skipped {file_name}: status already {actual_status} (wanted {status})")
             except Exception:
                 print(f"[POST LOCK] Skipped {file_name}: condition failed")
-        _POST_LOCK_NONCES.pop(s3_key, None)
+        with _POST_LOCK_NONCES_LOCK:
+            _POST_LOCK_NONCES.pop(s3_key, None)
     except Exception as e:
         import traceback
         print(f"[POST LOCK] ERROR updating {file_name} to {status}: {type(e).__name__}: {e}")
         print(f"[POST LOCK] Traceback: {traceback.format_exc()}")
-        _POST_LOCK_NONCES.pop(s3_key, None)
+        with _POST_LOCK_NONCES_LOCK:
+            _POST_LOCK_NONCES.pop(s3_key, None)
 
 
 @app.post("/api/clear_post_locks")
@@ -2491,7 +2498,8 @@ def api_verify_entrata_sync(
         inv_num = inv["invoice_number"]
         if inv_num in entrata_lookup:
             entrata_inv = entrata_lookup[inv_num]
-            results["extra_in_entrata"].remove(inv_num)
+            if inv_num in results["extra_in_entrata"]:
+                results["extra_in_entrata"].remove(inv_num)
 
             our_total = inv["total"]
             entrata_total = entrata_inv["total"]
@@ -2876,6 +2884,7 @@ def api_advance_to_post_stage(keys: str = Form(...), user: str = Depends(require
         posted_at = dt.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
         for key in sel:
             try:
+                _require_valid_s3_key(key, operation="advance_to_post_stage")
                 rows = _read_json_records_from_s3([key])
                 if not rows:
                     file_name = key.split('/')[-1] if '/' in key else key
@@ -2917,6 +2926,7 @@ def api_archive_parsed(keys: str = Form(...), user: str = Depends(require_user))
         errors: list[dict] = []
         for key in sel:
             try:
+                _require_valid_s3_key(key, operation="archive_parsed")
                 # Read entire object text, split into JSON lines
                 body = _read_s3_text(BUCKET, key)
                 rows = []
@@ -4826,14 +4836,15 @@ async def api_billback_archive(request: Request, user: str = Depends(require_use
                     except Exception:
                         pass
 
-                # Filter out the items to archive (match by account number and bill period)
+                # Filter out the items to archive (match by account + period + vendor for uniqueness)
                 archived_items = []
                 for row in all_rows:
                     should_archive = False
                     for item in key_items:
                         if (row.get('Account Number') == item.get('Account Number') and
                             row.get('Bill Period Start') == item.get('Bill Period Start') and
-                            row.get('Bill Period End') == item.get('Bill Period End')):
+                            row.get('Bill Period End') == item.get('Bill Period End') and
+                            row.get('Bill Date', '') == item.get('Bill Date', '')):
                             should_archive = True
                             break
 
@@ -5780,9 +5791,9 @@ def api_billback_ubi_suggestions(user: str = Depends(require_user), page: int = 
         paginated = bills_with_suggestions[start_idx:end_idx]
 
         # Calculate summary stats
-        high_confidence = sum(1 for b in bills_with_suggestions if b["suggestion"]["confidence"] == "high")
-        medium_confidence = sum(1 for b in bills_with_suggestions if b["suggestion"]["confidence"] == "medium")
-        low_confidence = sum(1 for b in bills_with_suggestions if b["suggestion"]["confidence"] == "low")
+        high_confidence = sum(1 for b in bills_with_suggestions if (b.get("suggestion") or {}).get("confidence") == "high")
+        medium_confidence = sum(1 for b in bills_with_suggestions if (b.get("suggestion") or {}).get("confidence") == "medium")
+        low_confidence = sum(1 for b in bills_with_suggestions if (b.get("suggestion") or {}).get("confidence") == "low")
 
         elapsed = (datetime.now() - start_time).total_seconds()
         print(f"[UBI SUGGESTIONS] Returning {len(paginated)} of {total_bills} bills ({high_confidence} high, {medium_confidence} medium, {low_confidence} low confidence)")
@@ -6361,7 +6372,9 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
                         remaining_items.append(rec)
                 except (json.JSONDecodeError, ValueError, TypeError) as e:
                     print(f"[UBI UNASSIGN] Error parsing line: {e}")
-                    remaining_items.append(json.loads(line) if line else {})
+                    if line and line.strip():
+                        remaining_items.append({})
+
 
             if not unassigned_items:
                 print(f"[UBI UNASSIGN] No matching line items found in {s3_key}")
@@ -6413,10 +6426,8 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
                 )
                 deleted_count += 1
                 print(f"[UBI UNASSIGN] Deleted DDB record for {lh[:24]}...")
-            except ddb.exceptions.ResourceNotFoundException:
-                not_found_hashes.add(lh)
             except Exception as e:
-                # delete_item doesn't error if key doesn't exist, so this is a real error
+                # delete_item is idempotent (no error if key doesn't exist), so this is a real error
                 print(f"[UBI UNASSIGN] Warning: could not delete DDB assignment {lh[:24]}: {e}")
                 not_found_hashes.add(lh)
 
@@ -6451,6 +6462,8 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
 
         # 3) Invalidate the Stage 8 history cache so BILLBACK shows correct
         # duplicate warnings and suggestions after unassign
+        _CACHE.pop(("ubi_unassigned",), None)
+        _remove_bill_from_ubi_cache(s3_key)
 
         print(f"[UBI UNASSIGN] COMPLETED: Moved {total_unassigned} items back to Stage 7")
         return {"ok": True, "unassigned": total_unassigned}
@@ -6542,12 +6555,12 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
                         ubi_assignments = rec.get("ubi_assignments", [])
                         if ubi_assignments:
                             for asn in ubi_assignments:
-                                if asn.get("period", "") == period or period in asn.get("period", ""):
+                                if asn.get("period", "") == period:
                                     has_period_match = True
                                     break
                         else:
                             rec_period = rec.get("ubi_period", "")
-                            if rec_period == period or period in rec_period:
+                            if rec_period == period:
                                 has_period_match = True
 
                     if has_period_match:
@@ -6561,7 +6574,8 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
                     else:
                         remaining_items.append(rec)
                 except Exception:
-                    remaining_items.append(json.loads(line) if line else {})
+                    if line and line.strip():
+                        remaining_items.append({})
 
             if not unassigned_items:
                 continue
@@ -6631,6 +6645,7 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
         print(f"[UBI UNASSIGN ACCOUNT] Deleted {deleted_count} DDB records")
 
         # Invalidate caches
+        _CACHE.pop(("ubi_unassigned",), None)
 
         # CRITICAL: Invalidate the Stage 8 history cache so BILLBACK shows correct
         # duplicate warnings and suggestions after unassign
@@ -6815,7 +6830,7 @@ async def api_billback_ubi_reassign_account(request: Request, user: str = Depend
                             # Multi-period format: update matching period entries
                             changed = False
                             for asn in ubi_assignments:
-                                if asn.get("period", "") == old_period or old_period in asn.get("period", ""):
+                                if asn.get("period", "") == old_period:
                                     asn["period"] = new_period
                                     changed = True
                             if changed:
@@ -6825,14 +6840,15 @@ async def api_billback_ubi_reassign_account(request: Request, user: str = Depend
                         else:
                             # Legacy format
                             rec_period = rec.get("ubi_period", "")
-                            if rec_period == old_period or old_period in rec_period:
+                            if rec_period == old_period:
                                 rec["ubi_period"] = new_period
                                 has_changes = True
                                 total_reassigned += 1
 
                     modified_items.append(rec)
                 except Exception:
-                    modified_items.append(json.loads(line) if line else {})
+                    if line and line.strip():
+                        modified_items.append({})
 
             if has_changes and modified_items:
                 # Write back to same file
@@ -6973,7 +6989,8 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
                     updated_lines.append(rec)
                 except (json.JSONDecodeError, ValueError, TypeError) as e:
                     print(f"[UBI REASSIGN] Error parsing line: {e}")
-                    updated_lines.append(json.loads(line) if line else {})
+                    if line and line.strip():
+                        updated_lines.append({})
 
             if file_updated_count > 0:
                 # Write back to Stage 8
@@ -8827,6 +8844,8 @@ async def api_archive_accounts(request: Request, user: str = Depends(require_use
         # Save
         if archived_count > 0:
             _put_accounts_to_track(accounts)
+            _CACHE.pop(("accounts_to_track",), None)
+            _CACHE.pop(("workflow_tracker",), None)
             print(f"[ARCHIVE] {user} archived {archived_count} accounts (reason: {reason})")
 
         return {"archived": archived_count, "total_requested": len(account_keys)}
@@ -8868,6 +8887,8 @@ async def api_restore_accounts(request: Request, user: str = Depends(require_use
 
         if restored_count > 0:
             _put_accounts_to_track(accounts)
+            _CACHE.pop(("accounts_to_track",), None)
+            _CACHE.pop(("workflow_tracker",), None)
             print(f"[RESTORE] {user} restored {restored_count} accounts")
 
         return {"restored": restored_count, "total_requested": len(account_keys)}
@@ -8953,6 +8974,8 @@ async def api_update_account_mapping(request: Request, user: str = Depends(requi
             return JSONResponse({"detail": "Account not found"}, status_code=404)
 
         _put_accounts_to_track(accounts)
+        _CACHE.pop(("accounts_to_track",), None)
+        _CACHE.pop(("workflow_tracker",), None)
 
         return {"success": True, "message": "Account mapping updated"}
     except Exception as e:
@@ -8997,6 +9020,8 @@ async def api_bulk_update_account_mapping(request: Request, user: str = Depends(
             return JSONResponse({"detail": "No matching accounts found"}, status_code=404)
 
         _put_accounts_to_track(accounts)
+        _CACHE.pop(("accounts_to_track",), None)
+        _CACHE.pop(("workflow_tracker",), None)
         print(f"[BULK_UPDATE] {user} bulk-updated vendor to {new_vendor_id} for {updated_count} accounts")
         return {"success": True, "updatedCount": updated_count}
     except Exception as e:
@@ -9075,7 +9100,7 @@ def api_vendor_correction_suspects(user: str = Depends(require_user), days: int 
                     "vendor_id": vendor_id,
                     "vendor_name": vendor_name,
                     "account_number": account_number,
-                    "is_ubi": bool(acct.get("isUBI", False)),
+                    "is_ubi": bool(acct.get("is_ubi", acct.get("isUBI", False))),
                     "account_key": f"{property_id}|{vendor_id}|{account_number}",
                     "added_by": _safe_str(acct.get("addedBy", "")),
                     "added_at": _safe_str(acct.get("addedAt", ""))
@@ -9342,6 +9367,8 @@ async def api_vendor_correction_apply(request: Request, user: str = Depends(requ
 
         # Save accounts
         _put_accounts_to_track(accounts)
+        _CACHE.pop(("accounts_to_track",), None)
+        _CACHE.pop(("workflow_tracker",), None)
 
         # Log correction
         corrections_data = _s3_get_vendor_corrections()
@@ -9505,15 +9532,8 @@ async def api_gap_analysis_upload(request: Request, user: str = Depends(require_
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
-def _normalize_account_number(acct_num: str) -> str:
-    """Normalize account number for fuzzy matching - strip dashes, spaces, leading zeros."""
-    if not acct_num:
-        return ""
-    # Remove common separators and whitespace
-    normalized = re.sub(r'[-\s\.\(\)]', '', str(acct_num).strip())
-    # Strip leading zeros but keep at least one digit
-    normalized = normalized.lstrip('0') or '0'
-    return normalized.upper()
+## _normalize_account_number — canonical definition is at ~line 13876
+## (strips all non-alphanumeric, lowercases, strips leading zeros)
 
 
 def _account_similarity(a: str, b: str) -> float:
@@ -11474,6 +11494,14 @@ async def api_directed_batch_history(request: Request, user: str = Depends(requi
         # Primary source: search index (covers ALL properties in the pipeline)
         search_entries = _SEARCH_INDEX.get("entries", []) if _SEARCH_INDEX.get("ready") else []
 
+        # Pre-index search entries by account for O(1) lookup instead of O(N) per account
+        _by_account = {}
+        if search_entries:
+            for e in search_entries:
+                al = e.get("account_l", "")
+                if al:
+                    _by_account.setdefault(al, []).append(e)
+
         result = {}
         for item in accounts_list[:50]:
             ak = item.get("accountKey", "")
@@ -11493,11 +11521,9 @@ async def api_directed_batch_history(request: Request, user: str = Depends(requi
             matched_invoices = []
             source = "none"
 
-            if acct_lower and search_entries:
-                # Match by account number (most precise)
-                for e in search_entries:
-                    if e.get("account_l", "") == acct_lower:
-                        matched_invoices.append(e)
+            if acct_lower and acct_lower in _by_account:
+                # Match by account number (most precise) — O(1) lookup
+                matched_invoices = _by_account[acct_lower]
                 source = "search_index_acct"
 
             if not matched_invoices and vendor_lower and prop_lower and search_entries:
@@ -11762,17 +11788,22 @@ def metrics_view(request: Request, user: str = Depends(require_user)):
 def api_metrics_user_timing(date: str = "", user: str = Depends(require_user)):
     """Get all user timing data across all users for metrics."""
     try:
-        # Scan for all timing records
-        response = ddb.scan(
-            TableName=DRAFTS_TABLE,
-            FilterExpression="begins_with(pk, :prefix)",
-            ExpressionAttributeValues={
-                ":prefix": {"S": "timing#"},
-            },
-        )
+        # Scan for all timing records (paginated)
+        all_items = []
+        scan_params = {
+            "TableName": DRAFTS_TABLE,
+            "FilterExpression": "begins_with(pk, :prefix)",
+            "ExpressionAttributeValues": {":prefix": {"S": "timing#"}},
+        }
+        while True:
+            response = ddb.scan(**scan_params)
+            all_items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         # Group by user
         by_user = {}
-        for item in response.get("Items", []):
+        for item in all_items:
             u = item.get("user", {}).get("S", "unknown")
             invoice_id = item.get("invoice_id", {}).get("S", "")
             total_secs = int(item.get("total_seconds", {}).get("N", 0))
@@ -15344,7 +15375,10 @@ def _detect_outlier(amount: float, stats: dict, threshold_z: float = 3.0, thresh
 
 def _get_account_bill_history(account_key: str, max_bills: int = 12) -> list[dict]:
     """Get bill history for an account from Stage 7 and Archive."""
-    property_id, vendor_id, account_number = account_key.split("|")
+    parts = account_key.split("|")
+    if len(parts) != 3:
+        return []
+    property_id, vendor_id, account_number = parts
     bills = []
 
     # Scan last 6 months of Stage 7 and Archive
@@ -16840,56 +16874,57 @@ def _write_to_snowflake(batch_id: str, master_bills: list[dict], memo: str, run_
         # Connect to Snowflake
         conn = _snowflake_connect(credentials)
 
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
+            try:
+                # Prepare data for batch insert (with Source_Type column)
+                rows_to_insert = []
+                for mb in master_bills:
+                    # Determine Source_Type from source line items
+                    source_type = None  # NULL = ACTUAL (existing behavior)
+                    if mb.get('has_non_actual'):
+                        entry_types = set()
+                        for sl in mb.get('source_line_items', []):
+                            et = sl.get('entry_type', '')
+                            if et:
+                                entry_types.add(et)
+                        if entry_types:
+                            has_actual = any(not sl.get('entry_type') for sl in mb.get('source_line_items', []))
+                            source_type = "MIXED" if len(entry_types) > 1 or has_actual else entry_types.pop()
 
-        # Prepare data for batch insert (with Source_Type column)
-        rows_to_insert = []
-        for mb in master_bills:
-            # Determine Source_Type from source line items
-            source_type = None  # NULL = ACTUAL (existing behavior)
-            if mb.get('has_non_actual'):
-                entry_types = set()
-                for sl in mb.get('source_line_items', []):
-                    et = sl.get('entry_type', '')
-                    if et:
-                        entry_types.add(et)
-                if entry_types:
-                    has_actual = any(not sl.get('entry_type') for sl in mb.get('source_line_items', []))
-                    source_type = "MIXED" if len(entry_types) > 1 or has_actual else entry_types.pop()
+                    row = (
+                        str(mb.get('property_id', '')),
+                        str(mb.get('ar_code_mapping', '')),
+                        str(mb.get('utility_name', '')),
+                        str(mb.get('utility_amount', 0)),  # Keep as string to match existing schema
+                        str(mb.get('billback_month_start', '')),
+                        str(mb.get('billback_month_end', '')),
+                        str(run_date),
+                        str(memo),
+                        str(batch_id),  # Batch_ID for traceability
+                        source_type  # Source_Type: NULL=ACTUAL, ACCRUAL, MANUAL, TRUE-UP, MIXED
+                    )
+                    rows_to_insert.append(row)
 
-            row = (
-                str(mb.get('property_id', '')),
-                str(mb.get('ar_code_mapping', '')),
-                str(mb.get('utility_name', '')),
-                str(mb.get('utility_amount', 0)),  # Keep as string to match existing schema
-                str(mb.get('billback_month_start', '')),
-                str(mb.get('billback_month_end', '')),
-                str(run_date),
-                str(memo),
-                str(batch_id),  # Batch_ID for traceability
-                source_type  # Source_Type: NULL=ACTUAL, ACCRUAL, MANUAL, TRUE-UP, MIXED
-            )
-            rows_to_insert.append(row)
+                # Insert into Snowflake (with Source_Type column)
+                insert_sql = """
+                INSERT INTO "_Master_Bills_Prod"
+                ("Property_ID", "AR_Code_Mapping", "Utility_Name", "Utility_Amount",
+                 "Billback_Month_Start", "Billback_Month_End", "RunDate", "Memo", "Batch_ID",
+                 "Source_Type")
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
 
-        # Insert into Snowflake (with Source_Type column)
-        insert_sql = """
-        INSERT INTO "_Master_Bills_Prod"
-        ("Property_ID", "AR_Code_Mapping", "Utility_Name", "Utility_Amount",
-         "Billback_Month_Start", "Billback_Month_End", "RunDate", "Memo", "Batch_ID",
-         "Source_Type")
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
+                cursor.executemany(insert_sql, rows_to_insert)
+                conn.commit()
 
-        cursor.executemany(insert_sql, rows_to_insert)
-        conn.commit()
-
-        rows_inserted = len(rows_to_insert)
-
-        cursor.close()
-        conn.close()
-
-        print(f"[SNOWFLAKE] Successfully inserted {rows_inserted} rows for batch {batch_id}")
-        return True, f"Inserted {rows_inserted} rows", rows_inserted
+                rows_inserted = len(rows_to_insert)
+                print(f"[SNOWFLAKE] Successfully inserted {rows_inserted} rows for batch {batch_id}")
+                return True, f"Inserted {rows_inserted} rows", rows_inserted
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
 
     except Exception as e:
         print(f"[SNOWFLAKE] Error writing to Snowflake: {e}")
@@ -16909,19 +16944,23 @@ def _read_historical_from_snowflake(property_id: str, account_number: str, charg
 
         conn = _snowflake_connect(credentials)
 
-        cursor = conn.cursor()
-        query = """
-        SELECT "Billback_Month_Start", "Utility_Amount"
-        FROM "_Master_Bills_Prod"
-        WHERE "Property_ID" = %s
-          AND "AR_Code_Mapping" = %s
-          AND "Utility_Name" = %s
-        ORDER BY "Billback_Month_Start" ASC
-        """
-        cursor.execute(query, (property_id, charge_code, utility_name))
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            try:
+                query = """
+                SELECT "Billback_Month_Start", "Utility_Amount"
+                FROM "_Master_Bills_Prod"
+                WHERE "Property_ID" = %s
+                  AND "AR_Code_Mapping" = %s
+                  AND "Utility_Name" = %s
+                ORDER BY "Billback_Month_Start" ASC
+                """
+                cursor.execute(query, (property_id, charge_code, utility_name))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
 
         results = []
         for row in rows:
@@ -16983,25 +17022,29 @@ def _load_invoice_history_cache():
 
         conn = _snowflake_connect(credentials)
 
-        cursor = conn.cursor()
-        query = """
-        SELECT VENDOR_NAME, PROPERTY_CODE, PROPERTY_NAME,
-               GL_ACCOUNT, GL_ACCOUNT_NAME, POST_MONTH,
-               SUM(AMOUNT) as TOTAL_AMOUNT,
-               COUNT(*) as LINE_COUNT,
-               INVOICE_NUMBER
-        FROM RAW.ENTRATA.INVOICES_MAT
-        WHERE POST_MONTH >= '2024-01-01'
-          AND AMOUNT IS NOT NULL
-        GROUP BY VENDOR_NAME, PROPERTY_CODE, PROPERTY_NAME,
-                 GL_ACCOUNT, GL_ACCOUNT_NAME, POST_MONTH,
-                 INVOICE_NUMBER
-        ORDER BY PROPERTY_CODE, VENDOR_NAME, POST_MONTH
-        """
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            try:
+                query = """
+                SELECT VENDOR_NAME, PROPERTY_CODE, PROPERTY_NAME,
+                       GL_ACCOUNT, GL_ACCOUNT_NAME, POST_MONTH,
+                       SUM(AMOUNT) as TOTAL_AMOUNT,
+                       COUNT(*) as LINE_COUNT,
+                       INVOICE_NUMBER
+                FROM RAW.ENTRATA.INVOICES_MAT
+                WHERE POST_MONTH >= '2024-01-01'
+                  AND AMOUNT IS NOT NULL
+                GROUP BY VENDOR_NAME, PROPERTY_CODE, PROPERTY_NAME,
+                         GL_ACCOUNT, GL_ACCOUNT_NAME, POST_MONTH,
+                         INVOICE_NUMBER
+                ORDER BY PROPERTY_CODE, VENDOR_NAME, POST_MONTH
+                """
+                cursor.execute(query)
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
 
         # Step 3: Index into nested dicts (both vendor-level and account-level)
         data = {}  # {property_code: {vendor_name_lower: [records]}}
@@ -17764,16 +17807,22 @@ def _ddb_list_check_slips_by_status_date(status: str, date_str: str) -> list[dic
     """List check slips by status and date (uses GSI)."""
     try:
         # Scan with filter (since we may not have GSI yet, use scan)
-        resp = ddb.scan(
-            TableName=CHECK_SLIPS_TABLE,
-            FilterExpression="#st = :status AND created_date = :date",
-            ExpressionAttributeNames={"#st": "status"},
-            ExpressionAttributeValues={
+        items = []
+        scan_params = {
+            "TableName": CHECK_SLIPS_TABLE,
+            "FilterExpression": "#st = :status AND created_date = :date",
+            "ExpressionAttributeNames": {"#st": "status"},
+            "ExpressionAttributeValues": {
                 ":status": {"S": status},
                 ":date": {"S": date_str}
             }
-        )
-        items = resp.get("Items", [])
+        }
+        while True:
+            resp = ddb.scan(**scan_params)
+            items.extend(resp.get("Items", []))
+            if "LastEvaluatedKey" not in resp:
+                break
+            scan_params["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
         result = []
         for item in items:
             pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
@@ -17825,8 +17874,13 @@ def _ddb_list_check_slips_by_user(created_by: str, status: str = "") -> list[dic
         if expr_names:
             scan_params["ExpressionAttributeNames"] = expr_names
 
-        resp = ddb.scan(**scan_params)
-        items = resp.get("Items", [])
+        items = []
+        while True:
+            resp = ddb.scan(**scan_params)
+            items.extend(resp.get("Items", []))
+            if "LastEvaluatedKey" not in resp:
+                break
+            scan_params["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
         result = []
         for item in items:
             pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
@@ -17912,12 +17966,18 @@ def _ddb_get_invoices_in_check_slips() -> set[str]:
 def _ddb_list_all_check_slips_for_date(date_str: str) -> list[dict]:
     """List all check slips (any status) for a given date."""
     try:
-        resp = ddb.scan(
-            TableName=CHECK_SLIPS_TABLE,
-            FilterExpression="created_date = :date",
-            ExpressionAttributeValues={":date": {"S": date_str}}
-        )
-        items = resp.get("Items", [])
+        items = []
+        scan_params = {
+            "TableName": CHECK_SLIPS_TABLE,
+            "FilterExpression": "created_date = :date",
+            "ExpressionAttributeValues": {":date": {"S": date_str}}
+        }
+        while True:
+            resp = ddb.scan(**scan_params)
+            items.extend(resp.get("Items", []))
+            if "LastEvaluatedKey" not in resp:
+                break
+            scan_params["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
         result = []
         for item in items:
             pdf_errors_str = item.get("pdf_errors", {}).get("S", "[]")
@@ -18516,7 +18576,7 @@ async def api_add_to_ubi(request: Request, user: str = Depends(require_user)):
 
 # -------- UBI Account Management --------
 @app.post("/api/ubi/add-to-tracker")
-async def api_add_to_tracker(request: Request, user: str = Depends(require_user)):
+async def api_ubi_add_to_tracker(request: Request, user: str = Depends(require_user)):
     """Add account to tracker (monitoring only) - sets is_tracked=true, is_ubi=false"""
     try:
         form = await request.form()
@@ -19583,8 +19643,8 @@ def api_list_master_bills(user: str = Depends(require_user)):
                     # Merge into existing master bill (aggregate)
                     existing = mb_by_key[agg_key]
                     existing['utility_amount'] += _manual_amount
-                    existing['line_items'].append(line_item)
-                    existing['source_line_items'].append(line_item)
+                    existing.setdefault('line_items', []).append(line_item)
+                    existing.setdefault('source_line_items', []).append(line_item)
                     existing['is_manual'] = True  # Mark as having manual entries
                 else:
                     # Create new master bill entry
@@ -20237,10 +20297,27 @@ async def api_override_master_bill_amount(request: Request, user: str = Depends(
                 line["Amount Override By"] = user
                 line["Amount Override Date"] = datetime.utcnow().isoformat()
 
-                # Also update ubi_amount in any assignments
+                # Also update ubi_amount in any assignments — distribute proportionally
                 if line.get("ubi_assignments"):
-                    for asn in line["ubi_assignments"]:
-                        asn["amount"] = new_amount
+                    assignments = line["ubi_assignments"]
+                    n = len(assignments)
+                    if n == 1:
+                        assignments[0]["amount"] = new_amount
+                    elif n > 1:
+                        old_total = sum(float(a.get("amount", 0)) for a in assignments)
+                        if old_total and old_total != 0:
+                            # Proportional split based on original distribution
+                            for asn in assignments:
+                                ratio = float(asn.get("amount", 0)) / old_total
+                                asn["amount"] = round(ratio * new_amount, 2)
+                        else:
+                            # Equal split if no prior distribution
+                            per_period = round(new_amount / n, 2)
+                            for asn in assignments:
+                                asn["amount"] = per_period
+                        # Fix rounding: adjust last assignment so sum == new_amount
+                        assigned_sum = sum(float(a["amount"]) for a in assignments[:-1])
+                        assignments[-1]["amount"] = round(new_amount - assigned_sum, 2)
                 if line.get("ubi_amount"):
                     line["ubi_amount"] = new_amount
 
@@ -20537,7 +20614,7 @@ def api_list_manual_entries(
 
 
 @app.delete("/api/master-bills/manual-entry/{entry_id}")
-def api_delete_manual_entry(entry_id: str, user: str = Depends(require_user)):
+def api_delete_manual_entry(entry_id: str, user: str = Depends(require_admin)):
     """Delete a single manual billback entry (tries both tables)."""
     try:
         ddb.delete_item(
@@ -20564,7 +20641,7 @@ def api_delete_manual_entry(entry_id: str, user: str = Depends(require_user)):
 
 
 @app.delete("/api/master-bills/manual-batch/{batch_id}")
-def api_delete_manual_batch(batch_id: str, user: str = Depends(require_user)):
+def api_delete_manual_batch(batch_id: str, user: str = Depends(require_admin)):
     """Delete all entries from a manual upload batch."""
     try:
         # Scan for all entries with this batch_id
@@ -21219,11 +21296,7 @@ def api_accrual_calculate(property_id: str = "", account_number: str = "", vendo
 
         print(f"[ACCRUAL CALC] property_id={property_id}, account={account_number}, vendor={vendor_name}, period={period}")
 
-        accounts_track = _ddb_get_config("accounts-to-track")
-        if accounts_track is None:
-            accounts_track = _s3_get_json(CONFIG_BUCKET, ACCOUNTS_TRACK_KEY)
-        if not isinstance(accounts_track, list):
-            accounts_track = []
+        accounts_track = _get_accounts_to_track()
 
         charge_code = ""
         utility_name = ""
@@ -21530,26 +21603,8 @@ def api_accrual_entries(period: str = "", user: str = Depends(require_user)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/accrual/entry")
-def api_accrual_delete(entry_id: str = "", user: str = Depends(require_user)):
-    """Delete a manual/accrual entry by entry_id."""
-    try:
-        if not entry_id:
-            return JSONResponse({"error": "entry_id required"}, status_code=400)
-
-        ddb.delete_item(
-            TableName=MANUAL_ENTRIES_TABLE,
-            Key={"entry_id": {"S": entry_id}}
-        )
-
-        print(f"[ACCRUAL DELETE] Deleted entry {entry_id} by {user}")
-        return {"ok": True}
-
-    except Exception as e:
-        print(f"[ACCRUAL DELETE] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
+# (Removed duplicate /api/accrual/entry DELETE — use /api/accrual/entry/{entry_id} instead,
+#  which deletes from both tables and busts caches)
 
 
 # -------- UBI Batches --------
@@ -23517,11 +23572,10 @@ def api_delete_preentrata(key: str = Form(...), user: str = Depends(require_user
                 orig_key = rec.get("__s3_key__", "")
                 row_idx = rec.get("__row_idx__", 0)
                 if orig_key:
-                    line_id = line_id_from(orig_key, row_idx)
+                    line_id = f"{orig_key}#{row_idx}"
                     # Delete from review table to clear Submitted status
-                    review_pk = f"review#{line_id}"
                     try:
-                        ddb.delete_item(TableName=REVIEW_TABLE, Key={"pk": {"S": review_pk}})
+                        ddb.delete_item(TableName=REVIEW_TABLE, Key={"pk": {"S": line_id}})
                         cleared_count += 1
                     except Exception:
                         pass
@@ -23832,8 +23886,13 @@ def api_delete_parsed(date: str = Form(...), pdf_ids: str = Form(...), user: str
                     invoice_signatures.add(sig)
 
             day_prefix = f"{PRE_ENTRATA_PREFIX}yyyy={y}/mm={m}/dd={d}/"
-            resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=day_prefix)
-            s6_keys_to_check = [obj.get("Key", "") for obj in (resp.get("Contents", []) or []) if obj.get("Key", "").endswith(".jsonl")]
+            s6_keys_to_check = []
+            s6_pag = s3.get_paginator('list_objects_v2')
+            for s6_pg in s6_pag.paginate(Bucket=BUCKET, Prefix=day_prefix):
+                for obj in s6_pg.get("Contents", []) or []:
+                    k = obj.get("Key", "")
+                    if k.endswith(".jsonl"):
+                        s6_keys_to_check.append(k)
 
             # Parallel S3 reads to check Stage 6 file signatures
             # IMPORTANT: Also verify source_input_key matches one of the deleted S3 keys
@@ -24315,48 +24374,49 @@ def api_bulk_rework(
                     invoice_signatures.add(sig)
 
                 day_prefix = f"{PRE_ENTRATA_PREFIX}yyyy={y}/mm={m}/dd={d}/"
-                resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=day_prefix)
-                for obj in resp.get("Contents", []) or []:
-                    s6_key = obj.get("Key", "")
-                    if not s6_key.endswith(".jsonl"):
-                        continue
-                    try:
-                        # Read Stage 6 file to check if it matches any reworked invoice
-                        s6_content = _read_s3_text(BUCKET, s6_key)
-                        lines = [l for l in s6_content.strip().split('\n') if l.strip()] if s6_content else []
-                        if lines:
-                            first_rec = json.loads(lines[0])
-                            # IMPORTANT: Also verify source_input_key matches one of the deleted keys
-                            # This prevents deleting Stage 6 files for TRUE DUPLICATES where user
-                            # submitted one copy and is reworking the other copy
-                            s6_source_key = first_rec.get("source_input_key", "") or first_rec.get("__s3_key__", "")
-                            if s6_source_key not in keys_to_delete:
-                                # This Stage 6 file came from a DIFFERENT source file (true duplicate)
-                                # Don't delete it - the user only wants to rework one copy
-                                continue
-                            s6_sig = (
-                                str(first_rec.get("Account Number", "")).strip(),
-                                str(first_rec.get("Bill Period Start", "")).strip(),
-                                str(first_rec.get("Bill Period End", "")).strip(),
-                                str(first_rec.get("Bill Date", "")).strip(),
-                            )
-                            # Only delete if signature matches one of the reworked invoices
-                            if s6_sig in invoice_signatures:
-                                # Clear DynamoDB status for each line in the Stage 6 file
-                                for line in lines:
-                                    try:
-                                        rec = json.loads(line)
-                                        orig_key = rec.get("__s3_key__", "")
-                                        row_idx = rec.get("__row_idx__", 0)
-                                        if orig_key:
-                                            line_id = f"{orig_key}#{row_idx}"
-                                            ddb.delete_item(TableName=REVIEW_TABLE, Key={"pk": {"S": line_id}})
-                                    except Exception:
-                                        pass
-                                # Delete the Stage 6 file
-                                s3.delete_object(Bucket=BUCKET, Key=s6_key)
-                    except Exception:
-                        pass
+                s6_paginator = s3.get_paginator('list_objects_v2')
+                for s6_page in s6_paginator.paginate(Bucket=BUCKET, Prefix=day_prefix):
+                    for obj in s6_page.get("Contents", []) or []:
+                        s6_key = obj.get("Key", "")
+                        if not s6_key.endswith(".jsonl"):
+                            continue
+                        try:
+                            # Read Stage 6 file to check if it matches any reworked invoice
+                            s6_content = _read_s3_text(BUCKET, s6_key)
+                            lines = [l for l in s6_content.strip().split('\n') if l.strip()] if s6_content else []
+                            if lines:
+                                first_rec = json.loads(lines[0])
+                                # IMPORTANT: Also verify source_input_key matches one of the deleted keys
+                                # This prevents deleting Stage 6 files for TRUE DUPLICATES where user
+                                # submitted one copy and is reworking the other copy
+                                s6_source_key = first_rec.get("source_input_key", "") or first_rec.get("__s3_key__", "")
+                                if s6_source_key not in keys_to_delete:
+                                    # This Stage 6 file came from a DIFFERENT source file (true duplicate)
+                                    # Don't delete it - the user only wants to rework one copy
+                                    continue
+                                s6_sig = (
+                                    str(first_rec.get("Account Number", "")).strip(),
+                                    str(first_rec.get("Bill Period Start", "")).strip(),
+                                    str(first_rec.get("Bill Period End", "")).strip(),
+                                    str(first_rec.get("Bill Date", "")).strip(),
+                                )
+                                # Only delete if signature matches one of the reworked invoices
+                                if s6_sig in invoice_signatures:
+                                    # Clear DynamoDB status for each line in the Stage 6 file
+                                    for line in lines:
+                                        try:
+                                            rec = json.loads(line)
+                                            orig_key = rec.get("__s3_key__", "")
+                                            row_idx = rec.get("__row_idx__", 0)
+                                            if orig_key:
+                                                line_id = f"{orig_key}#{row_idx}"
+                                                ddb.delete_item(TableName=REVIEW_TABLE, Key={"pk": {"S": line_id}})
+                                        except Exception:
+                                            pass
+                                    # Delete the Stage 6 file
+                                    s3.delete_object(Bucket=BUCKET, Key=s6_key)
+                        except Exception:
+                            pass
 
             sent_count += 1
 
@@ -24708,49 +24768,50 @@ def api_rework(
                 invoice_signatures.add(sig)
 
             day_prefix = f"{PRE_ENTRATA_PREFIX}yyyy={y}/mm={m}/dd={d}/"
-            resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=day_prefix)
-            for obj in resp.get("Contents", []) or []:
-                s6_key = obj.get("Key", "")
-                if not s6_key.endswith(".jsonl"):
-                    continue
-                try:
-                    # Read Stage 6 file to check if it matches any reworked invoice
-                    s6_content = _read_s3_text(BUCKET, s6_key)
-                    lines = [l for l in s6_content.strip().split('\n') if l.strip()] if s6_content else []
-                    if lines:
-                        first_rec = json.loads(lines[0])
-                        # IMPORTANT: Also verify source_input_key matches one of the deleted keys
-                        # This prevents deleting Stage 6 files for TRUE DUPLICATES where user
-                        # submitted one copy and is reworking the other copy
-                        s6_source_key = first_rec.get("source_input_key", "") or first_rec.get("__s3_key__", "")
-                        if s6_source_key not in keys:
-                            # This Stage 6 file came from a DIFFERENT source file (true duplicate)
-                            # Don't delete it - the user only wants to rework one copy
-                            continue
-                        s6_sig = (
-                            str(first_rec.get("Account Number", "")).strip(),
-                            str(first_rec.get("Bill Period Start", "")).strip(),
-                            str(first_rec.get("Bill Period End", "")).strip(),
-                            str(first_rec.get("Bill Date", "")).strip(),
-                        )
-                        # Only delete if signature matches one of the reworked invoices
-                        if s6_sig in invoice_signatures:
-                            # Clear DynamoDB status for each line in the Stage 6 file
-                            for line in lines:
-                                try:
-                                    rec = json.loads(line)
-                                    orig_key = rec.get("__s3_key__", "")
-                                    row_idx = rec.get("__row_idx__", 0)
-                                    if orig_key:
-                                        line_id = f"{orig_key}#{row_idx}"
-                                        ddb.delete_item(TableName=REVIEW_TABLE, Key={"pk": {"S": line_id}})
-                                except Exception:
-                                    pass
-                            # Delete the Stage 6 file
-                            s3.delete_object(Bucket=BUCKET, Key=s6_key)
-                            deleted += 1
-                except Exception:
-                    pass
+            s6_paginator = s3.get_paginator('list_objects_v2')
+            for s6_page in s6_paginator.paginate(Bucket=BUCKET, Prefix=day_prefix):
+                for obj in s6_page.get("Contents", []) or []:
+                    s6_key = obj.get("Key", "")
+                    if not s6_key.endswith(".jsonl"):
+                        continue
+                    try:
+                        # Read Stage 6 file to check if it matches any reworked invoice
+                        s6_content = _read_s3_text(BUCKET, s6_key)
+                        lines = [l for l in s6_content.strip().split('\n') if l.strip()] if s6_content else []
+                        if lines:
+                            first_rec = json.loads(lines[0])
+                            # IMPORTANT: Also verify source_input_key matches one of the deleted keys
+                            # This prevents deleting Stage 6 files for TRUE DUPLICATES where user
+                            # submitted one copy and is reworking the other copy
+                            s6_source_key = first_rec.get("source_input_key", "") or first_rec.get("__s3_key__", "")
+                            if s6_source_key not in keys:
+                                # This Stage 6 file came from a DIFFERENT source file (true duplicate)
+                                # Don't delete it - the user only wants to rework one copy
+                                continue
+                            s6_sig = (
+                                str(first_rec.get("Account Number", "")).strip(),
+                                str(first_rec.get("Bill Period Start", "")).strip(),
+                                str(first_rec.get("Bill Period End", "")).strip(),
+                                str(first_rec.get("Bill Date", "")).strip(),
+                            )
+                            # Only delete if signature matches one of the reworked invoices
+                            if s6_sig in invoice_signatures:
+                                # Clear DynamoDB status for each line in the Stage 6 file
+                                for line in lines:
+                                    try:
+                                        rec = json.loads(line)
+                                        orig_key = rec.get("__s3_key__", "")
+                                        row_idx = rec.get("__row_idx__", 0)
+                                        if orig_key:
+                                            line_id = f"{orig_key}#{row_idx}"
+                                            ddb.delete_item(TableName=REVIEW_TABLE, Key={"pk": {"S": line_id}})
+                                    except Exception:
+                                        pass
+                                # Delete the Stage 6 file
+                                s3.delete_object(Bucket=BUCKET, Key=s6_key)
+                                deleted += 1
+                    except Exception:
+                        pass
         # Invalidate cache for this day so UI reflects deletions immediately
         try:
             invalidate_day_cache(y, m, d)
@@ -24782,6 +24843,17 @@ def get_status_map(ids: List[str]) -> Dict[str, Dict[str, str]]:
             submitted_at = item.get("submitted_at", {}).get("S", "")
             if pk:
                 out[pk] = {"status": status, "submitted_at": submitted_at}
+        # Retry any unprocessed keys (DDB throttling)
+        unprocessed = resp.get("UnprocessedKeys", {}).get(REVIEW_TABLE, {}).get("Keys", [])
+        while unprocessed:
+            retry_resp = ddb.batch_get_item(RequestItems={REVIEW_TABLE: {"Keys": unprocessed}})
+            for item in retry_resp.get("Responses", {}).get(REVIEW_TABLE, []):
+                pk = item.get("pk", {}).get("S")
+                status = item.get("status", {}).get("S", "")
+                submitted_at = item.get("submitted_at", {}).get("S", "")
+                if pk:
+                    out[pk] = {"status": status, "submitted_at": submitted_at}
+            unprocessed = retry_resp.get("UnprocessedKeys", {}).get(REVIEW_TABLE, {}).get("Keys", [])
     return out
 
 
@@ -25194,7 +25266,8 @@ def _infer_pdf_key_for_doc(y: str, m: str, d: str, rows: List[Dict[str, Any]], p
                 return best[0]
             # Fuzzy: any PARSED_INPUTS PDF containing orig_base in filename
             best = (None, None)
-            for page in pi.paginate(Bucket=BUCKET, Prefix=PARSED_INPUTS_PREFIX):
+            pi2 = s3.get_paginator("list_objects_v2")
+            for page in pi2.paginate(Bucket=BUCKET, Prefix=PARSED_INPUTS_PREFIX):
                 for obj in page.get("Contents", []) or []:
                     k = obj.get("Key", ""); lm = obj.get("LastModified")
                     base = os.path.basename(k).lower()
@@ -25205,7 +25278,8 @@ def _infer_pdf_key_for_doc(y: str, m: str, d: str, rows: List[Dict[str, Any]], p
                 return best[0]
             # Fuzzy: any REWORK PDF containing orig_base in filename
             best = (None, None)
-            for page in rp.paginate(Bucket=BUCKET, Prefix=REWORK_PREFIX):
+            rp2 = s3.get_paginator("list_objects_v2")
+            for page in rp2.paginate(Bucket=BUCKET, Prefix=REWORK_PREFIX):
                 for obj in page.get("Contents", []) or []:
                     k = obj.get("Key", ""); lm = obj.get("LastModified")
                     base = os.path.basename(k).lower()
@@ -25609,7 +25683,10 @@ def api_dates(user: str = Depends(require_user)):
 
 @app.get("/api/day")
 def api_day(date: str, user: str = Depends(require_user), response: Response = None):
-    y, m, d = date.split("-")
+    try:
+        y, m, d = date.split("-")
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format, expected YYYY-MM-DD"}, status_code=400)
     rows = load_day(y, m, d)
     try:
         if response is not None:
@@ -25621,7 +25698,10 @@ def api_day(date: str, user: str = Depends(require_user), response: Response = N
 
 @app.get("/api/invoices")
 def api_invoices(date: str, user: str = Depends(require_user), response: Response = None):
-    y, m, d = date.split("-")
+    try:
+        y, m, d = date.split("-")
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format, expected YYYY-MM-DD"}, status_code=400)
     rows = load_day(y, m, d)
     # Build id list to fetch statuses so we can exclude Deleted lines from counts
     id_list: List[str] = [str(r.get("__id__")) for r in rows if r.get("__id__")]
@@ -29157,18 +29237,19 @@ def api_billback_report_periods(user: str = Depends(require_user)):
         prefixes_to_scan = []
         today = datetime.now()
 
-        # Check last 18 months
-        for i in range(18 * 31):
-            d = today - timedelta(days=i)
-            prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append(prefix)
-
-        prefixes_to_scan = list(set(prefixes_to_scan))
+        # Check last 18 months — use month-level prefixes (18 instead of 558 day-level)
+        seen_months = set()
+        for i in range(18):
+            d = today - timedelta(days=i * 30)
+            month_prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/"
+            if month_prefix not in seen_months:
+                seen_months.add(month_prefix)
+                prefixes_to_scan.append(month_prefix)
 
         # Quick scan to find which months have data
         periods_with_data = set()
 
-        for prefix in prefixes_to_scan[:100]:  # Sample first 100 prefixes
+        for prefix in prefixes_to_scan:
             try:
                 response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix, MaxKeys=5)
                 if response.get('Contents'):
@@ -30710,23 +30791,33 @@ def api_knowledge_list(
             )
             items = resp.get("Items", [])
         elif search:
-            # Scan with filter for search term (not efficient but works for small datasets)
-            resp = ddb.scan(
-                TableName=KNOWLEDGE_TABLE,
-                FilterExpression="contains(content, :search) OR contains(entity_name, :search)",
-                ExpressionAttributeValues={":search": {"S": search}},
-                Limit=limit
-            )
-            items = resp.get("Items", [])
+            # Scan with filter for search term — paginate until we have enough results
+            scan_params = {
+                "TableName": KNOWLEDGE_TABLE,
+                "FilterExpression": "contains(content, :search) OR contains(entity_name, :search)",
+                "ExpressionAttributeValues": {":search": {"S": search}},
+            }
+            while len(items) < limit:
+                resp = ddb.scan(**scan_params)
+                items.extend(resp.get("Items", []))
+                if "LastEvaluatedKey" not in resp:
+                    break
+                scan_params["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+            items = items[:limit]
         elif entity_type:
             # Scan for all of an entity type
-            resp = ddb.scan(
-                TableName=KNOWLEDGE_TABLE,
-                FilterExpression="entity_type = :et",
-                ExpressionAttributeValues={":et": {"S": entity_type}},
-                Limit=limit
-            )
-            items = resp.get("Items", [])
+            scan_params = {
+                "TableName": KNOWLEDGE_TABLE,
+                "FilterExpression": "entity_type = :et",
+                "ExpressionAttributeValues": {":et": {"S": entity_type}},
+            }
+            while len(items) < limit:
+                resp = ddb.scan(**scan_params)
+                items.extend(resp.get("Items", []))
+                if "LastEvaluatedKey" not in resp:
+                    break
+                scan_params["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+            items = items[:limit]
         else:
             # Get recent notes across all entities
             resp = ddb.scan(
@@ -30962,7 +31053,7 @@ async def api_knowledge_delete(
         author = item.get("author", {}).get("S", "")
 
         # Only author or admin can delete
-        is_admin = user in ("cbeach@jrkholding.com", "admin")  # TODO: proper admin check
+        is_admin = user in ADMIN_USERS
         if user != author and not is_admin:
             return JSONResponse({"error": "Only the author or admin can delete this note"}, status_code=403)
 
@@ -33307,12 +33398,12 @@ def api_submeter_rates_generate(ubi_period: str = "03/2026", bust_cache: str = "
             return cached.get("data")
 
     # If already running for same period, just acknowledge
-    if st["running"] and st["ubi_period"] == ubi_period:
-        return {"ok": True, "status": "running", "progress": st["progress"],
-                "files_total": st["files_total"], "files_done": st["files_done"]}
-
-    # Reset state and kick off background thread
     with _SUBMETER_RATES_LOCK:
+        if st["running"] and st["ubi_period"] == ubi_period:
+            return {"ok": True, "status": "running", "progress": st["progress"],
+                    "files_total": st["files_total"], "files_done": st["files_done"]}
+
+        # Reset state and kick off background thread
         st["running"] = True
         st["ubi_period"] = ubi_period
         st["progress"] = "Starting..."

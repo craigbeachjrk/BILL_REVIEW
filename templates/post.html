@@ -834,8 +834,8 @@
             valA = parseInt(valA) || 0;
             valB = parseInt(valB) || 0;
           } else if (dataType === 'currency') {
-            valA = parseFloat(valA.replace(/[$,\.\.\.]/g, '')) || 0;
-            valB = parseFloat(valB.replace(/[$,\.\.\.]/g, '')) || 0;
+            valA = parseFloat(valA.replace(/[$,]/g, '')) || 0;
+            valB = parseFloat(valB.replace(/[$,]/g, '')) || 0;
           } else if (dataType === 'date') {
             valA = new Date(valA).getTime() || 0;
             valB = new Date(valB).getTime() || 0;

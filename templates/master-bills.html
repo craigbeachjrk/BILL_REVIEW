@@ -732,6 +732,11 @@
       return duplicateInfo;
     }
 
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     function renderMasterBills() {
       const container = document.getElementById('masterBillsTable');
       const sortedBills = getSortedMasterBills();
@@ -804,10 +809,10 @@
         html += `
           <tr${rowBg}>
             <td onclick="event.stopPropagation()"><input type="checkbox" class="mb-select" value="${mb.master_bill_id.replace(/"/g, '&quot;')}" onchange="updateReclassifyBtn()"></td>
-            <td>${mb.property_name || 'N/A'} ${duplicateBadge} ${manualBadge} ${accrualBadge}</td>
-            <td style="font-size:11px;color:#64748b">${mb.property_lookup_code || ''}</td>
-            <td>${chargeCodeDisplay}</td>
-            <td>${mb.utility_name || 'N/A'}</td>
+            <td>${escapeHtml(mb.property_name) || 'N/A'} ${duplicateBadge} ${manualBadge} ${accrualBadge}</td>
+            <td style="font-size:11px;color:#64748b">${escapeHtml(mb.property_lookup_code) || ''}</td>
+            <td>${escapeHtml(chargeCodeDisplay)}</td>
+            <td>${escapeHtml(mb.utility_name) || 'N/A'}</td>
             <td>${mb.billback_month_start || 'N/A'}</td>
             <td>${mb.billback_month_end || 'N/A'}</td>
             <td style="font-weight:600;color:#0ea5e9">$${(mb.utility_amount || 0).toFixed(2)}</td>

@@ -155,13 +155,13 @@ def _to_ddb_item(obj, pk: str, sk: str) -> Dict[str, Dict]:
     """Convert a dataclass to a DynamoDB item with PK/SK."""
     item = {'pk': {'S': pk}, 'sk': {'S': sk}}
     for k, v in asdict(obj).items():
-        if isinstance(v, str):
+        if isinstance(v, bool):
+            item[k] = {'BOOL': v}
+        elif isinstance(v, str):
             if v:  # skip empty strings (DDB doesn't allow empty S)
                 item[k] = {'S': v}
         elif isinstance(v, (int, float)):
             item[k] = {'N': str(v)}
-        elif isinstance(v, bool):
-            item[k] = {'BOOL': v}
     return item
 
 
@@ -281,7 +281,11 @@ class VEBatchStore:
             for i in range(0, len(items), 25):
                 chunk = items[i:i + 25]
                 requests = [{'DeleteRequest': {'Key': {'pk': it['pk'], 'sk': it['sk']}}} for it in chunk]
-                self.ddb.batch_write_item(RequestItems={self.table: requests})
+                resp_bw = self.ddb.batch_write_item(RequestItems={self.table: requests})
+                unprocessed = resp_bw.get('UnprocessedItems', {}).get(self.table, [])
+                while unprocessed:
+                    resp_bw = self.ddb.batch_write_item(RequestItems={self.table: unprocessed})
+                    unprocessed = resp_bw.get('UnprocessedItems', {}).get(self.table, [])
                 deleted += len(chunk)
             last_key = resp.get('LastEvaluatedKey')
             if not last_key:
@@ -307,7 +311,11 @@ class VEBatchStore:
                 sk = f"LINE#{line.line_id}"
                 item = _to_ddb_item(line, pk, sk)
                 requests.append({'PutRequest': {'Item': item}})
-            self.ddb.batch_write_item(RequestItems={self.table: requests})
+            resp_bw = self.ddb.batch_write_item(RequestItems={self.table: requests})
+            unprocessed = resp_bw.get('UnprocessedItems', {}).get(self.table, [])
+            while unprocessed:
+                resp_bw = self.ddb.batch_write_item(RequestItems={self.table: unprocessed})
+                unprocessed = resp_bw.get('UnprocessedItems', {}).get(self.table, [])
 
     def get_line(self, batch_id: str, line_id: str) -> Optional[VELineReview]:
         """Read a single line review record."""

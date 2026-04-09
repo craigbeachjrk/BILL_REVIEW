@@ -910,14 +910,15 @@ def lambda_handler(event, context):
             print(json.dumps({"message": "No valid Gemini keys found in secret; moved to failed", "failed_key": failed_key}))
             continue
 
-        # Rotate over up to 10 attempts, cycling API keys if needed
+        # Outer loop: retry with different API keys on total failure (inner loop handles content retries)
         t_gemini = time.time()
         attempt = 0
         last_error = None
         rows = []
         last_reply = ""  # Initialize to avoid UnboundLocalError
         failed_due_to_columns = False
-        while attempt < MAX_ATTEMPTS:
+        _OUTER_MAX = min(3, len(keys))  # Only retry with different keys, inner loop handles content retries
+        while attempt < _OUTER_MAX:
             attempt += 1
             api_key = keys[(attempt - 1) % len(keys)]  # simple rotation among 3 keys
             try:

@@ -909,7 +909,7 @@ def _enrich_lines(lines: list) -> list:
                 # Only utility GLs (electric, gas, water, sewer) can be swapped by
                 # House/Vacant or utility-affinity guards. Everything else is left alone.
                 _utility_gl_kw = {"electric", "gas", "water", "sewer"}
-                _gbest_nm = _norm_name(gbest.get("name", ""))
+                _gbest_nm = _norm_name((gbest or {}).get("name", ""))
                 _is_non_utility_gl = not any(kw in _gbest_nm for kw in _utility_gl_kw)
 
                 # Final guard: never map to Vacant GL unless House Or Vacant == Vacant

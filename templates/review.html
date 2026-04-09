@@ -770,7 +770,7 @@
     // Helper to apply header draft fields
     function applyHeaderDraft(fields) {
       if (!fields) return;
-      const headerBox = document.querySelector('.header-card');
+      const headerBox = document.getElementById('headerBox');
       if (!headerBox) return;
       for (const [k,v] of Object.entries(fields)) {
         const inp = headerBox.querySelector(`input[name="${k}"]`);
@@ -2901,8 +2901,10 @@
 
       // Handle keyboard events
       document.addEventListener('keydown', function(e) {
-        // Ctrl+D = Delete selected lines (works anywhere)
+        // Ctrl+D = Delete selected lines (only when not in text input)
         if (e.ctrlKey && e.key === 'd') {
+          const tag = (e.target.tagName || '').toLowerCase();
+          if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
           e.preventDefault();
           deleteSelectedLines();
           return;

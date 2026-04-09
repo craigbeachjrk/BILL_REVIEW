@@ -337,6 +337,7 @@
     let html = '';
     filteredVendorData.forEach((vendor, vidx) => {
       const vendorKey = `${vendor.vendor_id}|${vendor.vendor_name}`;
+      const vendorKeyJs = vendorKey.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       if (!selectedInvoices[vendorKey]) selectedInvoices[vendorKey] = new Set();
 
       const vendorCode = vendor.vendor_code ? ` (${vendor.vendor_code})` : '';
@@ -355,12 +356,12 @@
           <div class="vendor-items" id="vendor-items-${vidx}">
             <div class="column-labels">
               <div style="width:20px"></div>
-              <div class="col-property sortable" onclick="sortVendor('${vendorKey}', 'property_name')">Property${getSortArrow(vendorKey, 'property_name')}</div>
-              <div class="col-account sortable" onclick="sortVendor('${vendorKey}', 'account_number')">Account ID${getSortArrow(vendorKey, 'account_number')}</div>
-              <div class="col-date sortable" onclick="sortVendor('${vendorKey}', 'invoice_date')">Bill Date${getSortArrow(vendorKey, 'invoice_date')}</div>
-              <div class="col-service sortable" onclick="sortVendor('${vendorKey}', 'posted_at')">Posted Date${getSortArrow(vendorKey, 'posted_at')}</div>
+              <div class="col-property sortable" onclick="sortVendor('${vendorKeyJs}', 'property_name')">Property${getSortArrow(vendorKey, 'property_name')}</div>
+              <div class="col-account sortable" onclick="sortVendor('${vendorKeyJs}', 'account_number')">Account ID${getSortArrow(vendorKey, 'account_number')}</div>
+              <div class="col-date sortable" onclick="sortVendor('${vendorKeyJs}', 'invoice_date')">Bill Date${getSortArrow(vendorKey, 'invoice_date')}</div>
+              <div class="col-service sortable" onclick="sortVendor('${vendorKeyJs}', 'posted_at')">Posted Date${getSortArrow(vendorKey, 'posted_at')}</div>
               <div class="col-service">Service End</div>
-              <div class="col-amount sortable" onclick="sortVendor('${vendorKey}', 'invoice_total')">Amount${getSortArrow(vendorKey, 'invoice_total')}</div>
+              <div class="col-amount sortable" onclick="sortVendor('${vendorKeyJs}', 'invoice_total')">Amount${getSortArrow(vendorKey, 'invoice_total')}</div>
             </div>
       `;
 
@@ -372,7 +373,7 @@
         html += `
           <div class="invoice-row" data-pdf-id="${inv.pdf_id}">
             <input type="checkbox" class="invoice-checkbox" data-vendor="${vendorKey}" data-pdf-id="${inv.pdf_id}"
-                   ${isChecked ? 'checked' : ''} onchange="toggleInvoice('${vendorKey}', '${inv.pdf_id}')" />
+                   ${isChecked ? 'checked' : ''} onchange="toggleInvoice('${vendorKeyJs}', '${inv.pdf_id}')" />
             <div class="invoice-info">
               <div class="col-property">${escapeHtml(inv.property_name || 'Unknown')}</div>
               <div class="col-account">${escapeHtml(inv.account_number || '-')}</div>
@@ -389,11 +390,11 @@
           </div>
           <div class="vendor-actions">
             <label class="select-all-label">
-              <input type="checkbox" onchange="selectAllVendor('${vendorKey}', this.checked)" />
+              <input type="checkbox" onchange="selectAllVendor('${vendorKeyJs}', this.checked)" />
               Select All
             </label>
             <div style="flex:1"></div>
-            <button class="btn success" onclick="createCheckSlip('${vendorKey}')">Create Check Slip</button>
+            <button class="btn success" onclick="createCheckSlip('${vendorKeyJs}')">Create Check Slip</button>
           </div>
         </div>
       `;
@@ -701,7 +702,7 @@
 
   function escapeHtml(str) {
     if (!str) return '';
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function updateSelectionSummary() {

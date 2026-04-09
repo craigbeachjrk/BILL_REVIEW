@@ -339,11 +339,13 @@ def lambda_handler(event, context):
         print(f"No recipient email found for {notification_type}")
         return {'statusCode': 400, 'body': 'No recipient email'}
 
-    # Format template
+    # Format template — HTML-escape event values to prevent XSS in email clients
+    import html as _html
+    safe_event = {k: _html.escape(str(v)) if isinstance(v, str) else v for k, v in event.items()}
     try:
-        subject = template['subject'].format(**event)
-        html_body = template['html'].format(**event)
-        text_body = template['text'].format(**event)
+        subject = template['subject'].format(**event)  # Subject is plain text, no escaping needed
+        html_body = template['html'].format(**safe_event)
+        text_body = template['text'].format(**event)  # Plain text, no escaping needed
     except KeyError as e:
         print(f"Missing template variable: {e}")
         return {'statusCode': 400, 'body': f'Missing template variable: {e}'}
