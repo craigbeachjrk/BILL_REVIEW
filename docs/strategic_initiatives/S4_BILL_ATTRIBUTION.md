@@ -30,14 +30,14 @@ User clicks "Upload" on INPUT tab -> Presigned URL Lambda
 - [ ] **1.5** Propagate `submitted_by` through router -> parser -> enricher chain
 
 ### Phase 2: Web Upload Attribution
-- [ ] **2.1** Update presigned upload Lambda to accept `submitted_by` parameter
+- [x] **2.1** Update presigned upload Lambda to accept `submitted_by` parameter
 - [ ] **2.2** Update INPUT tab upload flow to pass authenticated user
-- [ ] **2.3** Tag uploaded S3 objects with `submitted_by` metadata
-- [ ] **2.4** Ensure `submitted_by` propagates through pipeline stages
+- [x] **2.3** Tag uploaded S3 objects with `submitted_by` metadata (via x-amz-meta-submitted-by)
+- [x] **2.4** Ensure `submitted_by` propagates through pipeline stages (parser reads S3 metadata, writes to JSONL)
 
 ### Phase 3: User Dashboard
-- [ ] **3.1** Create "My Bills" page — shows all bills submitted by current user
-- [ ] **3.2** Show status per bill: Parsing, Ready for Review, Posted, Failed
+- [x] **3.1** Create "My Bills" page — shows all bills submitted by current user
+- [x] **3.2** Show status per bill: stage badges, latest event, timeline links
 - [ ] **3.3** Real-time updates (poll or WebSocket) so user sees bill appear after scan
 - [ ] **3.4** Add "submitted_by" column to existing invoice/review pages
 - [ ] **3.5** Filter options: "Show only my bills" toggle on PARSE and REVIEW pages

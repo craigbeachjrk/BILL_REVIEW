@@ -26,10 +26,10 @@ Complete visibility into every bill's lifecycle — from email/scan intake throu
 - [ ] **2.4** Add visual stage progression indicator (breadcrumb: Received -> Parsed -> Enriched -> Reviewed -> Posted)
 
 ### Phase 3: Transaction Dashboard
-- [ ] **3.1** Create `/transactions` page with real-time pipeline flow visualization
-- [ ] **3.2** Show bills in-flight per stage with counts and age
+- [x] **3.1** Create `/transactions` page with real-time pipeline flow visualization
+- [x] **3.2** Show bills in-flight per stage with counts and age
 - [ ] **3.3** Alert on bills stuck > threshold (integrate with existing `/api/pipeline/stuck`)
-- [ ] **3.4** Daily transaction summary: received, parsed, posted, failed — by user and by hour
+- [x] **3.4** Daily transaction summary: received, parsed, posted, failed — by user and by hour
 
 ### Phase 4: Alerting
 - [ ] **4.1** SNS topic for critical events (parse failures, stuck bills, duplicate posts)
