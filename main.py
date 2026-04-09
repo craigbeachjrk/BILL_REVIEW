@@ -4047,7 +4047,7 @@ def api_scraper_providers(user: str = Depends(require_user)):
 
         return {"ok": True, "providers": providers}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/api/scraper/accounts/{provider_folder}")
@@ -4132,7 +4132,7 @@ def api_scraper_accounts(provider_folder: str, user: str = Depends(require_user)
 
         return {"ok": True, "accounts": accounts, "provider": display_name}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/api/scraper/pdfs/{provider_folder}/{account_folder:path}")
@@ -4187,7 +4187,7 @@ def api_scraper_pdfs(provider_folder: str, account_folder: str, user: str = Depe
 
         return {"ok": True, "pdfs": pdfs, "provider": provider_name, "account": account_folder}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/api/scraper/all-pdfs/{provider_folder}")
@@ -4287,7 +4287,7 @@ def api_scraper_all_pdfs(provider_folder: str, user: str = Depends(require_user)
             "total_pdfs": len(all_pdfs)
         }
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/scraper/import")
@@ -4348,7 +4348,7 @@ async def api_scraper_import(request: Request, user: str = Depends(require_user)
             "errors": errors
         }
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 # -------- Gemini PDF Date Extraction --------
@@ -4588,7 +4588,7 @@ async def api_scraper_extract_dates(request: Request, user: str = Depends(requir
 
         return {"ok": True, "results": results}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/scraper/save-dates")
@@ -4614,7 +4614,7 @@ async def api_scraper_save_dates(request: Request, user: str = Depends(require_u
         print(f"[SCRAPER SAVE] Saved {saved}/{len(dates_to_save)} date entries, {len(errors)} errors")
         return {"ok": True, "saved": saved, "errors": errors if errors else None}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/scraper/get-cached-dates")
@@ -4635,7 +4635,7 @@ async def api_scraper_get_cached_dates(request: Request, user: str = Depends(req
 
         return {"ok": True, "results": results}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/post", response_class=HTMLResponse)
@@ -18472,7 +18472,7 @@ async def api_update_account_comment(request: Request, user: str = Depends(requi
         return {"ok": True, "comment": comment}
     except Exception as e:
         print(f"[ACCOUNT COMMENT] Error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/config/account-skip-reason")
@@ -18532,7 +18532,7 @@ async def api_update_account_skip_reason(request: Request, user: str = Depends(r
         return {"ok": True, "month": month, "reason": reason}
     except Exception as e:
         print(f"[ACCOUNT SKIP] Error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/config/toggle-ubi-tracking")
@@ -21621,7 +21621,7 @@ def api_accrual_calculate(property_id: str = "", account_number: str = "", vendo
         print(f"[ACCRUAL CALC] Error: {e}")
         import traceback
         traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/api/accrual/cache-stats")
@@ -21722,7 +21722,7 @@ async def api_accrual_create(request: Request, user: str = Depends(require_user)
         print(f"[ACCRUAL CREATE] Error: {e}")
         import traceback
         traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.delete("/api/accrual/entry/{entry_id}")
@@ -21817,7 +21817,7 @@ def api_accrual_entries(period: str = "", user: str = Depends(require_user)):
         print(f"[ACCRUAL ENTRIES] Error: {e}")
         import traceback
         traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 # (Removed duplicate /api/accrual/entry DELETE — use /api/accrual/entry/{entry_id} instead,
@@ -22538,7 +22538,9 @@ def api_debug_exclusion_hashes(user: str = Depends(require_user)):
         }
     except Exception as e:
         import traceback
-        return {"error": str(e), "trace": traceback.format_exc()}
+        import traceback
+        traceback.print_exc()
+        return {"error": _sanitize_error(e, "request")}
 
 
 @app.get("/api/debug/orphaned-stage7")
@@ -27227,7 +27229,8 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        return JSONResponse({"ok": False, "error": str(e), "trace": tb}, status_code=500)
+        print(tb)  # Log trace server-side only
+        return JSONResponse({"ok": False, "error": _sanitize_error(e, "request")}, status_code=500)
 
 
 def _normalize_pdf_orientation(pdf_bytes: bytes) -> bytes:
@@ -29545,7 +29548,7 @@ def api_billback_report_periods(user: str = Depends(require_user)):
 
     except Exception as e:
         print(f"[REPORT PERIODS] Error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 # ============================================================================
@@ -29606,7 +29609,7 @@ def api_portfolio_list(user: str = Depends(require_user)):
         }
     except Exception as e:
         print(f"[PORTFOLIO] Error listing: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/api/portfolio/{property_code}")
@@ -29620,7 +29623,7 @@ def api_portfolio_get(property_code: str, user: str = Depends(require_user)):
         return prop
     except Exception as e:
         print(f"[PORTFOLIO] Error getting {property_code}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/portfolio/upload")
@@ -29733,7 +29736,7 @@ async def api_portfolio_upload(
         print(f"[PORTFOLIO UPLOAD] Error: {e}")
         import traceback
         traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.delete("/api/portfolio/{property_code}")
@@ -29760,7 +29763,7 @@ def api_portfolio_delete(property_code: str, user: str = Depends(require_user)):
 
     except Exception as e:
         print(f"[PORTFOLIO] Error deleting {property_code}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.post("/api/portfolio/clear")
@@ -29778,7 +29781,7 @@ def api_portfolio_clear(user: str = Depends(require_user)):
         return {"ok": True, "message": "Portfolio data cleared"}
     except Exception as e:
         print(f"[PORTFOLIO] Error clearing: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 # ========== PRINT CHECKS & REVIEW CHECKS MODULE ==========
@@ -30248,7 +30251,7 @@ async def api_print_checks_create_slip(
 
     except Exception as e:
         print(f"[PRINT CHECKS] Error creating slip: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 @app.get("/api/print-checks/my-slips")
