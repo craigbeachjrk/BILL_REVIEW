@@ -24045,9 +24045,15 @@ def api_delete_parsed(date: str = Form(...), pdf_ids: str = Form(...), user: str
                     accounts.add(acct)
         if not keys:
             return {"ok": True, "deleted": 0}
-        # delete the objects
+        # Archive then delete — preserve a copy in case of accidental deletion
+        DELETED_ARCHIVE_PREFIX = "Bill_Parser_Deleted_Archive/"
         deleted = 0
         for k in keys:
+            try:
+                archive_key = f"{DELETED_ARCHIVE_PREFIX}{k}"
+                s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": BUCKET, "Key": k}, Key=archive_key)
+            except Exception:
+                pass  # Archive is best-effort — don't block delete
             s3.delete_object(Bucket=BUCKET, Key=k)
             deleted += 1
         # Also delete any Pre-Entrata (Stage 6) files that match the deleted invoices
@@ -26917,15 +26923,20 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                 submit_timestamp = dt.datetime.utcnow().isoformat()
                 merged_with_meta = [{**rec, "Title": title_str, "Status": status_label, "Submitter": user, "SubmittedAt": submit_timestamp} for rec in merged]
 
+                # CRITICAL: Write new file FIRST, then delete old ones.
+                # Previous order (delete then write) could lose bills if write failed.
+                new_s6_key = _write_jsonl(PRE_ENTRATA_PREFIX, y, m, d, basename, merged_with_meta)
+
                 if os.getenv("PRE_ENTRATA_KEEP_ONLY_LATEST", "1") == "1":
                     prefix = f"{PRE_ENTRATA_PREFIX}yyyy={y}/mm={m}/dd={d}/"
-                    resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
-                    for obj in resp.get("Contents", []):
-                        k = obj["Key"]
-                        if account_name in k and due_date and due_date in k:
-                            s3.delete_object(Bucket=BUCKET, Key=k)
-
-                _write_jsonl(PRE_ENTRATA_PREFIX, y, m, d, basename, merged_with_meta)
+                    s6_pag = s3.get_paginator('list_objects_v2')
+                    for s6_pg in s6_pag.paginate(Bucket=BUCKET, Prefix=prefix):
+                        for obj in s6_pg.get("Contents", []):
+                            k = obj["Key"]
+                            if k == new_s6_key:
+                                continue  # Don't delete the file we just wrote
+                            if account_name in k and due_date and due_date in k:
+                                s3.delete_object(Bucket=BUCKET, Key=k)
 
                 # Pipeline tracker: SUBMITTED event
                 s3_key = first.get("__s3_key__", "")
