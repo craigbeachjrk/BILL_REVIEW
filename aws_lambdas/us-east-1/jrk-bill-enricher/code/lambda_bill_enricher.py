@@ -1066,32 +1066,47 @@ def lambda_handler(event, context):
             "sourceKey": key,
         }
 
-        obj = s3.get_object(Bucket=bucket, Key=key)
-        body = obj["Body"].read().decode("utf-8", errors="ignore")
-        lines = [ln for ln in body.splitlines() if ln.strip()]
-        timing["lineCount"] = len(lines)
-
-        t_enrich = time.time()
-        enriched_lines = _enrich_lines(lines)
-        timing["enrichMs"] = int((time.time() - t_enrich) * 1000)
-        timing["success"] = True
-
-        # Write to stage 4 with same partitioning and file stem
-        stem = key.split("/", 1)[-1]  # drop prefix
-        out_key = f"{OUTPUT_PREFIX}{stem}"
-        s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
-        _pipeline_track(key, "ENRICHED", "lambda:enricher", "S4", {
-            "out_key": out_key, "lines": len(enriched_lines),
-            "vendor_gemini": vendor_gemini_calls, "gl_gemini": gl_gemini_calls,
-        })
-
-        # Write timing sidecar to Stage 4
-        timing["totalMs"] = int((time.time() - t0) * 1000)
         try:
-            timing_key = out_key.replace('.jsonl', '.timing.json')
-            s3.put_object(Bucket=BUCKET, Key=timing_key, Body=json.dumps(timing), ContentType='application/json')
-        except Exception:
-            pass
-        print(json.dumps({"_metric": "enrich_complete", **timing}))
-        print(json.dumps({"message": "Enriched file written", "out_key": out_key, "lines": len(enriched_lines)}))
+            obj = s3.get_object(Bucket=bucket, Key=key)
+            body = obj["Body"].read().decode("utf-8", errors="ignore")
+            lines = [ln for ln in body.splitlines() if ln.strip()]
+            timing["lineCount"] = len(lines)
+
+            t_enrich = time.time()
+            enriched_lines = _enrich_lines(lines)
+            timing["enrichMs"] = int((time.time() - t_enrich) * 1000)
+            timing["success"] = True
+
+            # Write to stage 4 with same partitioning and file stem
+            stem = key.split("/", 1)[-1]  # drop prefix
+            out_key = f"{OUTPUT_PREFIX}{stem}"
+            s3.put_object(Bucket=BUCKET, Key=out_key, Body=("\n".join(enriched_lines) + "\n").encode('utf-8'), ContentType='application/x-ndjson')
+            _pipeline_track(key, "ENRICHED", "lambda:enricher", "S4", {
+                "out_key": out_key, "lines": len(enriched_lines),
+                "vendor_gemini": vendor_gemini_calls, "gl_gemini": gl_gemini_calls,
+            })
+
+            # Write timing sidecar to Stage 4
+            timing["totalMs"] = int((time.time() - t0) * 1000)
+            try:
+                timing_key = out_key.replace('.jsonl', '.timing.json')
+                s3.put_object(Bucket=BUCKET, Key=timing_key, Body=json.dumps(timing), ContentType='application/json')
+            except Exception:
+                pass
+            print(json.dumps({"_metric": "enrich_complete", **timing}))
+            print(json.dumps({"message": "Enriched file written", "out_key": out_key, "lines": len(enriched_lines)}))
+
+        except Exception as enrich_err:
+            # S2: Don't let enricher crashes silently lose bills.
+            # Write unenriched data to Stage 4 so the bill is still visible for review.
+            print(json.dumps({"level": "ALARM", "message": "ENRICHMENT_FAILED", "key": key, "error": str(enrich_err)}))
+            _pipeline_track(key, "ENRICHMENT_FAILED", "lambda:enricher", "S3", {"error": str(enrich_err)[:200]})
+            try:
+                # Fallback: copy raw parsed data to Stage 4 unenriched so it's not stuck
+                stem = key.split("/", 1)[-1]
+                fallback_key = f"{OUTPUT_PREFIX}{stem}"
+                s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": bucket, "Key": key}, Key=fallback_key)
+                print(json.dumps({"message": "Fallback: copied unenriched to Stage 4", "fallback_key": fallback_key}))
+            except Exception as fb_err:
+                print(json.dumps({"message": "Fallback copy also failed", "error": str(fb_err)}))
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

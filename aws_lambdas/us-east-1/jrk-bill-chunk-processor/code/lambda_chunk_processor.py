@@ -951,6 +951,20 @@ def lambda_handler(event, context):
         # Check if all chunks completed
         if job_info['chunks_completed'] + 1 >= job_info['total_chunks']:
             print(json.dumps({"message": "All chunks completed", "job_id": job_id, "status": "ready_for_aggregation"}))
-            # TODO: Trigger aggregator Lambda here (via SNS or direct invocation)
+            # Trigger aggregator Lambda directly
+            aggregator_arn = os.getenv("AGGREGATOR_LAMBDA_ARN", "")
+            if aggregator_arn:
+                try:
+                    lambda_client = boto3.client("lambda", region_name=os.getenv("AWS_REGION", "us-east-1"))
+                    lambda_client.invoke(
+                        FunctionName=aggregator_arn,
+                        InvocationType="Event",  # Async — don't wait
+                        Payload=json.dumps({"job_id": job_id}).encode(),
+                    )
+                    print(json.dumps({"message": "Triggered aggregator Lambda", "job_id": job_id, "arn": aggregator_arn}))
+                except Exception as agg_err:
+                    print(json.dumps({"level": "ALARM", "message": "AGGREGATOR_TRIGGER_FAILED", "job_id": job_id, "error": str(agg_err)}))
+            else:
+                print(json.dumps({"message": "No AGGREGATOR_LAMBDA_ARN configured — aggregator must be triggered by DynamoDB Streams or manually", "job_id": job_id}))
 
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
