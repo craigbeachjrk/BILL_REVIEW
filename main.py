@@ -4820,60 +4820,72 @@ def api_history_archived(request: Request, user: str = Depends(require_user), st
         return JSONResponse({"error": "start and end dates required"}, status_code=400)
 
     try:
-        # Parse dates
         start_date = dt.datetime.strptime(start, "%Y-%m-%d").date()
         end_date = dt.datetime.strptime(end, "%Y-%m-%d").date()
 
-        # List all JSONL files in Historical Archive within date range
-        line_items = []
-        prefix = HIST_ARCHIVE_PREFIX
+        # Check cache (5-minute TTL)
+        cache_key = ("history_archived", start, end)
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 300):
+            return cached["data"]
 
-        # Iterate through dates in range
-        current_date = start_date
-        while current_date <= end_date:
-            year = current_date.year
-            month = current_date.month
-            day = current_date.day
+        # Use MONTH-level prefixes instead of day-level (dramatically fewer S3 calls)
+        month_prefixes = set()
+        current = start_date
+        while current <= end_date:
+            month_prefixes.add(f"{HIST_ARCHIVE_PREFIX}yyyy={current.year}/mm={current.month:02d}/")
+            current += dt.timedelta(days=30)
+        month_prefixes.add(f"{HIST_ARCHIVE_PREFIX}yyyy={end_date.year}/mm={end_date.month:02d}/")
 
-            # Build prefix for this day
-            day_prefix = f"{prefix}yyyy={year}/mm={month:02d}/dd={day:02d}/"
-
+        # List all matching keys, filter by date range
+        all_keys = []
+        paginator = s3.get_paginator('list_objects_v2')
+        for mp in month_prefixes:
             try:
-                # List objects for this day
-                paginator = s3.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=day_prefix):
-                    if 'Contents' not in page:
-                        continue
-
-                    for obj in page['Contents']:
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=mp):
+                    for obj in page.get('Contents', []) or []:
                         key = obj['Key']
-                        if not key.endswith('.jsonl'):
-                            continue
+                        if key.endswith('.jsonl'):
+                            # Check date from key path
+                            y, m, d = _extract_ymd_from_key(key)
+                            try:
+                                file_date = dt.date(int(y), int(m), int(d))
+                                if start_date <= file_date <= end_date:
+                                    all_keys.append(key)
+                            except (ValueError, TypeError):
+                                all_keys.append(key)
+            except Exception:
+                pass
 
-                        # Download and parse JSONL
-                        try:
-                            response = s3.get_object(Bucket=BUCKET, Key=key)
-                            content = response['Body'].read().decode('utf-8')
+        # Parallel S3 reads
+        line_items = []
+        def _read_archived(key):
+            items = []
+            try:
+                resp = s3.get_object(Bucket=BUCKET, Key=key)
+                content = resp['Body'].read().decode('utf-8', errors='ignore')
+                y, m, d = _extract_ymd_from_key(key)
+                for line in content.strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    try:
+                        item = json.loads(line)
+                        item['__s3_key__'] = key
+                        item['__archived_date__'] = f"{y}-{m}-{d}"
+                        items.append(item)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return items
 
-                            for line in content.strip().split('\n'):
-                                if not line.strip():
-                                    continue
-                                try:
-                                    item = json.loads(line)
-                                    item['__s3_key__'] = key
-                                    item['__archived_date__'] = f"{year}-{month:02d}-{day:02d}"
-                                    line_items.append(item)
-                                except Exception as e:
-                                    print(f"Error parsing line from {key}: {e}")
-                        except Exception as e:
-                            print(f"Error reading {key}: {e}")
-            except Exception as e:
-                print(f"Error listing {day_prefix}: {e}")
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            for result in executor.map(_read_archived, all_keys):
+                line_items.extend(result)
 
-            # Move to next day
-            current_date += dt.timedelta(days=1)
-
-        return {"line_items": line_items, "count": len(line_items)}
+        response_data = {"line_items": line_items, "count": len(line_items)}
+        _CACHE[cache_key] = {"ts": time.time(), "data": response_data}
+        return response_data
 
     except Exception as e:
         print(f"Error in api_history_archived: {e}")
@@ -4985,59 +4997,67 @@ def api_billback_posted(request: Request, user: str = Depends(require_user), sta
         return JSONResponse({"error": "start and end dates required"}, status_code=400)
 
     try:
-        # Parse dates
         start_date = dt.datetime.strptime(start, "%Y-%m-%d").date()
         end_date = dt.datetime.strptime(end, "%Y-%m-%d").date()
 
-        # List all JSONL files in Stage 7 within date range
-        line_items = []
-        prefix = POST_ENTRATA_PREFIX
+        # Check cache (5-minute TTL)
+        cache_key = ("billback_posted", start, end)
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 300):
+            return cached["data"]
 
-        # Iterate through dates in range
-        current_date = start_date
-        while current_date <= end_date:
-            year = current_date.year
-            month = current_date.month
-            day = current_date.day
+        # Use MONTH-level prefixes + parallel reads
+        month_prefixes = set()
+        current = start_date
+        while current <= end_date:
+            month_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={current.year}/mm={current.month:02d}/")
+            current += dt.timedelta(days=30)
+        month_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={end_date.year}/mm={end_date.month:02d}/")
 
-            # Build prefix for this day
-            day_prefix = f"{prefix}yyyy={year}/mm={month:02d}/dd={day:02d}/"
-
+        all_keys = []
+        paginator = s3.get_paginator('list_objects_v2')
+        for mp in month_prefixes:
             try:
-                # List objects for this day
-                paginator = s3.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=day_prefix):
-                    if 'Contents' not in page:
-                        continue
-
-                    for obj in page['Contents']:
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=mp):
+                    for obj in page.get('Contents', []) or []:
                         key = obj['Key']
-                        if not key.endswith('.jsonl'):
-                            continue
+                        if key.endswith('.jsonl'):
+                            y, m, d = _extract_ymd_from_key(key)
+                            try:
+                                file_date = dt.date(int(y), int(m), int(d))
+                                if start_date <= file_date <= end_date:
+                                    all_keys.append(key)
+                            except (ValueError, TypeError):
+                                all_keys.append(key)
+            except Exception:
+                pass
 
-                        # Download and parse JSONL
-                        try:
-                            response = s3.get_object(Bucket=BUCKET, Key=key)
-                            content = response['Body'].read().decode('utf-8')
+        line_items = []
+        def _read_posted(key):
+            items = []
+            try:
+                resp = s3.get_object(Bucket=BUCKET, Key=key)
+                content = resp['Body'].read().decode('utf-8', errors='ignore')
+                for line in content.strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    try:
+                        item = json.loads(line)
+                        item['__s3_key__'] = key
+                        items.append(item)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return items
 
-                            for line in content.strip().split('\n'):
-                                if not line.strip():
-                                    continue
-                                try:
-                                    item = json.loads(line)
-                                    item['__s3_key__'] = key
-                                    line_items.append(item)
-                                except Exception as e:
-                                    print(f"Error parsing line from {key}: {e}")
-                        except Exception as e:
-                            print(f"Error reading {key}: {e}")
-            except Exception as e:
-                print(f"Error listing {day_prefix}: {e}")
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            for result in executor.map(_read_posted, all_keys):
+                line_items.extend(result)
 
-            # Move to next day
-            current_date += dt.timedelta(days=1)
-
-        return {"line_items": line_items, "count": len(line_items)}
+        response_data = {"line_items": line_items, "count": len(line_items)}
+        _CACHE[cache_key] = {"ts": time.time(), "data": response_data}
+        return response_data
 
     except Exception as e:
         print(f"Error in api_billback_posted: {e}")
@@ -8818,80 +8838,94 @@ def api_vacant_accounts(
                 continue  # Skip removed accounts
             account_keys[key] = a
 
-        # Scan recent bills to count vacant vs house
+        # Check cache (10-minute TTL — admin-only, infrequent)
+        cache_key = ("vacant_accounts", min_vacant_pct)
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 600):
+            return cached["data"]
+
+        # Scan recent bills — use MONTH-level prefixes (3 months * 2 stages = ~6 instead of 180)
         today = dt.date.today()
-        prefixes = []
-        for i in range(90):  # Last 90 days
-            d = today - dt.timedelta(days=i)
-            y, m, day = d.strftime('%Y'), d.strftime('%m'), d.strftime('%d')
-            prefixes.append(f"{POST_ENTRATA_PREFIX}yyyy={y}/mm={m}/dd={day}/")
-            prefixes.append(f"{HIST_ARCHIVE_PREFIX}yyyy={y}/mm={m}/dd={day}/")
+        month_prefixes = set()
+        for i in range(3):
+            d = today - dt.timedelta(days=i * 30)
+            month_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/")
+            month_prefixes.add(f"{HIST_ARCHIVE_PREFIX}yyyy={d.year}/mm={d.month:02d}/")
 
-        # Track vacant/house counts per account
-        account_stats = {}  # key -> {vacant: int, house: int, total_bills: int, invoices: set}
-
+        # List all matching keys
+        all_keys = []
         paginator = s3.get_paginator('list_objects_v2')
-        for prefix in prefixes[:60]:  # Limit to ~30 days to keep it fast
+        for mp in month_prefixes:
             try:
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=mp):
                     for obj in page.get("Contents", []) or []:
                         key = obj.get("Key", "")
-                        if not key.endswith('.jsonl'):
-                            continue
+                        if key.endswith('.jsonl'):
+                            all_keys.append(key)
+            except Exception:
+                pass
 
-                        try:
-                            file_obj = s3.get_object(Bucket=BUCKET, Key=key)
-                            content = file_obj['Body'].read().decode('utf-8', errors='ignore')
+        # Parallel S3 reads
+        account_stats = {}
 
-                            first_line = content.split('\n')[0].strip()
-                            if not first_line:
-                                continue
-                            rec = json.loads(first_line)
+        def _read_for_vacant(key):
+            try:
+                file_obj = s3.get_object(Bucket=BUCKET, Key=key)
+                content = file_obj['Body'].read().decode('utf-8', errors='ignore')
+                first_line = content.split('\n')[0].strip()
+                if not first_line:
+                    return None
+                rec = json.loads(first_line)
+                rec_acct = str(rec.get("Account Number", "") or rec.get("Line Item Account Number", "")).strip()
+                rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
+                rec_vendor = str(rec.get("EnrichedVendorID", "")).strip()
+                acct_key = f"{rec_prop}|{rec_vendor}|{rec_acct}"
+                if acct_key not in account_keys:
+                    return None
+                invoice_num = rec.get("Invoice Number", "")
+                vacant_count = 0
+                house_count = 0
+                for line in content.strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    try:
+                        line_rec = json.loads(line)
+                        hov = str(line_rec.get("House Or Vacant", "")).lower().strip()
+                        if hov == "vacant":
+                            vacant_count += 1
+                        elif hov == "house":
+                            house_count += 1
+                    except Exception:
+                        continue
+                return {
+                    "account_key": acct_key,
+                    "invoice_num": invoice_num,
+                    "vacant": vacant_count,
+                    "house": house_count,
+                    "property_name": rec.get("EnrichedPropertyName", ""),
+                    "vendor_name": rec.get("EnrichedVendorName", ""),
+                    "account_number": rec_acct,
+                }
+            except Exception:
+                return None
 
-                            rec_acct = str(rec.get("Account Number", "") or rec.get("Line Item Account Number", "")).strip()
-                            rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
-                            rec_vendor = str(rec.get("EnrichedVendorID", "")).strip()
-                            account_key = f"{rec_prop}|{rec_vendor}|{rec_acct}"
-
-                            # Only check tracked accounts
-                            if account_key not in account_keys:
-                                continue
-
-                            invoice_num = rec.get("Invoice Number", "")
-
-                            if account_key not in account_stats:
-                                account_stats[account_key] = {
-                                    "vacant": 0,
-                                    "house": 0,
-                                    "total_bills": 0,
-                                    "invoices": set(),
-                                    "property_name": rec.get("EnrichedPropertyName", ""),
-                                    "vendor_name": rec.get("EnrichedVendorName", ""),
-                                    "account_number": rec_acct
-                                }
-
-                            if invoice_num not in account_stats[account_key]["invoices"]:
-                                account_stats[account_key]["invoices"].add(invoice_num)
-                                account_stats[account_key]["total_bills"] += 1
-
-                            # Count line items
-                            for line in content.strip().split('\n'):
-                                if not line.strip():
-                                    continue
-                                try:
-                                    line_rec = json.loads(line)
-                                    hov = str(line_rec.get("House Or Vacant", "")).lower().strip()
-                                    if hov == "vacant":
-                                        account_stats[account_key]["vacant"] += 1
-                                    elif hov == "house":
-                                        account_stats[account_key]["house"] += 1
-                                except json.JSONDecodeError:
-                                    continue
-
-                        except Exception as e:
-                            continue
-            except Exception as e:
-                continue
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            for result in executor.map(_read_for_vacant, all_keys):
+                if not result:
+                    continue
+                ak = result["account_key"]
+                if ak not in account_stats:
+                    account_stats[ak] = {
+                        "vacant": 0, "house": 0, "total_bills": 0, "invoices": set(),
+                        "property_name": result["property_name"],
+                        "vendor_name": result["vendor_name"],
+                        "account_number": result["account_number"],
+                    }
+                if result["invoice_num"] not in account_stats[ak]["invoices"]:
+                    account_stats[ak]["invoices"].add(result["invoice_num"])
+                    account_stats[ak]["total_bills"] += 1
+                account_stats[ak]["vacant"] += result["vacant"]
+                account_stats[ak]["house"] += result["house"]
 
         # Calculate percentages and filter
         vacant_accounts = []
@@ -8926,11 +8960,13 @@ def api_vacant_accounts(
 
         print(f"[VACANT DETECT] Found {len(vacant_accounts)} accounts with {min_vacant_pct}%+ vacant")
 
-        return {
+        response_data = {
             "accounts": vacant_accounts,
             "total": len(vacant_accounts),
             "threshold": min_vacant_pct
         }
+        _CACHE[cache_key] = {"ts": time.time(), "data": response_data}
+        return response_data
     except Exception as e:
         import traceback
         print(f"[VACANT DETECT] Error: {e}\n{traceback.format_exc()}")
@@ -26452,18 +26488,26 @@ def api_stop_timing(invoice_id: str, user: str = Depends(require_user)):
 def api_get_timing_summary(date: str = "", user: str = Depends(require_user)):
     """Get timing summary for all invoices worked on by user (optionally filtered by date)."""
     try:
-        # Scan for all timing records for this user
-        response = ddb.scan(
-            TableName=DRAFTS_TABLE,
-            FilterExpression="begins_with(pk, :prefix) AND #u = :user",
-            ExpressionAttributeNames={"#u": "user"},
-            ExpressionAttributeValues={
+        # Scan for all timing records for this user (paginated)
+        all_ddb_items = []
+        scan_params = {
+            "TableName": DRAFTS_TABLE,
+            "FilterExpression": "begins_with(pk, :prefix) AND #u = :user",
+            "ExpressionAttributeNames": {"#u": "user"},
+            "ExpressionAttributeValues": {
                 ":prefix": {"S": "timing#"},
                 ":user": {"S": user},
             },
-        )
+        }
+        while True:
+            response = ddb.scan(**scan_params)
+            all_ddb_items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
         items = []
-        for item in response.get("Items", []):
+        for item in all_ddb_items:
             invoice_id = item.get("invoice_id", {}).get("S", "")
             total_secs = int(item.get("total_seconds", {}).get("N", 0))
             updated = item.get("updated_utc", {}).get("S", "")
