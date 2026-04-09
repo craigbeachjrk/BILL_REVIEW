@@ -200,6 +200,7 @@ def lambda_handler(event, context):
             continue  # Don't upload chunks if job record creation fails
 
         # Now save chunks to S3 (will trigger chunk processor)
+        failed_chunks = []
         for idx, chunk_bytes in enumerate(chunks):
             chunk_num = str(idx + 1).zfill(3)
             chunk_key = chunk_keys[idx]
@@ -219,6 +220,24 @@ def lambda_handler(event, context):
                 )
                 print(json.dumps({"message": f"Saved chunk {idx+1}/{len(chunks)}", "chunk_key": chunk_key}))
             except Exception as e:
+                failed_chunks.append(chunk_num)
                 print(json.dumps({"error": "failed_to_save_chunk", "chunk": chunk_num, "message": str(e)}))
+
+        # If any chunks failed to upload, mark the job as failed so it doesn't hang forever
+        if failed_chunks:
+            try:
+                ddb.update_item(
+                    TableName=JOB_TABLE,
+                    Key={"job_id": {"S": job_id}},
+                    UpdateExpression="SET #s = :failed, error_message = :err",
+                    ExpressionAttributeNames={"#s": "status"},
+                    ExpressionAttributeValues={
+                        ":failed": {"S": "failed"},
+                        ":err": {"S": f"Failed to upload chunks: {', '.join(failed_chunks)}"},
+                    }
+                )
+                print(json.dumps({"error": "job_marked_failed_partial_upload", "job_id": job_id, "failed_chunks": failed_chunks}))
+            except Exception:
+                pass
 
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

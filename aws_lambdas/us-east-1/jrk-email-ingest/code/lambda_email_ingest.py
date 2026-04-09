@@ -173,8 +173,29 @@ def handler(event, context):
                     _put_s3(BUCKET_BILL, bill_key, content, content_type="application/pdf")
                     print(f"[MIRROR] SUCCESS: {bill_key}")
             except Exception as e:
-                # Log the error but don't fail the whole invocation
-                print(f"[MIRROR] FAILED to write {safe_name} to {BUCKET_BILL}: {type(e).__name__}: {e}")
+                # Log at ALARM level so CloudWatch can catch it
+                print(json.dumps({
+                    "level": "ALARM",
+                    "message": "BILL_MIRROR_FAILED",
+                    "filename": safe_name,
+                    "bucket": BUCKET_BILL,
+                    "error": f"{type(e).__name__}: {e}",
+                    "sender": sender,
+                    "raw_key": raw_key,
+                }))
+                # Retry once — mirror failures are the #1 cause of "bills disappearing"
+                try:
+                    import time
+                    time.sleep(1)
+                    _put_s3(BUCKET_BILL, bill_key, content, content_type="application/pdf")
+                    print(f"[MIRROR] RETRY SUCCESS: {bill_key}")
+                except Exception as e2:
+                    print(json.dumps({
+                        "level": "ALARM",
+                        "message": "BILL_MIRROR_RETRY_FAILED",
+                        "filename": safe_name,
+                        "error": f"{type(e2).__name__}: {e2}",
+                    }))
 
     return {
         "ok": True,

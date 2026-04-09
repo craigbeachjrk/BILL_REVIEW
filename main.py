@@ -1686,6 +1686,50 @@ def _write_jsonl(prefix: str, y: str, m: str, d: str, basename: str, rows: List[
     return out_key
 
 
+def _safe_move_s3(source_key: str, dest_key: str, verify: bool = True) -> bool:
+    """Safely move an S3 object: copy -> verify -> delete source.
+    Returns True on success, False on failure (source preserved on failure).
+    """
+    try:
+        s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": BUCKET, "Key": source_key}, Key=dest_key)
+        if verify:
+            # Verify destination exists and has content
+            head = s3.head_object(Bucket=BUCKET, Key=dest_key)
+            if head.get("ContentLength", 0) == 0:
+                print(f"[SAFE_MOVE] WARNING: destination is empty after copy: {dest_key}")
+                return False
+        s3.delete_object(Bucket=BUCKET, Key=source_key)
+        return True
+    except Exception as e:
+        print(f"[SAFE_MOVE] FAILED to move {source_key} -> {dest_key}: {e}")
+        return False
+
+
+def _safe_write_and_delete(dest_prefix: str, y: str, m: str, d: str, basename: str,
+                            rows: list, source_key: str) -> str | None:
+    """Write JSONL to destination, verify it exists, then delete source.
+    Returns the new key on success, None on failure (source preserved).
+    """
+    try:
+        new_key = _write_jsonl(dest_prefix, y, m, d, basename, rows)
+        # Verify the write succeeded
+        try:
+            head = s3.head_object(Bucket=BUCKET, Key=new_key)
+            if head.get("ContentLength", 0) == 0:
+                print(f"[SAFE_WRITE] WARNING: wrote empty file {new_key}, keeping source {source_key}")
+                return None
+        except Exception:
+            print(f"[SAFE_WRITE] WARNING: could not verify {new_key}, keeping source {source_key}")
+            return None
+        # Verified — safe to delete source
+        if source_key:
+            s3.delete_object(Bucket=BUCKET, Key=source_key)
+        return new_key
+    except Exception as e:
+        print(f"[SAFE_WRITE] FAILED to write {dest_prefix} from {source_key}: {e}")
+        return None
+
+
 def put_status(id_: str, status: str, user: str):
     now_iso = dt.datetime.utcnow().isoformat()
     item = {
@@ -2897,14 +2941,15 @@ def api_advance_to_post_stage(keys: str = Form(...), user: str = Depends(require
                 for row in rows:
                     row["PostedBy"] = user
                     row["PostedAt"] = posted_at
-                new_key = _write_jsonl(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl',''), rows)
+                new_key = _safe_write_and_delete(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl',''), rows, key)
+                if not new_key:
+                    errors.append({"key": key, "error": "Failed to write to post stage (source preserved)", "code": "write_failed"}); continue
                 # Write invoice metadata to DynamoDB for fast CHECK REVIEW loading
                 try:
                     _pid = hashlib.sha1(new_key.encode()).hexdigest()
                     _write_posted_invoice_metadata(_pid, new_key, rows)
                 except Exception:
                     pass  # Non-fatal — CHECK REVIEW falls back to S3
-                s3.delete_object(Bucket=BUCKET, Key=key)
                 results.append({"key": key, "moved": True, "newKey": new_key})
             except Exception as e:
                 errors.append({"key": key, "error": str(e)})
@@ -2945,8 +2990,9 @@ def api_archive_parsed(keys: str = Form(...), user: str = Depends(require_user))
                     errors.append({"key": key, "error": f"File not found or empty: {file_name}", "code": "empty"}); continue
                 y, m, d = _extract_ymd_from_key(key)
                 base = _basename_from_key(key)
-                new_key = _write_jsonl(HIST_ARCHIVE_PREFIX, y, m, d, base.replace('.jsonl',''), rows)
-                s3.delete_object(Bucket=BUCKET, Key=key)
+                new_key = _safe_write_and_delete(HIST_ARCHIVE_PREFIX, y, m, d, base.replace('.jsonl',''), rows, key)
+                if not new_key:
+                    errors.append({"key": key, "error": "Failed to archive (source preserved)", "code": "write_failed"}); continue
                 results.append({"key": key, "archived": True, "newKey": new_key})
             except Exception as e:
                 errors.append({"key": key, "error": str(e)})
@@ -5090,6 +5136,12 @@ def api_billback_summary(user: str = Depends(require_user), group_by: str = "mon
         return JSONResponse({"error": "Invalid group_by parameter"}, status_code=400)
 
     try:
+        # Check cache first (5-minute TTL)
+        cache_key = ("billback_summary", group_by)
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 300):
+            return cached["data"]
+
         # Scan the billback master table (paginated to handle large tables)
         items = []
         scan_kwargs = {"TableName": "jrk-bill-billback-master"}
@@ -5148,7 +5200,9 @@ def api_billback_summary(user: str = Depends(require_user), group_by: str = "mon
         result.sort(key=lambda x: x["total_amount"], reverse=True)
 
         print(f"[BILLBACK SUMMARY] Returning {len(result)} groups")
-        return {"summary": result, "group_by": group_by}
+        response_data = {"summary": result, "group_by": group_by}
+        _CACHE[cache_key] = {"ts": time.time(), "data": response_data}
+        return response_data
     except Exception as e:
         print(f"[BILLBACK SUMMARY] Error: {e}")
         import traceback
@@ -24934,8 +24988,15 @@ def api_rework(
             acct = str(r.get("Account Number", "")).strip()
             if acct:
                 accounts.add(acct)
+        # Archive enriched files before deleting (so they can be restored if re-parse fails)
+        REWORK_ARCHIVE_PREFIX = "Bill_Parser_Rework_Archive/"
         deleted = 0
         for k in keys:
+            try:
+                archive_key = f"{REWORK_ARCHIVE_PREFIX}{k}"
+                s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": BUCKET, "Key": k}, Key=archive_key)
+            except Exception:
+                pass  # Archive is best-effort
             try:
                 s3.delete_object(Bucket=BUCKET, Key=k); deleted += 1
             except Exception:
