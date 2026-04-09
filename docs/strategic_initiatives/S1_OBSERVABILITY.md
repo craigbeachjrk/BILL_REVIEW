@@ -9,20 +9,20 @@ Complete visibility into every bill's lifecycle — from email/scan intake throu
 ## Task Breakdown
 
 ### Phase 1: Pipeline Event Log (foundation)
-- [ ] **1.1** Create `jrk-bill-events` DynamoDB table — PK: `pdf_id`, SK: `timestamp#event_type`
-- [ ] **1.2** Define event schema: `{pdf_id, timestamp, event_type, stage, source, user, s3_key, metadata}`
+- [x] **1.1** Using existing `jrk-bill-pipeline-tracker` table (PK: `BILL#{hash}`, SK: `EVENT#{timestamp}`)
+- [x] **1.2** Schema defined: `{pk, sk, event_type, stage, source, s3_key, timestamp_epoch, filename, metadata, ttl}`
 - [ ] **1.3** Add event emission to email ingest Lambda (RECEIVED, CLASSIFIED)
 - [ ] **1.4** Add event emission to bill router Lambda (ROUTED_STANDARD, ROUTED_LARGE)
 - [ ] **1.5** Add event emission to parser Lambda (PARSE_STARTED, PARSE_COMPLETED, PARSE_FAILED)
 - [ ] **1.6** Add event emission to enricher Lambda (ENRICHED, ENRICHMENT_FAILED)
-- [ ] **1.7** Add event emission to main.py submit flow (SUBMITTED, POSTED, POST_FAILED)
-- [ ] **1.8** Add event emission to UBI assign/unassign (UBI_ASSIGNED, UBI_UNASSIGNED)
-- [ ] **1.9** Add event emission to rework/delete flows (REWORKED, DELETED, ARCHIVED)
+- [x] **1.7** Add event emission to main.py submit flow (SUBMITTED, POSTED, POST_FAILED, ADVANCED_TO_POST)
+- [x] **1.8** Add event emission to UBI assign/unassign (UBI_ASSIGNED, UBI_UNASSIGNED)
+- [x] **1.9** Add event emission to rework/delete flows (REWORKED, DELETED, ARCHIVED)
 
 ### Phase 2: Bill Lifecycle UI
 - [ ] **2.1** Create `/bill/{pdf_id}/timeline` page showing full event history
 - [ ] **2.2** Add "View Timeline" button to review, billback, and search pages
-- [ ] **2.3** Create `/api/bill/{pdf_id}/events` endpoint querying the events table
+- [x] **2.3** Create `/api/bill/{pdf_id}/events` endpoint querying the events table
 - [ ] **2.4** Add visual stage progression indicator (breadcrumb: Received -> Parsed -> Enriched -> Reviewed -> Posted)
 
 ### Phase 3: Transaction Dashboard

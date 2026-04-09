@@ -23,10 +23,10 @@ User clicks "Upload" on INPUT tab -> Presigned URL Lambda
 ## Task Breakdown
 
 ### Phase 1: Email-Based Attribution
-- [ ] **1.1** Audit email ingest Lambda — understand current sender extraction
+- [x] **1.1** Audit email ingest Lambda — sender extraction implemented
 - [ ] **1.2** Build sender -> user mapping (SES verified identities or config table)
 - [ ] **1.3** Create per-user email endpoints: `{username}@jrkanalytics.com` routes to same SES inbox
-- [ ] **1.4** Tag S3 objects with `submitted_by` metadata on email ingest
+- [x] **1.4** Tag S3 objects with `submitted_by` metadata on email ingest
 - [ ] **1.5** Propagate `submitted_by` through router -> parser -> enricher chain
 
 ### Phase 2: Web Upload Attribution
