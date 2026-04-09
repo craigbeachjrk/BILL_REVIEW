@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transactions &middot; Bill Review @ JRK</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;
+      background:linear-gradient(135deg,var(--bg),var(--bg2))}
+    header.top h1{margin:0;font-size:18px;font-weight:700}
+    header.top .title-group{display:flex;align-items:center;gap:12px}
+    header.top .back-arrow{color:#fff;text-decoration:none;font-size:20px;opacity:.8}
+    .btn{padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;font-family:inherit;font-size:14px;text-decoration:none;display:inline-block}
+    .btn.secondary{background:#64748b}
+    .container{max-width:1200px;margin:20px auto;padding:0 20px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px}
+    .card{background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:20px;backdrop-filter:blur(12px)}
+    .card h3{margin:0 0 12px;font-size:14px;font-weight:700;color:#334155}
+    .stage-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9}
+    .stage-row:last-child{border:none}
+    .stage-name{font-size:13px;font-weight:600}
+    .stage-count{font-size:20px;font-weight:700;color:#0ea5e9}
+    .chart-container{height:250px;position:relative}
+    .event-feed{max-height:400px;overflow-y:auto}
+    .event-item{padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+    .event-item:last-child{border:none}
+    .event-type-tag{display:inline-block;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;background:#e2e8f0;color:#475569;margin-right:6px}
+    .event-type-tag.RECEIVED{background:#d1fae5;color:#065f46}
+    .event-type-tag.PARSE_COMPLETED{background:#dbeafe;color:#1e40af}
+    .event-type-tag.ENRICHED{background:#e0e7ff;color:#3730a3}
+    .event-type-tag.SUBMITTED{background:#fce7f3;color:#9d174d}
+    .event-type-tag.POSTED{background:#d1fae5;color:#065f46}
+    .event-type-tag.PARSE_FAILED{background:#fee2e2;color:#991b1b}
+    .event-type-tag.DELETED{background:#fee2e2;color:#991b1b}
+    .user-row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px}
+    .empty{text-align:center;padding:30px;color:#64748b}
+    .auto-refresh{font-size:11px;color:#fff;opacity:.6;margin-left:12px}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="title-group">
+      <a href="/" class="back-arrow">&#8592;</a>
+      <h1>Transaction Dashboard</h1>
+      <span class="auto-refresh" id="refreshLabel">Auto-refresh: 30s</span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <a href="/my-bills" class="btn secondary">My Bills</a>
+      <a href="/pipeline" class="btn secondary">Pipeline</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="grid">
+      <!-- Pipeline Flow -->
+      <div class="card">
+        <h3>Pipeline Stages (last 24h)</h3>
+        <div id="stageCards"></div>
+      </div>
+
+      <!-- Hourly Volume Chart -->
+      <div class="card" style="grid-column:span 1">
+        <h3>Hourly Volume</h3>
+        <div class="chart-container"><canvas id="hourlyChart"></canvas></div>
+      </div>
+
+      <!-- Activity by User -->
+      <div class="card">
+        <h3>Activity by User</h3>
+        <div id="userActivity"></div>
+      </div>
+    </div>
+
+    <!-- Recent Events Feed -->
+    <div class="card">
+      <h3>Live Event Feed</h3>
+      <div class="event-feed" id="eventFeed">
+        <div class="empty">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let hourlyChart = null;
+
+  function escapeHtml(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
+
+  const STAGE_LABELS = {
+    'S1':'Received','S1_standard':'Parsing','S1_largefile':'Large Parse',
+    'S3':'Parsed','S4':'Enriched','S6':'Pre-Entrata','S7':'Posted',
+    'S8':'UBI Assigned','ARCHIVE':'Archived','DELETED':'Deleted','REWORK':'Rework','FAILED':'Failed'
+  };
+
+  const STAGE_ORDER = ['S1','S1_standard','S1_largefile','S3','S4','S6','S7','S8','ARCHIVE'];
+
+  async function loadDashboard() {
+    try {
+      const resp = await fetch('/api/transactions/summary?hours=24');
+      if (resp.status === 401) { window.location = '/login'; return; }
+      const data = await resp.json();
+
+      // Stage cards
+      const sc = data.stage_counts || {};
+      let stageHtml = '';
+      STAGE_ORDER.forEach(s => {
+        const count = sc[s] || 0;
+        if (count > 0 || ['S1','S4','S7','S8'].includes(s)) {
+          stageHtml += `<div class="stage-row">
+            <span class="stage-name">${escapeHtml(STAGE_LABELS[s]||s)}</span>
+            <span class="stage-count">${count}</span>
+          </div>`;
+        }
+      });
+      // Show failed/deleted if any
+      ['FAILED','DELETED','REWORK'].forEach(s => {
+        if (sc[s]) stageHtml += `<div class="stage-row"><span class="stage-name" style="color:#ef4444">${escapeHtml(STAGE_LABELS[s]||s)}</span><span class="stage-count" style="color:#ef4444">${sc[s]}</span></div>`;
+      });
+      document.getElementById('stageCards').innerHTML = stageHtml || '<div class="empty">No activity</div>';
+
+      // Hourly chart
+      const hourly = data.hourly || {};
+      const hours = Object.keys(hourly).sort();
+      const received = hours.map(h => (hourly[h]||{}).RECEIVED || 0);
+      const parsed = hours.map(h => (hourly[h]||{}).PARSE_COMPLETED || 0);
+      const posted = hours.map(h => (hourly[h]||{}).POSTED || 0);
+      const failed = hours.map(h => (hourly[h]||{}).PARSE_FAILED || 0);
+
+      if (hourlyChart) hourlyChart.destroy();
+      const ctx = document.getElementById('hourlyChart').getContext('2d');
+      hourlyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: hours,
+          datasets: [
+            {label:'Received',data:received,backgroundColor:'#10b981'},
+            {label:'Parsed',data:parsed,backgroundColor:'#3b82f6'},
+            {label:'Posted',data:posted,backgroundColor:'#8b5cf6'},
+            {label:'Failed',data:failed,backgroundColor:'#ef4444'},
+          ]
+        },
+        options: {
+          responsive:true, maintainAspectRatio:false,
+          scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}},
+          plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}}
+        }
+      });
+
+      // User activity
+      const bu = data.by_user || {};
+      const sorted = Object.entries(bu).sort((a,b) => b[1]-a[1]);
+      let userHtml = '';
+      sorted.slice(0,10).forEach(([u,c]) => {
+        userHtml += `<div class="user-row"><span>${escapeHtml(u)}</span><span style="font-weight:700">${c}</span></div>`;
+      });
+      document.getElementById('userActivity').innerHTML = userHtml || '<div class="empty">No activity</div>';
+
+      // Event feed
+      const events = data.recent_events || [];
+      let feedHtml = '';
+      events.forEach(ev => {
+        const t = ev.time ? new Date(ev.time.endsWith('Z')?ev.time:ev.time+'Z').toLocaleTimeString() : '';
+        feedHtml += `<div class="event-item">
+          <span class="event-type-tag ${escapeHtml(ev.event_type)}">${escapeHtml(ev.event_type)}</span>
+          <span style="color:#64748b">${escapeHtml(ev.filename||'').substring(0,40)}</span>
+          <span style="float:right;color:#94a3b8">${t}</span>
+        </div>`;
+      });
+      document.getElementById('eventFeed').innerHTML = feedHtml || '<div class="empty">No recent events</div>';
+
+    } catch(e) {
+      console.error('Dashboard error:', e);
+    }
+  }
+
+  loadDashboard();
+  setInterval(loadDashboard, 30000); // Auto-refresh every 30s
+</script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My Bills &middot; Bill Review @ JRK</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0ea5e9; --bg2:#4338ca; --glass:rgba(255,255,255,.72); --border:rgba(255,255,255,.33); }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));min-height:100vh;color:#0f172a}
+    header.top{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:14px 20px;color:#fff;z-index:100;
+      background:linear-gradient(135deg,var(--bg),var(--bg2))}
+    header.top .title-group{display:flex;align-items:center;gap:12px}
+    header.top .back-arrow{color:#fff;text-decoration:none;font-size:20px;opacity:.8}
+    header.top .back-arrow:hover{opacity:1}
+    header.top h1{margin:0;font-size:18px;font-weight:700}
+    .btn{padding:8px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;cursor:pointer;font-family:inherit;font-size:14px;text-decoration:none;display:inline-block}
+    .btn.secondary{background:#64748b}
+    .container{max-width:1000px;margin:20px auto;padding:0 20px}
+    .card{background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:20px;backdrop-filter:blur(12px);margin-bottom:16px}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+    .stat{text-align:center;padding:16px;background:#fff;border-radius:12px;border:1px solid #e2e8f0}
+    .stat .num{font-size:28px;font-weight:700;color:#0ea5e9}
+    .stat .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th{text-align:left;padding:10px 12px;background:#f1f5f9;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#475569}
+    td{padding:10px 12px;border-bottom:1px solid #e2e8f0}
+    tr:hover td{background:#f8fafc}
+    .stage-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+    .stage-S1,.stage-S1_standard,.stage-S1_largefile{background:#fef3c7;color:#92400e}
+    .stage-S3{background:#dbeafe;color:#1e40af}
+    .stage-S4{background:#e0e7ff;color:#3730a3}
+    .stage-S6{background:#fce7f3;color:#9d174d}
+    .stage-S7{background:#d1fae5;color:#065f46}
+    .stage-S8{background:#ede9fe;color:#5b21b6}
+    .stage-FAILED,.stage-DELETED{background:#fee2e2;color:#991b1b}
+    .stage-REWORK{background:#ffedd5;color:#9a3412}
+    .stage-ARCHIVE{background:#f1f5f9;color:#475569}
+    .empty{text-align:center;padding:40px;color:#64748b}
+    .controls{display:flex;gap:12px;margin-bottom:16px;align-items:center}
+    .controls select{padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;font-family:inherit}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="title-group">
+      <a href="/" class="back-arrow">&#8592;</a>
+      <h1>My Bills</h1>
+    </div>
+    <a href="/bill/timeline" class="btn secondary">Bill Timeline</a>
+  </header>
+
+  <div class="container">
+    <div class="controls">
+      <label>Show last
+        <select id="daysSelect" onchange="loadBills()">
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="90">90 days</option>
+        </select>
+      </label>
+      <span id="userLabel" style="color:#fff;font-size:13px;opacity:.8"></span>
+    </div>
+
+    <div id="stats" class="stats"></div>
+    <div class="card">
+      <div id="content"><div class="empty">Loading...</div></div>
+    </div>
+  </div>
+
+<script>
+  const STAGE_LABELS = {
+    'S1':'Received','S1_standard':'Parsing','S1_largefile':'Large Parse',
+    'S3':'Parsed','S4':'Enriched','S6':'Pre-Entrata','S7':'Posted',
+    'S8':'UBI Assigned','ARCHIVE':'Archived','DELETED':'Deleted','REWORK':'Rework','FAILED':'Failed'
+  };
+
+  function escapeHtml(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
+
+  async function loadBills() {
+    const days = document.getElementById('daysSelect').value;
+    const content = document.getElementById('content');
+    content.innerHTML = '<div class="empty">Loading...</div>';
+
+    try {
+      const resp = await fetch(`/api/my-bills?days=${days}`);
+      if (resp.status === 401) { window.location = '/login'; return; }
+      const data = await resp.json();
+
+      document.getElementById('userLabel').textContent = `Logged in as: ${data.user || ''}`;
+
+      // Stats
+      const bills = data.bills || [];
+      const byStage = {};
+      bills.forEach(b => { byStage[b.current_stage] = (byStage[b.current_stage]||0) + 1; });
+
+      let statsHtml = `<div class="stat"><div class="num">${bills.length}</div><div class="label">Total Bills</div></div>`;
+      for (const [stage, count] of Object.entries(byStage).sort((a,b) => b[1]-a[1])) {
+        statsHtml += `<div class="stat"><div class="num">${count}</div><div class="label">${escapeHtml(STAGE_LABELS[stage]||stage)}</div></div>`;
+      }
+      document.getElementById('stats').innerHTML = statsHtml;
+
+      if (bills.length === 0) {
+        content.innerHTML = '<div class="empty">No bills found for your account in the last ' + days + ' days.</div>';
+        return;
+      }
+
+      let html = '<table><thead><tr><th>Filename</th><th>Stage</th><th>Latest Event</th><th>First Seen</th><th>Last Updated</th><th></th></tr></thead><tbody>';
+      bills.forEach(b => {
+        const stageClass = 'stage-' + (b.current_stage||'').replace(/[^a-zA-Z0-9_]/g,'');
+        const firstSeen = b.first_seen ? new Date(b.first_seen.endsWith('Z')?b.first_seen:b.first_seen+'Z').toLocaleString() : '';
+        const lastTime = b.latest_time ? new Date(b.latest_time.endsWith('Z')?b.latest_time:b.latest_time+'Z').toLocaleString() : '';
+        html += `<tr>
+          <td style="font-weight:600">${escapeHtml(b.filename||b.pdf_id.substring(0,12)+'...')}</td>
+          <td><span class="stage-badge ${stageClass}">${escapeHtml(STAGE_LABELS[b.current_stage]||b.current_stage)}</span></td>
+          <td>${escapeHtml((b.latest_event||'').replace(/_/g,' '))}</td>
+          <td style="font-size:12px;color:#64748b">${firstSeen}</td>
+          <td style="font-size:12px;color:#64748b">${lastTime}</td>
+          <td><a href="/bill/timeline?pdf_id=${encodeURIComponent(b.pdf_id)}" class="btn" style="font-size:11px;padding:4px 10px">Timeline</a></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      content.innerHTML = html;
+    } catch(e) {
+      content.innerHTML = '<div class="empty">Error loading bills.</div>';
+    }
+  }
+
+  loadBills();
+</script>
+</body>
+</html>

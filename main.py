@@ -12386,6 +12386,177 @@ def bill_timeline_view(request: Request, pdf_id: str = "", user: str = Depends(r
     return templates.TemplateResponse("bill_timeline.html", {"request": request, "user": user, "pdf_id": pdf_id})
 
 
+@app.get("/my-bills", response_class=HTMLResponse)
+def my_bills_view(request: Request, user: str = Depends(require_user)):
+    """My Bills page — shows all bills submitted by the current user."""
+    return templates.TemplateResponse("my_bills.html", {"request": request, "user": user})
+
+
+@app.get("/api/my-bills")
+def api_my_bills(days: int = 30, user: str = Depends(require_user)):
+    """Get all bills submitted by the current user from the pipeline tracker."""
+    try:
+        # Extract username from email for matching (dgonzalez@jrk.com -> dgonzalez)
+        username = user.split("@")[0] if "@" in user else user
+
+        # Query pipeline tracker for events from this user
+        cutoff = int(time.time()) - (days * 86400)
+        bills = {}  # pdf_id -> {latest_event, stage, filename, events}
+
+        # Scan events that match this user (in source field)
+        paginator = ddb.get_paginator('scan')
+        for page in paginator.paginate(
+            TableName=PIPELINE_TRACKER_TABLE,
+            FilterExpression="contains(#src, :user) AND timestamp_epoch >= :cutoff",
+            ExpressionAttributeNames={"#src": "source"},
+            ExpressionAttributeValues={
+                ":user": {"S": username},
+                ":cutoff": {"N": str(cutoff)},
+            },
+        ):
+            for item in page.get("Items", []):
+                pk = item.get("pk", {}).get("S", "")
+                pdf_id = pk.replace("BILL#", "")
+                event_type = item.get("event_type", {}).get("S", "")
+                stage = item.get("stage", {}).get("S", "")
+                ts = item.get("sk", {}).get("S", "").replace("EVENT#", "")
+                filename = item.get("filename", {}).get("S", "")
+                meta = {}
+                try:
+                    meta = json.loads(item.get("metadata", {}).get("S", "{}"))
+                except Exception:
+                    pass
+
+                if pdf_id not in bills:
+                    bills[pdf_id] = {
+                        "pdf_id": pdf_id,
+                        "filename": filename,
+                        "first_seen": ts,
+                        "current_stage": stage,
+                        "latest_event": event_type,
+                        "latest_time": ts,
+                        "submitted_by": meta.get("submitted_by", username),
+                        "events": [],
+                    }
+                bills[pdf_id]["events"].append({"event_type": event_type, "stage": stage, "time": ts})
+                if ts > bills[pdf_id]["latest_time"]:
+                    bills[pdf_id]["latest_time"] = ts
+                    bills[pdf_id]["current_stage"] = stage
+                    bills[pdf_id]["latest_event"] = event_type
+
+        # Also check search index for bills with submitted_by matching
+        search_entries = _SEARCH_INDEX.get("entries", []) if _SEARCH_INDEX.get("ready") else []
+        for entry in search_entries:
+            pid = entry.get("pdf_id", "")
+            if pid and pid not in bills:
+                # Check if this bill's JSONL has submitted_by matching
+                # (We can't check without reading the file, so skip for now)
+                pass
+
+        result = sorted(bills.values(), key=lambda x: x.get("latest_time", ""), reverse=True)
+        return {"bills": result, "count": len(result), "user": user, "days": days}
+    except Exception as e:
+        print(f"[MY BILLS] Error: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "my bills")}, status_code=500)
+
+
+@app.get("/transactions", response_class=HTMLResponse)
+def transactions_view(request: Request, user: str = Depends(require_user)):
+    """Transaction dashboard — real-time pipeline flow visualization."""
+    return templates.TemplateResponse("transactions.html", {"request": request, "user": user, "is_admin": user in ADMIN_USERS})
+
+
+@app.get("/api/transactions/summary")
+def api_transactions_summary(hours: int = 24, user: str = Depends(require_user)):
+    """Get pipeline transaction summary: counts by stage, by hour, by event type."""
+    try:
+        cache_key = ("transaction_summary", hours)
+        cached = _CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("ts", 0) < 120):
+            return cached["data"]
+
+        cutoff = int(time.time()) - (hours * 3600)
+        today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+        yesterday = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).strftime("%Y-%m-%d")
+
+        stage_counts = {}  # stage -> count of bills currently in that stage
+        hourly = {}  # hour -> {event_type -> count}
+        by_user = {}  # user -> count
+        recent_events = []  # last 50 events
+
+        for event_date in [today, yesterday]:
+            try:
+                resp = ddb.query(
+                    TableName=PIPELINE_TRACKER_TABLE,
+                    IndexName="gsi-date",
+                    KeyConditionExpression="event_date = :d",
+                    ExpressionAttributeValues={":d": {"S": event_date}},
+                )
+                for item in resp.get("Items", []):
+                    epoch = int(item.get("timestamp_epoch", {}).get("N", "0"))
+                    if epoch < cutoff:
+                        continue
+                    event_type = item.get("event_type", {}).get("S", "")
+                    stage = item.get("stage", {}).get("S", "")
+                    source = item.get("source", {}).get("S", "")
+
+                    # Stage counts (latest event per bill determines current stage)
+                    stage_counts[stage] = stage_counts.get(stage, 0) + 1
+
+                    # Hourly breakdown
+                    hour = dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime("%H:00")
+                    if hour not in hourly:
+                        hourly[hour] = {}
+                    hourly[hour][event_type] = hourly[hour].get(event_type, 0) + 1
+
+                    # By user
+                    user_part = source.split(":")[-1] if ":" in source else source
+                    by_user[user_part] = by_user.get(user_part, 0) + 1
+
+                    # Recent events
+                    if len(recent_events) < 50:
+                        recent_events.append({
+                            "event_type": event_type,
+                            "stage": stage,
+                            "source": source,
+                            "filename": item.get("filename", {}).get("S", ""),
+                            "time": item.get("sk", {}).get("S", "").replace("EVENT#", ""),
+                        })
+
+                # Handle pagination
+                while resp.get("LastEvaluatedKey"):
+                    resp = ddb.query(
+                        TableName=PIPELINE_TRACKER_TABLE,
+                        IndexName="gsi-date",
+                        KeyConditionExpression="event_date = :d",
+                        ExpressionAttributeValues={":d": {"S": event_date}},
+                        ExclusiveStartKey=resp["LastEvaluatedKey"],
+                    )
+                    for item in resp.get("Items", []):
+                        epoch = int(item.get("timestamp_epoch", {}).get("N", "0"))
+                        if epoch < cutoff:
+                            continue
+                        event_type = item.get("event_type", {}).get("S", "")
+                        stage = item.get("stage", {}).get("S", "")
+                        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+            except Exception as e:
+                print(f"[TRANSACTIONS] Query error for {event_date}: {e}")
+
+        recent_events.sort(key=lambda x: x.get("time", ""), reverse=True)
+
+        result = {
+            "stage_counts": stage_counts,
+            "hourly": hourly,
+            "by_user": by_user,
+            "recent_events": recent_events[:50],
+            "hours": hours,
+        }
+        _CACHE[cache_key] = {"ts": time.time(), "data": result}
+        return result
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "transaction summary")}, status_code=500)
+
+
 @app.get("/api/pipeline/queue")
 def api_pipeline_queue(user: str = Depends(require_user)):
     """Real-time queue status — count + oldest age per stage. 30s cache."""
