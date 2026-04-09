@@ -3308,7 +3308,7 @@
       // Get all unassigned lines for this bill
       const lineDetails = bill.unassigned_lines.map(line => ({
         lineHash: line.line_hash,
-        amount: parseFloat(line.line_data['Current Charges'] || line.line_data['Amount'] || 0),
+        amount: parseFloat(line.line_data['Line Item Charge'] || line.line_data['Current Amount'] || line.line_data['Current Charges'] || line.line_data['Amount'] || 0),
         notes: line.line_data['Notes'] || ''
       }));
 

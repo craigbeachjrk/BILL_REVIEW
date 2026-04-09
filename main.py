@@ -3599,6 +3599,46 @@ def _build_search_index(force_full: bool = False):
             idx["last_refresh"] = time.time()
             idx["entry_count"] = len(new_entries)
 
+        # Also index post-submission invoices from DDB metadata (written at post time)
+        # This ensures bills remain searchable after being submitted/posted
+        try:
+            existing_pids = {e["pdf_id"] for e in new_entries}
+            post_stage_count = 0
+            ddb_paginator = ddb.get_paginator('query')
+            for page in ddb_paginator.paginate(
+                TableName=CONFIG_TABLE,
+                KeyConditionExpression="pk = :pk",
+                ExpressionAttributeValues={":pk": {"S": "POSTED_INVOICES"}},
+            ):
+                for item in page.get("Items", []):
+                    pid = item.get("pdf_id", {}).get("S", "")
+                    if not pid or pid in existing_pids:
+                        continue
+                    acct = item.get("account_number", {}).get("S", "")
+                    vend = item.get("vendor_name", {}).get("S", "")
+                    prop = item.get("property_name", {}).get("S", "")
+                    posted_at = item.get("posted_at", {}).get("S", "")
+                    date_str = posted_at[:10] if posted_at else ""
+                    total = float(item.get("total_amount", {}).get("N", "0"))
+                    new_entries.append({
+                        "pdf_id": pid,
+                        "date": date_str,
+                        "account": acct,
+                        "account_l": acct.lower(),
+                        "vendor": vend,
+                        "vendor_l": vend.lower(),
+                        "property": prop,
+                        "property_l": prop.lower(),
+                        "amount": total,
+                        "stage": "posted",
+                    })
+                    existing_pids.add(pid)
+                    post_stage_count += 1
+            if post_stage_count:
+                print(f"[SEARCH INDEX] Added {post_stage_count} posted invoice entries from DDB")
+        except Exception as e:
+            print(f"[SEARCH INDEX] Warning: failed to index posted invoices: {e}")
+
         print(f"[SEARCH INDEX] Done. {len(new_entries)} invoices indexed across {len(idx['dates_indexed'])} dates.")
 
         # Persist to S3 so next startup is instant
@@ -5985,7 +6025,16 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
                     'assigned_by': {'S': user},
                     'assigned_date': {'S': now_utc},
                 })
-            print(f"[UBI ACCEPT] Wrote {len(assigned_items)} hashes to DDB exclusion table")
+                # Also write to archived table (consistent with main assign endpoint)
+                ddb.put_item(TableName='jrk-bill-ubi-archived', Item={
+                    'assignment_id': {'S': lh},
+                    'line_hash': {'S': lh},
+                    's3_key': {'S': assigned_key},
+                    'ubi_period': {'S': rec.get("ubi_period", "")},
+                    'assigned_by': {'S': user},
+                    'assigned_date': {'S': now_utc},
+                })
+            print(f"[UBI ACCEPT] Wrote {len(assigned_items)} hashes to DDB exclusion + archived tables")
         except Exception as ddb_err:
             print(f"[UBI ACCEPT] Warning: Could not write to DDB exclusion tables: {ddb_err}")
 

@@ -1078,6 +1078,12 @@
                   if (numInst) {
                     try { numInst.setChoiceByValue(num); } catch(_) {}
                   }
+                  // Keep hidden EnrichedGLAccountID in sync
+                  const glIdInput = line.querySelector('input[name="EnrichedGLAccountID"]');
+                  if (glIdInput) {
+                    const newId = (window._glNumToId||{})[num] || '';
+                    if (newId) glIdInput.value = newId;
+                  }
                 }
               }
             }
