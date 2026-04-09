@@ -30,8 +30,8 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | H4 | [x] | main.py:16841,16910,16984 | Snowflake `conn = _snowflake_connect()` without `try/finally`. Exceptions leak connections. | Connection pool exhaustion |
 | H5 | [x] | main.py:9508 vs 13873 | Two `_normalize_account_number` definitions with different behavior. Second overwrites first silently. | Account matching failures between code paths |
 | H6 | [x] | main.py:20241-20245 | Multi-period amount override sets ALL period assignments to the new amount instead of splitting proportionally | Dollar amounts tripled for 3-month splits |
-| H7 | [ ] | main.py:14839-14903 | `_get_last_ubi_periods_from_stage8` reads ALL Stage 8 files via S3 GET. Should use filename parsing or bill index. | Minutes-long blocking on AppRunner |
-| H8 | [ ] | main.py:15345-15432 | `_get_account_bill_history` does 360 sequential S3 prefix scans (no ThreadPoolExecutor) | 12-30 min per call on AppRunner |
+| H7 | [x] | main.py:14839-14903 | `_get_last_ubi_periods_from_stage8` reads ALL Stage 8 files via S3 GET. Should use filename parsing or bill index. | Minutes-long blocking on AppRunner |
+| H8 | [x] | main.py:15345-15432 | `_get_account_bill_history` does 360 sequential S3 prefix scans (no ThreadPoolExecutor) | 12-30 min per call on AppRunner |
 | H9 | [x] | main.py:25196-25213 | Paginators `pi` and `rp` already exhausted from prior iteration. Fuzzy fallback search yields nothing. | Fuzzy PDF lookup silently broken |
 | H10 | [-] | main.py:5004-5030 | `api_billback_submit` loop body is `pass`. Returns `{"ok": True, "submitted": 0}`. | **DEAD CODE** — see Half-Baked #1 |
 | H11 | [-] | bill_review_app/main.py:4872 | `toggle_ubi_tracking` uses `account_number` (snake) vs `accountNumber` (camel) | **DEAD CODE** — bill_review_app/main.py deleted |
@@ -55,7 +55,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | M4 | [x] | main.py:8828,8955,9344 | Missing cache invalidation after account archive/update/vendor correction |
 | M5 | [x] | main.py:9078 | `isUBI` vs `is_ubi` field name mismatch — always returns False |
 | M6 | [x] | main.py:11766 | DynamoDB scan not paginated for user timing metrics |
-| M7 | [ ] | main.py:12252 | Pipeline "stuck" query reports false positives (stale event snapshot) |
+| M7 | [x] | main.py:12252 | Pipeline "stuck" query reports false positives (stale event snapshot) |
 | M8 | [ ] | main.py:15067 | Read-modify-write race on S3 UBI account history (cross-instance) |
 | M9 | [x] | main.py:17767,17912,17807 | Check slip scan functions missing DynamoDB pagination |
 | M10 | [x] | main.py:19586 | `existing['line_items']` KeyError — should be `source_line_items` |
@@ -73,7 +73,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | M22 | [x] | main.py:4830 | `api_billback_archive` matches by only 3 fields — wrong line items can match |
 | M23 | [x] | main.py:21438 vs 21533 | Duplicate accrual delete endpoints — second one doesn't bust caches |
 | M24 | [x] | main.py:11496 | O(50*N) linear scan of search index per request |
-| M25 | [ ] | main.py:15175 | `_find_bills_for_account` generates 900 S3 prefix scans |
+| M25 | [x] | main.py:15175 | `_find_bills_for_account` generates 900 S3 prefix scans |
 | M26 | [-] | main.py:26383 | `_ensure_hov` — verified: only fills empty HOV, doesn't overwrite existing. Correct behavior. | Not a bug (false positive) |
 | M27 | [x] | post.html:837 | Currency sort regex `[$,\.\.\.]/g` strips decimal points |
 | M28 | [x] | review.html:773 | `applyHeaderDraft` queries `.header-card` selector that doesn't exist |
@@ -97,7 +97,7 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 | # | Status | Location | Bug |
 |---|--------|----------|-----|
 | L1 | [-] | main.py:129,154 | Duplicate `REWORK_PREFIX` assignment (same value) |
-| L2 | [ ] | main.py:100 | `APP_SECRET` insecure default `"dev-secret-change-me"` — check if set in prod |
+| L2 | [x] | main.py:100 | `APP_SECRET` insecure default `"dev-secret-change-me"` — check if set in prod |
 | L3 | [ ] | main.py:144 | `SCRAPER_API_TOKEN` hardcoded in source |
 | L4 | [ ] | main.py:524 | `_ve_ar_client` hardcoded Entrata API key |
 | L5 | [-] | Multiple (~20 locations) | Bare `except:` clauses (should be `except Exception:`) |
@@ -376,6 +376,26 @@ Full codebase review: ~45,000 lines Python, ~50 HTML templates, 15 Lambda functi
 ### Fix 51: L25 — Ctrl+D overrides browser bookmark
 - **File:** review.html:2905
 - **Fix:** Skip shortcut when focus is on `input`, `textarea`, or `select` elements
+
+### Fix 52: H7 — `_get_last_ubi_periods_from_stage8` performance
+- **File:** main.py:14848
+- **Fix:** Added S3-cached results pattern (`config/ubi_last_periods_cache.json.gz`). Serves from S3 cache immediately, rebuilds in background thread. Cache survives deploys and is shared across instances.
+
+### Fix 53: H8 — `_get_account_bill_history` 360 sequential S3 scans
+- **File:** main.py:15434
+- **Fix:** Replaced 360 day-level prefixes with ~12 month-level prefixes. Added filename-based account filtering. Added parallel reads with `ThreadPoolExecutor(max_workers=10)`.
+
+### Fix 54: M7 — Pipeline stuck query false positives
+- **File:** main.py:12293
+- **Fix:** For each "stuck" candidate, verify current stage by querying latest event. Skip if bill has moved on.
+
+### Fix 55: M25 — `_find_bills_for_account` 900 S3 prefix scans
+- **File:** main.py:15265
+- **Fix:** Replaced 900 day-level prefixes with ~30 month-level prefixes. Added filename-based account filtering before reading. Still uses parallel workers.
+
+### Fix 56: L2 — APP_SECRET insecure default
+- **File:** main.py:101
+- **Fix:** Added startup warning when default secret is used in deployed environment (checks `AWS_EXECUTION_ENV`)
 
 ### Verified as not-a-bug (false positives):
 - H16: Lambda parser globals — properly reset per-record at lines 820-868

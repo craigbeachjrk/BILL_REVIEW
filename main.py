@@ -99,6 +99,8 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 REVIEW_TABLE = os.getenv("REVIEW_TABLE", "jrk-bill-review")
 REVIEW_QUEUE_URL = os.getenv("REVIEW_QUEUE_URL", "")
 APP_SECRET = os.getenv("APP_SECRET", "dev-secret-change-me")
+if APP_SECRET == "dev-secret-change-me" and os.getenv("AWS_EXECUTION_ENV"):
+    print("[SECURITY WARNING] APP_SECRET is using default value in a deployed environment! Set APP_SECRET env var.")
 SESSION_COOKIE = "br_sess"
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600
 SECURE_COOKIES = os.getenv("SECURE_COOKIES", "1") == "1"
@@ -12291,15 +12293,32 @@ def api_pipeline_stuck(threshold_minutes: int = 60, user: str = Depends(require_
                 Limit=50,
             )
             for it in resp.get("Items", []):
+                pk = it.get("pk", {}).get("S", "")
                 ts = int(it.get("timestamp_epoch", {}).get("N", "0"))
                 age_min = (now_epoch - ts) // 60
+                # Verify bill is ACTUALLY still in this stage by checking latest event
+                try:
+                    latest_resp = ddb.query(
+                        TableName=PIPELINE_TRACKER_TABLE,
+                        KeyConditionExpression="pk = :pk",
+                        ExpressionAttributeValues={":pk": {"S": pk}},
+                        ScanIndexForward=False,
+                        Limit=1,
+                    )
+                    latest_items = latest_resp.get("Items", [])
+                    if latest_items:
+                        latest_stage = latest_items[0].get("stage", {}).get("S", "")
+                        if latest_stage != st:
+                            continue  # Bill has moved on — not actually stuck
+                except Exception:
+                    pass  # If check fails, include it anyway (conservative)
                 meta = {}
                 try:
                     meta = json.loads(it.get("metadata", {}).get("S", "{}"))
                 except Exception:
                     pass
                 stuck.append({
-                    "pdf_id": it.get("pk", {}).get("S", "").replace("BILL#", ""),
+                    "pdf_id": pk.replace("BILL#", ""),
                     "filename": it.get("filename", {}).get("S", ""),
                     "stage": st,
                     "age_minutes": age_min,
@@ -14845,20 +14864,64 @@ def _parse_service_period_to_month(date_str: str) -> tuple:
         pass
     return None
 
+_UBI_PERIODS_S3_KEY = "config/ubi_last_periods_cache.json.gz"
+_UBI_PERIODS_REBUILDING = False
+
 def _get_last_ubi_periods_from_stage8() -> dict:
     """Scan Stage 8 to find the last assigned service period and UBI period per account.
     Returns dict of account_key -> {
         "last_service_month": (year, month),  # e.g. (2025, 11)
         "last_ubi_period": "02/2026"
     }
+
+    Uses S3-cached results + background rebuild to avoid blocking requests.
     """
-    global _last_ubi_periods_cache
+    global _last_ubi_periods_cache, _UBI_PERIODS_REBUILDING
     import time
     now = time.time()
 
-    # Return cached if not expired
+    # Return in-memory cache if not expired
     if _last_ubi_periods_cache["expires"] > now and _last_ubi_periods_cache["data"]:
         return _last_ubi_periods_cache["data"]
+
+    # Try loading from S3 cache (survives deploys, shared across instances)
+    if not _last_ubi_periods_cache["data"]:
+        try:
+            import gzip as _gzip
+            obj = s3.get_object(Bucket=BUCKET, Key=_UBI_PERIODS_S3_KEY)
+            payload = json.loads(_gzip.decompress(obj["Body"].read()))
+            cached_data = payload.get("data", {})
+            # Convert list keys back to tuples for service_month
+            for v in cached_data.values():
+                if isinstance(v.get("last_service_month"), list):
+                    v["last_service_month"] = tuple(v["last_service_month"])
+                for a in v.get("all_assignments", []):
+                    if isinstance(a.get("service_month"), list):
+                        a["service_month"] = tuple(a["service_month"])
+            _last_ubi_periods_cache = {"data": cached_data, "expires": now + 300}
+            print(f"[UBI SUGGEST] Loaded {len(cached_data)} accounts from S3 cache")
+            # Trigger background rebuild if cache is older than 1 hour
+            cache_age = now - payload.get("ts", 0)
+            if cache_age > 3600 and not _UBI_PERIODS_REBUILDING:
+                _UBI_PERIODS_REBUILDING = True
+                threading.Thread(target=_rebuild_ubi_periods_cache, daemon=True).start()
+            return cached_data
+        except Exception:
+            pass
+
+    # No cache at all — rebuild synchronously (first call only)
+    if _UBI_PERIODS_REBUILDING:
+        return _last_ubi_periods_cache.get("data", {})
+
+    _UBI_PERIODS_REBUILDING = True
+    result = _rebuild_ubi_periods_cache()
+    return result or {}
+
+
+def _rebuild_ubi_periods_cache() -> dict:
+    """Background-safe rebuild of UBI periods cache. Writes result to S3 + in-memory."""
+    global _last_ubi_periods_cache, _UBI_PERIODS_REBUILDING
+    import time
 
     print("[UBI SUGGEST] Scanning Stage 8 for last assigned periods...")
     start = time.time()
@@ -14980,13 +15043,27 @@ def _get_last_ubi_periods_from_stage8() -> dict:
         elapsed = time.time() - start
         print(f"[UBI SUGGEST] Scanned Stage 8 in {elapsed:.1f}s, found {len(result)} accounts with UBI history")
 
-        # Cache for 5 minutes
+        # Cache in-memory for 5 minutes
+        now = time.time()
         _last_ubi_periods_cache = {"data": result, "expires": now + 300}
+
+        # Persist to S3 so other instances and future deploys get it instantly
+        try:
+            import gzip as _gzip
+            payload = json.dumps({"ts": now, "data": result}).encode("utf-8")
+            s3.put_object(Bucket=BUCKET, Key=_UBI_PERIODS_S3_KEY,
+                          Body=_gzip.compress(payload), ContentType="application/gzip")
+            print(f"[UBI SUGGEST] Persisted cache to S3 ({len(result)} accounts)")
+        except Exception as e:
+            print(f"[UBI SUGGEST] Warning: failed to persist cache to S3: {e}")
+
         return result
 
     except Exception as e:
         print(f"[UBI SUGGEST] Error scanning Stage 8: {e}")
         return {}
+    finally:
+        _UBI_PERIODS_REBUILDING = False
 
 
 def _get_next_ubi_period(current_period: str) -> str:
@@ -15202,56 +15279,59 @@ def _find_bills_for_account(property_id: str, account_number: str, days_back: in
         ("Archive", HIST_ARCHIVE_PREFIX)
     ]
 
-    # Build date prefixes
+    # Build MONTH-level prefixes (6 months * 5 stages = ~30 instead of 900 day-level)
     prefixes_to_scan = []
     today = datetime.now()
-    for i in range(days_back):
-        d = today - timedelta(days=i)
+    seen_months = set()
+    months_back = max(1, days_back // 30)
+    for i in range(months_back):
+        d = today - timedelta(days=i * 30)
+        y, m = d.year, d.month
         for stage_name, stage_prefix in stages:
-            prefix = f"{stage_prefix}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append((stage_name, prefix))
+            month_prefix = f"{stage_prefix}yyyy={y}/mm={m:02d}/"
+            if month_prefix not in seen_months:
+                seen_months.add(month_prefix)
+                prefixes_to_scan.append((stage_name, month_prefix))
+
+    # Filter S3 keys by account number in filename to avoid reading every file
+    account_norm = account_number.replace(" ", "-").replace("/", "-")
 
     def search_prefix(args):
         stage_name, prefix = args
         results = []
         try:
             paginator = s3.get_paginator('list_objects_v2')
-            s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
-            for s3_page in s3_pages:
+            for s3_page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
                 for obj in s3_page.get('Contents', []):
                     key = obj['Key']
                     if not key.endswith('.jsonl'):
                         continue
-
+                    # Fast filename filter — skip files that can't contain this account
+                    if account_norm not in key:
+                        continue
                     try:
                         obj_data = s3.get_object(Bucket=BUCKET, Key=key)
                         txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
-                        lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+                        first_line = txt.split('\n')[0].strip()
+                        if not first_line:
+                            continue
+                        rec = json.loads(first_line)
+                        rec_acct = str(rec.get("Account Number", "")).strip()
+                        rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
 
-                        for line in lines:
-                            try:
-                                rec = json.loads(line)
-                                rec_acct = str(rec.get("Account Number", "")).strip()
-                                rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
-
-                                if rec_acct == account_number:
-                                    # Match on account number
-                                    if not property_id or rec_prop == property_id:
-                                        results.append({
-                                            "stage": stage_name,
-                                            "s3_key": key,
-                                            "account_number": rec_acct,
-                                            "property_id": rec_prop,
-                                            "property_name": rec.get("EnrichedPropertyName", ""),
-                                            "vendor_id": rec.get("EnrichedVendorID", ""),
-                                            "vendor_name": rec.get("EnrichedVendorName", ""),
-                                            "raw_vendor_name": rec.get("Vendor Name", ""),
-                                            "bill_date": rec.get("Bill Date", ""),
-                                            "amount": rec.get("Line Item Charge", ""),
-                                        })
-                                        break  # One bill per file is enough
-                            except json.JSONDecodeError:
-                                continue
+                        if rec_acct == account_number and (not property_id or rec_prop == property_id):
+                            results.append({
+                                "stage": stage_name,
+                                "s3_key": key,
+                                "account_number": rec_acct,
+                                "property_id": rec_prop,
+                                "property_name": rec.get("EnrichedPropertyName", ""),
+                                "vendor_id": rec.get("EnrichedVendorID", ""),
+                                "vendor_name": rec.get("EnrichedVendorName", ""),
+                                "raw_vendor_name": rec.get("Vendor Name", ""),
+                                "bill_date": rec.get("Bill Date", ""),
+                                "amount": rec.get("Line Item Charge", ""),
+                            })
                     except Exception:
                         continue
         except Exception:
@@ -15374,92 +15454,99 @@ def _detect_outlier(amount: float, stats: dict, threshold_z: float = 3.0, thresh
 
 
 def _get_account_bill_history(account_key: str, max_bills: int = 12) -> list[dict]:
-    """Get bill history for an account from Stage 7 and Archive."""
+    """Get bill history for an account from Stage 7 and Archive.
+    Uses month-level prefixes + filename filtering to avoid slow day-level scanning.
+    """
     parts = account_key.split("|")
     if len(parts) != 3:
         return []
     property_id, vendor_id, account_number = parts
     bills = []
 
-    # Scan last 6 months of Stage 7 and Archive
+    # Scan last 6 months — use MONTH-level prefixes (12 instead of 360 day-level)
     today = dt.date.today()
     prefixes_to_scan = []
+    seen_months = set()
 
-    for i in range(180):  # Last 6 months
-        d = today - dt.timedelta(days=i)
-        y, m, day = d.strftime('%Y'), d.strftime('%m'), d.strftime('%d')
-        prefixes_to_scan.append(f"{POST_ENTRATA_PREFIX}yyyy={y}/mm={m}/dd={day}/")
-        prefixes_to_scan.append(f"{HIST_ARCHIVE_PREFIX}yyyy={y}/mm={m}/dd={day}/")
+    for i in range(6):
+        d = today - dt.timedelta(days=i * 30)
+        y, m = d.strftime('%Y'), d.strftime('%m')
+        for stage_prefix in (POST_ENTRATA_PREFIX, HIST_ARCHIVE_PREFIX):
+            month_prefix = f"{stage_prefix}yyyy={y}/mm={m}/"
+            if month_prefix not in seen_months:
+                seen_months.add(month_prefix)
+                prefixes_to_scan.append(month_prefix)
 
+    # List matching files (filter by account number in filename to avoid reading every file)
+    account_norm = account_number.replace(" ", "-").replace("/", "-")
+    matching_keys = []
     paginator = s3.get_paginator('list_objects_v2')
-    seen_invoices = set()
-
     for prefix in prefixes_to_scan:
-        if len(bills) >= max_bills:
-            break
         try:
             for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
                 for obj in page.get("Contents", []) or []:
-                    if len(bills) >= max_bills:
-                        break
                     key = obj.get("Key", "")
-                    if not key.endswith('.jsonl'):
-                        continue
+                    if key.endswith('.jsonl') and account_norm in key:
+                        matching_keys.append(key)
+        except Exception:
+            pass
 
+    # Read matched files in parallel
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    seen_invoices = set()
+
+    def _read_file(key):
+        try:
+            file_obj = s3.get_object(Bucket=BUCKET, Key=key)
+            content = file_obj['Body'].read().decode('utf-8', errors='ignore')
+            first_line = content.split('\n')[0].strip()
+            if not first_line:
+                return None
+            rec = json.loads(first_line)
+
+            rec_acct = str(rec.get("Account Number", "") or rec.get("Line Item Account Number", "")).strip()
+            rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
+
+            if rec_acct != account_number or rec_prop != property_id:
+                return None
+
+            invoice_num = rec.get("Invoice Number", "")
+
+            # Sum all line items
+            total = 0.0
+            for line in content.strip().split('\n'):
+                if not line.strip():
+                    continue
+                try:
+                    line_rec = json.loads(line)
+                    amt = line_rec.get("Line Item Charge") or line_rec.get("AMOUNT") or 0
                     try:
-                        file_obj = s3.get_object(Bucket=BUCKET, Key=key)
-                        content = file_obj['Body'].read().decode('utf-8', errors='ignore')
+                        total += float(str(amt).replace('$', '').replace(',', ''))
+                    except (ValueError, TypeError):
+                        pass
+                except json.JSONDecodeError:
+                    continue
 
-                        # Check first line for account match
-                        first_line = content.split('\n')[0].strip()
-                        if not first_line:
-                            continue
-                        rec = json.loads(first_line)
+            bill_date = rec.get("Bill Date", "") or rec.get("Invoice Date", "")
+            return {
+                "invoice": invoice_num,
+                "date": bill_date,
+                "amount": round(total, 2),
+                "s3_key": key
+            }
+        except Exception:
+            return None
 
-                        rec_acct = str(rec.get("Account Number", "") or rec.get("Line Item Account Number", "")).strip()
-                        rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
-                        rec_vendor = str(rec.get("EnrichedVendorID", "")).strip()
-
-                        if rec_acct != account_number:
-                            continue
-                        if rec_prop != property_id:
-                            continue
-                        # Vendor can sometimes differ due to corrections, so be lenient
-
-                        # Get invoice total
-                        invoice_num = rec.get("Invoice Number", "")
-                        if invoice_num in seen_invoices:
-                            continue
-                        seen_invoices.add(invoice_num)
-
-                        # Sum all line items
-                        total = 0.0
-                        for line in content.strip().split('\n'):
-                            if not line.strip():
-                                continue
-                            try:
-                                line_rec = json.loads(line)
-                                amt = line_rec.get("Line Item Charge") or line_rec.get("AMOUNT") or 0
-                                try:
-                                    total += float(str(amt).replace('$', '').replace(',', ''))
-                                except (ValueError, TypeError):
-                                    pass
-                            except json.JSONDecodeError:
-                                continue
-
-                        bill_date = rec.get("Bill Date", "") or rec.get("Invoice Date", "")
-
-                        bills.append({
-                            "invoice": invoice_num,
-                            "date": bill_date,
-                            "amount": round(total, 2),
-                            "s3_key": key
-                        })
-
-                    except Exception as e:
-                        continue
-        except Exception as e:
-            continue
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_read_file, k): k for k in matching_keys[:max_bills * 3]}
+        for f in as_completed(futures, timeout=30):
+            try:
+                result = f.result()
+                if result and result["invoice"] not in seen_invoices:
+                    seen_invoices.add(result["invoice"])
+                    bills.append(result)
+            except Exception:
+                pass
 
     # Sort by date descending
     bills.sort(key=lambda x: x.get("date", ""), reverse=True)
