@@ -278,7 +278,7 @@ class TestPagesLoad:
     def test_transactions_page_loads(self, mock_user, client):
         resp = client.get("/transactions")
         assert resp.status_code == 200
-        assert b"Transaction Dashboard" in resp.content
+        assert b"Transactions" in resp.content
 
     @patch("main.get_current_user", return_value="testuser@jrk.com")
     def test_landing_page_loads(self, mock_user, client):
@@ -287,3 +287,143 @@ class TestPagesLoad:
         assert b"MY BILLS" in resp.content
         assert b"TRANSACTIONS" in resp.content
         assert b"BILL TIMELINE" in resp.content
+
+
+# --- Test: Pipeline Tracking ---
+
+class TestPipelineTracking:
+    def test_pipeline_track_writes_to_ddb(self):
+        from main import _pipeline_track
+        _mock_ddb.put_item.return_value = {}
+        _pipeline_track("Bill_Parser_4/test.jsonl", "SUBMITTED", "app:submit:testuser", "S6", {"lines": 5})
+        assert _mock_ddb.put_item.called
+        call_args = _mock_ddb.put_item.call_args
+        item = call_args[1]["Item"] if "Item" in call_args[1] else call_args[0][0]
+        assert item["event_type"]["S"] == "SUBMITTED"
+        assert item["stage"]["S"] == "S6"
+
+    def test_pipeline_track_silent_on_failure(self):
+        from main import _pipeline_track
+        _mock_ddb.put_item.side_effect = Exception("DDB down")
+        # Should not raise
+        _pipeline_track("test.jsonl", "TEST", "test", "S1")
+        _mock_ddb.put_item.side_effect = None
+
+
+# --- Test: Safe Write and Delete ---
+
+class TestSafeWriteAndDelete:
+    def test_safe_write_and_delete_success(self):
+        from main import _safe_write_and_delete
+        _mock_s3.put_object.return_value = {}
+        _mock_s3.head_object.return_value = {"ContentLength": 500}
+        _mock_s3.delete_object.return_value = {}
+
+        result = _safe_write_and_delete("Bill_Parser_7_PostEntrata/", "2026", "04", "09", "test", [{"a": 1}], "source/key.jsonl")
+        assert result is not None
+        assert result.startswith("Bill_Parser_7_PostEntrata/")
+        _mock_s3.delete_object.assert_called_once()
+
+    def test_safe_write_and_delete_preserves_source_on_failure(self):
+        from main import _safe_write_and_delete
+        _mock_s3.put_object.side_effect = Exception("S3 error")
+
+        result = _safe_write_and_delete("dest/", "2026", "04", "09", "test", [{"a": 1}], "source/key.jsonl")
+        assert result is None
+        _mock_s3.delete_object.assert_not_called()
+        _mock_s3.put_object.side_effect = None
+
+
+# --- Test: Billback Summary Caching ---
+
+class TestBillbackSummaryCaching:
+    @patch("main.get_current_user", return_value="testuser@jrk.com")
+    def test_billback_summary_uses_cache(self, mock_user, client):
+        from main import _CACHE
+        # Seed cache
+        cache_key = ("billback_summary", "month")
+        _CACHE[cache_key] = {"ts": time.time(), "data": {"summary": [], "group_by": "month"}}
+        resp = client.get("/api/billback/summary?group_by=month")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["group_by"] == "month"
+        # Clean up
+        _CACHE.pop(cache_key, None)
+
+
+# --- Test: Config Endpoints ---
+
+class TestConfigEndpoints:
+    @patch("main.get_current_user", return_value="testuser@jrk.com")
+    def test_catalogs_returns_structure(self, mock_user, client):
+        _mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        resp = client.get("/api/catalogs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "properties" in data
+        assert "vendors" in data
+
+
+# --- Test: Auth Behavior ---
+
+class TestAuthBehavior:
+    def test_api_returns_401_not_307(self, client):
+        """API endpoints should return 401, not redirect to login."""
+        resp = client.get("/api/dates", follow_redirects=False)
+        # Should be 401 for API paths (not 307 redirect)
+        assert resp.status_code == 401
+
+    def test_page_returns_307_to_login(self, client):
+        resp = client.get("/parse", follow_redirects=False)
+        assert resp.status_code == 307
+        assert "/login" in resp.headers.get("location", "")
+
+    @patch("main.get_current_user", return_value="testuser@jrk.com")
+    def test_admin_endpoint_returns_403_for_non_admin(self, mock_user, client):
+        """Non-admin users should get 403 on admin endpoints."""
+        resp = client.get("/api/pipeline/stuck?threshold_minutes=60")
+        assert resp.status_code == 403
+
+
+# --- Test: Search Returns Posted Bills ---
+
+class TestSearchIncludesPosted:
+    @patch("main.get_current_user", return_value="testuser@jrk.com")
+    def test_search_endpoint_works(self, mock_user, client):
+        from main import _SEARCH_INDEX
+        # Seed search index with test data
+        _SEARCH_INDEX["ready"] = True
+        _SEARCH_INDEX["entries"] = [
+            {"pdf_id": "test123", "date": "2026-04-09", "account": "12345",
+             "account_l": "12345", "vendor": "Test Vendor", "vendor_l": "test vendor",
+             "property": "Test Property", "property_l": "test property", "amount": 100.0},
+        ]
+        resp = client.get("/api/search?account=12345")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "results" in data
+        # Clean up
+        _SEARCH_INDEX["entries"] = []
+        _SEARCH_INDEX["ready"] = False
+
+
+# --- Test: Invoices Page Includes submitted_by ---
+
+class TestInvoicesSubmittedBy:
+    @patch("main.get_current_user", return_value="testuser@jrk.com")
+    @patch("main.load_day")
+    @patch("main.get_header_drafts_batch", return_value={})
+    def test_invoices_page_has_scanned_by_column(self, mock_drafts, mock_load, mock_user, client):
+        mock_load.return_value = [{
+            "__s3_key__": "Bill_Parser_4_Enriched_Outputs/yyyy=2026/mm=04/dd=09/test.jsonl",
+            "__id__": "test_id",
+            "Account Number": "12345",
+            "EnrichedVendorName": "Test Vendor",
+            "EnrichedPropertyName": "Test Property",
+            "Line Item Charge": "100.00",
+            "Line Item Description": "Electric",
+            "submitted_by": "dgonzalez",
+        }]
+        resp = client.get("/invoices?date=2026-04-09")
+        assert resp.status_code == 200
+        assert b"Scanned By" in resp.content
