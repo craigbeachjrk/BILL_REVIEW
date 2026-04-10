@@ -262,7 +262,7 @@
         if(v&&k!=='submitted_by')tags.push(`${escapeHtml(k)}: ${escapeHtml(String(v).substring(0,60))}`);
       }
       const ts=ev.timestamp||'';
-      const timeStr=ts?new Date(ts.endsWith('Z')?ts:ts+'Z').toLocaleString():'';
+      const timeStr=ts?(()=>{let s=ts;if(s.endsWith('+00:00'))s=s.replace('+00:00','Z');else if(!s.endsWith('Z'))s+='Z';const d=new Date(s);return isNaN(d)?'':d.toLocaleString();})():'';
       const evCls=EVENT_CLASSES[ev.event_type]||'ev-action';
 
       tlHtml+=`<div class="tl-event ${evCls}">

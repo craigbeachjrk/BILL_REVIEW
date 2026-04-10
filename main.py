@@ -12479,10 +12479,45 @@ def api_transactions_summary(hours: int = 24, user: str = Depends(require_user))
         today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
         yesterday = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
-        stage_counts = {}  # stage -> count of bills currently in that stage
+        stage_counts = {}  # stage -> count (kept for backward compat)
+        event_type_counts = {}  # event_type -> count
         hourly = {}  # hour -> {event_type -> count}
         by_user = {}  # user -> count
         recent_events = []  # last 50 events
+
+        def _process_item(item):
+            epoch = int(item.get("timestamp_epoch", {}).get("N", "0"))
+            if epoch < cutoff:
+                return
+            event_type = item.get("event_type", {}).get("S", "")
+            stage = item.get("stage", {}).get("S", "")
+            source = item.get("source", {}).get("S", "")
+
+            # Stage counts (raw event count per stage — kept for backward compat)
+            stage_counts[stage] = stage_counts.get(stage, 0) + 1
+
+            # Event type counts — more granular breakdown
+            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+
+            # Hourly breakdown
+            hour = dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime("%H:00")
+            if hour not in hourly:
+                hourly[hour] = {}
+            hourly[hour][event_type] = hourly[hour].get(event_type, 0) + 1
+
+            # By user
+            user_part = source.split(":")[-1] if ":" in source else source
+            by_user[user_part] = by_user.get(user_part, 0) + 1
+
+            # Recent events
+            if len(recent_events) < 50:
+                recent_events.append({
+                    "event_type": event_type,
+                    "stage": stage,
+                    "source": source,
+                    "filename": item.get("filename", {}).get("S", ""),
+                    "time": item.get("sk", {}).get("S", "").replace("EVENT#", ""),
+                })
 
         for event_date in [today, yesterday]:
             try:
@@ -12493,37 +12528,7 @@ def api_transactions_summary(hours: int = 24, user: str = Depends(require_user))
                     ExpressionAttributeValues={":d": {"S": event_date}},
                 )
                 for item in resp.get("Items", []):
-                    epoch = int(item.get("timestamp_epoch", {}).get("N", "0"))
-                    if epoch < cutoff:
-                        continue
-                    event_type = item.get("event_type", {}).get("S", "")
-                    stage = item.get("stage", {}).get("S", "")
-                    source = item.get("source", {}).get("S", "")
-
-                    # Stage counts (latest event per bill determines current stage)
-                    stage_counts[stage] = stage_counts.get(stage, 0) + 1
-
-                    # Hourly breakdown
-                    hour = dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime("%H:00")
-                    if hour not in hourly:
-                        hourly[hour] = {}
-                    hourly[hour][event_type] = hourly[hour].get(event_type, 0) + 1
-
-                    # By user
-                    user_part = source.split(":")[-1] if ":" in source else source
-                    by_user[user_part] = by_user.get(user_part, 0) + 1
-
-                    # Recent events
-                    if len(recent_events) < 50:
-                        recent_events.append({
-                            "event_type": event_type,
-                            "stage": stage,
-                            "source": source,
-                            "filename": item.get("filename", {}).get("S", ""),
-                            "time": item.get("sk", {}).get("S", "").replace("EVENT#", ""),
-                        })
-
-                # Handle pagination
+                    _process_item(item)
                 while resp.get("LastEvaluatedKey"):
                     resp = ddb.query(
                         TableName=PIPELINE_TRACKER_TABLE,
@@ -12533,19 +12538,30 @@ def api_transactions_summary(hours: int = 24, user: str = Depends(require_user))
                         ExclusiveStartKey=resp["LastEvaluatedKey"],
                     )
                     for item in resp.get("Items", []):
-                        epoch = int(item.get("timestamp_epoch", {}).get("N", "0"))
-                        if epoch < cutoff:
-                            continue
-                        event_type = item.get("event_type", {}).get("S", "")
-                        stage = item.get("stage", {}).get("S", "")
-                        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+                        _process_item(item)
             except Exception as e:
                 print(f"[TRANSACTIONS] Query error for {event_date}: {e}")
 
         recent_events.sort(key=lambda x: x.get("time", ""), reverse=True)
 
+        # Build pipeline funnel from event_type counts (not raw stage counts)
+        # Each completed event = 1 bill that made it through that stage
+        pipeline_funnel = [
+            {"label": "Received", "count": event_type_counts.get("RECEIVED", 0), "failed": 0},
+            {"label": "Routed", "count": event_type_counts.get("ROUTED_STANDARD", 0) + event_type_counts.get("ROUTED_LARGE", 0), "failed": 0},
+            {"label": "Parsed", "count": event_type_counts.get("PARSE_COMPLETED", 0),
+             "failed": event_type_counts.get("PARSE_FAILED", 0)},
+            {"label": "Enriched", "count": event_type_counts.get("ENRICHED", 0),
+             "failed": event_type_counts.get("ENRICHMENT_FAILED", 0)},
+            {"label": "Pre-Entrata", "count": event_type_counts.get("SUBMITTED", 0) + event_type_counts.get("ADVANCED_TO_POST", 0), "failed": 0},
+            {"label": "Posted", "count": event_type_counts.get("POSTED", 0), "failed": 0},
+            {"label": "UBI Assigned", "count": event_type_counts.get("UBI_ASSIGNED", 0), "failed": 0},
+        ]
+
         result = {
             "stage_counts": stage_counts,
+            "event_type_counts": event_type_counts,
+            "pipeline_funnel": pipeline_funnel,
             "hourly": hourly,
             "by_user": by_user,
             "recent_events": recent_events[:50],

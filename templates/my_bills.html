@@ -107,8 +107,8 @@
       let html='<table><thead><tr><th>File</th><th>Stage</th><th>Latest Event</th><th>First Seen</th><th>Updated</th><th></th></tr></thead><tbody>';
       bills.forEach(b=>{
         const bc='badge-'+(b.current_stage||'').replace(/[^a-zA-Z0-9_]/g,'');
-        const t1=b.first_seen?new Date(b.first_seen.endsWith('Z')?b.first_seen:b.first_seen+'Z').toLocaleString():'';
-        const t2=b.latest_time?new Date(b.latest_time.endsWith('Z')?b.latest_time:b.latest_time+'Z').toLocaleString():'';
+        const t1=b.first_seen?(()=>{let s=b.first_seen;if(s.endsWith('+00:00'))s=s.replace('+00:00','Z');else if(!s.endsWith('Z'))s+='Z';const d=new Date(s);return isNaN(d)?'':d.toLocaleString();})():'';
+        const t2=b.latest_time?(()=>{let s=b.latest_time;if(s.endsWith('+00:00'))s=s.replace('+00:00','Z');else if(!s.endsWith('Z'))s+='Z';const d=new Date(s);return isNaN(d)?'':d.toLocaleString();})():'';
         html+=`<tr>
           <td class="fname">${esc(b.filename||b.pdf_id.substring(0,14)+'...')}</td>
           <td><span class="badge ${bc}">${esc(SL[b.current_stage]||b.current_stage)}</span></td>

@@ -42,6 +42,9 @@
     .stage-count{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--cyan)}
     .stage-count.warn{color:var(--amber)}
     .stage-count.err{color:var(--red)}
+    .stage-failed{font-size:11px;font-family:var(--mono);color:var(--red);font-weight:600;margin-left:8px}
+    .stage-bar{height:3px;border-radius:2px;margin-top:6px;background:var(--edge);overflow:hidden}
+    .stage-bar-fill{height:100%;border-radius:2px;background:var(--cyan);transition:width .4s ease}
     .chart-wrap{height:240px;position:relative}
     .user-row{display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(42,53,72,.3)}
     .user-row:last-child{border:none}
@@ -100,22 +103,36 @@
   </div>
 <script>
   let hChart=null;
-  const SL={'S1':'Received','S1_standard':'Parsing','S1_largefile':'Lg Parse','S3':'Parsed','S4':'Enriched','S6':'Pre-Entrata','S7':'Posted','S8':'UBI Assigned','ARCHIVE':'Archived'};
-  const SO=['S1','S3','S4','S6','S7','S8','ARCHIVE'];
   function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
 
   async function load(){
     try{
       const resp=await fetch('/api/transactions/summary?hours=24');
       if(resp.status===401){window.location='/login';return}
-      const d=await resp.json();const sc=d.stage_counts||{};
+      const d=await resp.json();
+      const sc=d.stage_counts||{};
+      const funnel=d.pipeline_funnel||[];
 
       let sh='';
-      SO.forEach(s=>{const c=sc[s]||0;if(c>0||['S1','S4','S7','S8'].includes(s))
-        sh+=`<div class="stage-row"><span class="stage-name">${esc(SL[s]||s)}</span><span class="stage-count">${c}</span></div>`;
+      const maxCount=Math.max(1,...funnel.map(f=>f.count+f.failed));
+      funnel.forEach(f=>{
+        if(f.count===0&&f.failed===0) return;
+        const barPct=Math.round((f.count/maxCount)*100);
+        sh+=`<div class="stage-row">
+          <div style="flex:1">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span class="stage-name">${esc(f.label)}</span>
+              <span>
+                <span class="stage-count">${f.count}</span>
+                ${f.failed?'<span class="stage-failed">'+f.failed+' failed</span>':''}
+              </span>
+            </div>
+            <div class="stage-bar"><div class="stage-bar-fill" style="width:${barPct}%"></div></div>
+          </div>
+        </div>`;
       });
       ['FAILED','DELETED','REWORK'].forEach(s=>{if(sc[s])
-        sh+=`<div class="stage-row"><span class="stage-name" style="color:var(--red)">${esc(SL[s]||s)}</span><span class="stage-count err">${sc[s]}</span></div>`;
+        sh+=`<div class="stage-row"><span class="stage-name" style="color:var(--red)">${esc(s)}</span><span class="stage-count err">${sc[s]}</span></div>`;
       });
       document.getElementById('stageCards').innerHTML=sh||'<div class="empty-state">No activity</div>';
 
@@ -141,7 +158,7 @@
 
       const evts=d.recent_events||[];
       let fh='';evts.forEach(ev=>{
-        const t=ev.time?new Date(ev.time.endsWith('Z')?ev.time:ev.time+'Z').toLocaleTimeString():'';
+        const t=ev.time?(()=>{let s=ev.time;if(s.endsWith('+00:00'))s=s.replace('+00:00','Z');else if(!s.endsWith('Z'))s+='Z';const d=new Date(s);return isNaN(d)?'':d.toLocaleTimeString();})():'';
         fh+=`<div class="feed-item">
           <span class="ev-tag ${esc(ev.event_type)}">${esc(ev.event_type)}</span>
           <span class="feed-file">${esc((ev.filename||'').substring(0,35))}</span>
