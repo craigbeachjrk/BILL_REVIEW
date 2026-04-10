@@ -11,28 +11,35 @@
 
 ## Summary
 
-| Category | Count | Details |
-|----------|-------|---------|
-| API endpoints OK | 85 | Responded correctly <10s |
-| API endpoints SLOW (>10s) | 7 | Need caching or optimization |
-| API endpoints FAILED | 20 | 8 timeouts, 5 HTTP 500, 7 HTTP 400/422 |
-| HTML pages OK | 49 | All loaded correctly |
-| HTML pages SLOW | 1 | `/parse` cold start 15.6s |
-| HTML pages FAILED | 1 | `/review` needs pdf_id param (expected) |
+| Category | Healthy | Broken | Details |
+|----------|---------|--------|---------|
+| API endpoints | 85/112 | 13 real failures | 5 crash (500), 8 timeout. 7 more need params (expected) |
+| HTML pages | 49/51 | 0 real failures | `/parse` slow on cold start, `/review` needs pdf_id |
+| Lambda functions | 37/41 | 4 broken | Package errors, IAM gaps, missing config |
+| EventBridge rules | ~80/90 | 4 critical | Ghost test job, 2 broken API methods, 1 crash loop |
+| Vendor pipeline | Fixed today | Was broken 30 days | OOM + disconnected data paths |
+| Monitoring/alerting | 0 alarms | n/a | Nothing catches any of this |
 
 ---
 
-## CRITICAL: 500 Errors (5 endpoints)
+## CRITICAL: 500 Errors (5 endpoints) — ROOT CAUSES FOUND
 
-These endpoints crash on every request:
+| Endpoint | Root Cause | Fix |
+|----------|-----------|-----|
+| `/api/billback/summary` | **IAM: No permissions on `jrk-bill-billback-master` table.** AppRunner role has zero DDB access for this table. `ddb.scan()` at line 5173 throws AccessDeniedException. | Add DDB Scan/PutItem/Query to instance role for `jrk-bill-billback-master` |
+| `/api/metrics/late-fees` | **Missing `import pytz`.** Line 13639 calls `pytz.timezone("America/Los_Angeles")` but pytz is never imported. Immediate NameError. | Add `import pytz` to main.py (or replace with `zoneinfo.ZoneInfo`) |
+| `/api/ai-review/stats` | **IAM: No permissions on `jrk-bill-ai-suggestions` table.** Scan at line 32935 throws AccessDeniedException. Table has 8,960 items. | Add DDB full access to instance role for `jrk-bill-ai-suggestions` |
+| `/api/ai-learning/stats` | Same as above — same table, same IAM gap | Same fix as ai-review/stats |
+| `/api/ai-learning/quarantined` | Same as above — same table, same IAM gap | Same fix as ai-review/stats |
 
-| Endpoint | Error | Status |
-|----------|-------|--------|
-| `/api/billback/summary` | `Error during request` | INVESTIGATING |
-| `/api/metrics/late-fees` | `Error during request` | INVESTIGATING |
-| `/api/ai-review/stats` | `Error during ai stats` | INVESTIGATING |
-| `/api/ai-learning/stats` | `Error during learning stats` | INVESTIGATING |
-| `/api/ai-learning/quarantined` | `Error during quarantined patterns` | INVESTIGATING |
+### Bonus finding
+`jrk-bill-config` IAM policy missing `UpdateItem`/`Scan`/`DeleteItem` — only has GetItem/PutItem/Query. Causing `[POST LOCK] ERROR` in invoice posting pipeline.
+
+### Required fixes (3 total):
+1. **IAM:** Add `jrk-bill-ai-suggestions` table access to `jrk-bill-review-instance-role`
+2. **IAM:** Add `jrk-bill-billback-master` table access to `jrk-bill-review-instance-role`
+3. **Code:** Add `import pytz` to main.py (line ~55)
+4. **IAM (bonus):** Add UpdateItem/Scan/DeleteItem to `jrk-bill-config` policy
 
 ---
 
@@ -82,6 +89,33 @@ These need specific query parameters — not bugs, just incomplete test:
 | `/api/accrual/calculate` | 400 | Property/period params |
 | `/api/options` | 422 | `date` param |
 | `/api/drafts?date=2026-04-10` | 422 | Additional params |
+
+---
+
+## AWS Infrastructure Issues Found
+
+## EventBridge Cron Jobs (90 rules scanned)
+
+### CRITICAL
+
+| Rule | Issue |
+|------|-------|
+| `jrk-data-feeds-job-3a42fc4f` | **GHOST TEST JOB overwriting real vendor data.** Named "Test Vendors", runs every 4h, writes 1-record file to same S3 path as real vendor feed (`RAW/ENTRATA/VENDORS/`). Overwrites 7,195 real records with 1 test record 6x/day. **DISABLE IMMEDIATELY.** |
+| `jrk-acq-daily-sheets-sync` | **100% failure.** Triggers `jrk-acq-sheets-sync` which can't import (cryptography package). Retrying 100-476x/day. Broken since at least Mar 27. |
+| `entrata-ar-payments` | **Entrata API broken.** Every invocation returns `HTTP 400: Method name not found`. Zero data collected. |
+| `entrata-ar-invoices` | **Same Entrata API error.** 95 properties x hourly = thousands of API errors/day. |
+
+### ISSUES
+
+| Rule | Issue |
+|------|-------|
+| `jrk-data-feeds-entrata-work-orders` | Duplicate targets — fires the same job twice per schedule |
+| `jrk-lease-audit-reclassify-batch` | Stale one-time rule (Feb 16), still enabled, will never fire again |
+| 4x `entrata-specials` versions + 2x `floor-plans` | Possible redundant duplicates |
+
+### GOOD NEWS
+- `jrk-data-feeds-entrata-vendors` — **WORKING.** Handler exists, runs daily, fetches ~7,195 vendors. Astound issue was in the vendor-cache-builder, not the data feed.
+- 60+ other rules all healthy and firing on schedule
 
 ---
 
