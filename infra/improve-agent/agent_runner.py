@@ -349,13 +349,15 @@ def build_prompt(report: dict, screenshot_urls: list[str]) -> str:
 # Git / Claude / PR helpers
 # ---------------------------------------------------------------------------
 def run_cmd(cmd: list[str], cwd: str | None = None, env: dict | None = None,
-            check: bool = True) -> subprocess.CompletedProcess:
+            check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess:
     """Run a shell command, log it, return result."""
     merged_env = {**os.environ, **(env or {})}
+    if timeout is None:
+        timeout = int(os.environ.get("CLAUDE_TIMEOUT", "3600"))
     log(f"$ {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, env=merged_env,
                             capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", timeout=3600)
+                            errors="replace", timeout=timeout)
     if result.stdout:
         # Truncate long output for logging
         out = result.stdout[:2000]
@@ -390,17 +392,32 @@ def create_branch(report: dict) -> str:
     return branch
 
 
+class AgentTimeoutError(Exception):
+    """Raised when the Claude Code subprocess exceeds its time limit."""
+    pass
+
+
 def run_claude(prompt: str, anthropic_key: str) -> dict:
     """Run Claude Code CLI and return parsed JSON output."""
     env = {"ANTHROPIC_API_KEY": anthropic_key}
     model = os.environ.get("CLAUDE_MODEL", "sonnet")
-    result = run_cmd(
-        ["claude", "-p", prompt, "--dangerously-skip-permissions",
-         "--output-format", "json", "--model", model],
-        cwd=CLONE_DIR,
-        env=env,
-        check=False,
-    )
+    timeout_s = int(os.environ.get("CLAUDE_TIMEOUT", "3600"))
+    try:
+        result = run_cmd(
+            ["claude", "-p", prompt, "--dangerously-skip-permissions",
+             "--output-format", "json", "--model", model],
+            cwd=CLONE_DIR,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        minutes = timeout_s // 60
+        raise AgentTimeoutError(
+            f"The agent did not finish within the {minutes}-minute time limit. "
+            f"This usually happens with complex data investigations that require "
+            f"many AWS lookups. The investigation was cut short — no results are "
+            f"available. You can retry, or investigate manually."
+        )
     # Try to parse JSON even on non-zero exit (Claude may return valid
     # JSON with is_error=true, e.g. "Credit balance is too low")
     output = {}
@@ -673,6 +690,18 @@ def main():
         # 11. Send success email
         send_result_email(report, pr_url, agent_summary, True)
         log("Done — success!")
+
+    except AgentTimeoutError as e:
+        timeout_msg = str(e)
+        log(f"TIMEOUT: {timeout_msg}")
+        try:
+            update_status(REPORT_ID, "Agent Timed Out", extra={
+                "agent_error": timeout_msg,
+            })
+        except Exception:
+            pass
+        send_result_email(report, "", timeout_msg, False)
+        sys.exit(1)
 
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
