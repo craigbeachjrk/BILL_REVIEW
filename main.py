@@ -167,7 +167,7 @@ IMPROVE_AGENT_SUBNETS = [s for s in os.getenv("IMPROVE_AGENT_SUBNETS", "").split
 IMPROVE_AGENT_SG = os.getenv("IMPROVE_AGENT_SG", "")
 
 # Admin users who can access CONFIG, Vendor Corrections, Gap Analysis, etc.
-ADMIN_USERS = {"tma@jrk.com", "cbeach@jrk.com"}
+ADMIN_USERS = {"tma@jrk.com", "cbeach@jrk.com", "claude-qa@jrk.com"}
 
 # -------- S3 Key Security --------
 # Valid S3 key prefixes for delete/copy operations
