@@ -12517,6 +12517,7 @@ def api_transactions_summary(hours: int = 24, user: str = Depends(require_user))
                     "source": source,
                     "filename": item.get("filename", {}).get("S", ""),
                     "time": item.get("sk", {}).get("S", "").replace("EVENT#", ""),
+                    "epoch": epoch,
                 })
 
         for event_date in [today, yesterday]:
@@ -12546,11 +12547,15 @@ def api_transactions_summary(hours: int = 24, user: str = Depends(require_user))
 
         # Build pipeline funnel from event_type counts (not raw stage counts)
         # Each completed event = 1 bill that made it through that stage
+        # Event type names come from production DynamoDB, not Lambda source files on disk.
+        # Verified via /api/transactions/summary on 2026-04-10:
+        #   RECEIVED, ROUTED, PARSING, PARSED, ENRICHING, ENRICHED,
+        #   SUBMITTED, ADVANCED_TO_POST, POSTED, FAILED, DELETED
         pipeline_funnel = [
             {"label": "Received", "count": event_type_counts.get("RECEIVED", 0), "failed": 0},
-            {"label": "Routed", "count": event_type_counts.get("ROUTED_STANDARD", 0) + event_type_counts.get("ROUTED_LARGE", 0), "failed": 0},
-            {"label": "Parsed", "count": event_type_counts.get("PARSE_COMPLETED", 0),
-             "failed": event_type_counts.get("PARSE_FAILED", 0)},
+            {"label": "Routed", "count": event_type_counts.get("ROUTED", 0) + event_type_counts.get("ROUTED_STANDARD", 0) + event_type_counts.get("ROUTED_LARGE", 0), "failed": 0},
+            {"label": "Parsed", "count": event_type_counts.get("PARSED", 0) + event_type_counts.get("PARSE_COMPLETED", 0),
+             "failed": event_type_counts.get("FAILED", 0) + event_type_counts.get("PARSE_FAILED", 0)},
             {"label": "Enriched", "count": event_type_counts.get("ENRICHED", 0),
              "failed": event_type_counts.get("ENRICHMENT_FAILED", 0)},
             {"label": "Pre-Entrata", "count": event_type_counts.get("SUBMITTED", 0) + event_type_counts.get("ADVANCED_TO_POST", 0), "failed": 0},

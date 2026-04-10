@@ -158,7 +158,7 @@
 
       const evts=d.recent_events||[];
       let fh='';evts.forEach(ev=>{
-        const t=ev.time?(()=>{let s=ev.time;if(s.endsWith('+00:00'))s=s.replace('+00:00','Z');else if(!s.endsWith('Z'))s+='Z';const d=new Date(s);return isNaN(d)?'':d.toLocaleTimeString();})():'';
+        const t=ev.epoch?new Date(ev.epoch*1000).toLocaleTimeString():'';
         fh+=`<div class="feed-item">
           <span class="ev-tag ${esc(ev.event_type)}">${esc(ev.event_type)}</span>
           <span class="feed-file">${esc((ev.filename||'').substring(0,35))}</span>
