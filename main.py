@@ -23992,11 +23992,10 @@ def api_track(request: Request, user: str = Depends(require_user)):
     archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, months))
     stage7.extend(_parse_records_from_keys(archive_keys))
 
-    # S4: still needs file reads (filenames are timestamps, not parseable)
-    # But S4 has far fewer files than S6/S7/Archive
-    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, months))
-    stage4 = _read_json_records_from_s3(stage4_keys)
-    print(f"[TRACK] Parsed {len(stage6)} S6 + {len(stage7)} S7/archive from filenames, read {len(stage4)} S4 from files ({len(stage4_keys)} keys)")
+    # S4 skipped: 30K+ files, unparseable filenames, pre-submission bills only.
+    # S6/S7/Archive cover all submitted/posted/archived bills which is what track needs.
+    stage4 = []
+    print(f"[TRACK] Parsed {len(stage6)} S6 + {len(stage7)} S7/archive from filenames (S4 skipped — pre-submission only)")
 
     def norm_rec(rec: dict) -> dict:
         pid = rec.get("EnrichedPropertyID") or rec.get("propertyId") or rec.get("PropertyID")
