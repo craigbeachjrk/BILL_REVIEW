@@ -165,3 +165,46 @@ These need specific query parameters — not bugs, just incomplete test:
 - **5 functions never invoked:** audit-addenda-extractor, audit-charge-analyzer, audit-gl-reconciler, vendor-notifier, vendor-validator (deployed but no triggers)
 - **9 lease-audit functions:** Haven't run in 30+ days (on-demand, not scheduled)
 - **jrk-data-feeds-reporter + jrk-forms-analyzer:** Still on Python 3.11 (all others 3.12)
+
+---
+
+## Fixes Applied (2026-04-13)
+
+### API 500 Errors — ALL 5 FIXED
+| Endpoint | Fix | Verified |
+|----------|-----|----------|
+| `/api/billback/summary` | IAM: added `jrk-bill-billback-master` DDB permissions | YES |
+| `/api/metrics/late-fees` | Code: added `import pytz` | YES |
+| `/api/ai-review/stats` | IAM: added `jrk-bill-ai-suggestions` DDB permissions | YES |
+| `/api/ai-learning/stats` | Same IAM fix | YES |
+| `/api/ai-learning/quarantined` | Same IAM fix | YES |
+| (bonus) `jrk-bill-config` post locks | IAM: added UpdateItem/Scan/DeleteItem | YES |
+
+### API Timeouts — ALL 8 FIXED
+All converted to `_metrics_serve()` (S3-persisted cache, survives deploys, serves stale while rebuilding):
+
+| Endpoint | Additional Fix |
+|----------|---------------|
+| `/api/metrics/user-timing` | DDB scan result cached |
+| `/api/metrics/week-over-week` | Replaced in-memory-only cache |
+| `/api/workflow/ap-priority` | Full Stage 8 scan cached |
+| `/api/track` | S3 fallback + **parallelized** `_read_json_records_from_s3` |
+| `/api/billback/ubi/suggestions` | Added cache + 7 invalidation points |
+| `/api/billback/ubi/assigned` | Added cache, period filter post-cache |
+| `/api/workflow/vacant-accounts` | Replaced in-memory `_CACHE` |
+| `/api/master-bills/completion-tracker` | Replaced 5min in-memory cache |
+
+### EventBridge — 3 FIXES
+- Ghost test job `jrk-data-feeds-job-3a42fc4f` — DISABLED
+- Stale rule `jrk-lease-audit-reclassify-batch` — DISABLED
+- Duplicate target on `entrata-work-orders` — REMOVED
+
+### Lambda Fixes
+- `vendor-cache-builder` — memory 512→2048MB, cache rebuilt, dim_vendor synced (FIXED)
+- `jrk-forms-analyzer` — IAM S3 GetObject scope widened from `Forms_Submissions/*` to `*` (FIXED)
+
+### Still Broken (needs manual intervention)
+- `jrk-acq-sheets-sync` — cryptography package incompatible with Python 3.12 (needs repackage)
+- `jrk-hr-compliance-email-sender` — missing S3 config file (needs correct path)
+- `jrk-data-feeds-executor` — 2 Entrata API methods invalid (ar-payments, ar-invoices)
+- IMPROVE agent Docker image — needs Docker Desktop to rebuild
