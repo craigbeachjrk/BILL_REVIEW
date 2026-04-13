@@ -23946,20 +23946,57 @@ def api_track(request: Request, user: str = Depends(require_user)):
         next_month = dt.date(end_month.year, end_month.month + 1, 1)
     end_day = next_month - dt.timedelta(days=1)
 
-    # Collect keys and read records (month-level listing to reduce API calls)
-    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, months))
+    # Parse bill info from S3 key filenames for S6/S7/Archive (zero file reads).
+    # Format: Property-Vendor-Account-MM-DD-YYYY-MM-DD-YYYY-MM-DD-YYYY_timestamp.jsonl
+    #   parts: [property, vendor, account, startM, startD, startY, endM, endD, endY, billM, billD, billYrest]
+    def _parse_records_from_keys(keys: list[str]) -> list[dict]:
+        """Parse property/vendor/account/dates from S3 filenames instead of reading files."""
+        out = []
+        for key in keys:
+            try:
+                fname = key.rsplit("/", 1)[-1]
+                if not fname.endswith(".jsonl"):
+                    continue
+                base = fname.replace(".jsonl", "")
+                # Strip timestamp suffix (after last _)
+                if "_" in base:
+                    base = base.rsplit("_", 1)[0]
+                parts = base.split("-")
+                if len(parts) < 12:
+                    continue
+                prop_id = parts[0]
+                vendor_id = parts[1]
+                acct = parts[2]
+                # Dates: parts[3:6]=start, [6:9]=end, [9:12]=bill
+                bill_m, bill_d, bill_y = parts[9], parts[10], parts[11]
+                start_m, start_d, start_y = parts[3], parts[4], parts[5]
+                end_m, end_d, end_y = parts[6], parts[7], parts[8]
+                bd = _parse_date_any(f"{bill_m}/{bill_d}/{bill_y}")
+                out.append({
+                    "EnrichedPropertyID": prop_id,
+                    "EnrichedVendorID": vendor_id,
+                    "Account Number": acct,
+                    "Bill Date": bd.isoformat() if bd else "",
+                    "Bill Period Start": f"{start_m}/{start_d}/{start_y}",
+                    "Bill Period End": f"{end_m}/{end_d}/{end_y}",
+                })
+            except Exception:
+                continue
+        return out
+
+    # S6/S7/Archive: parse from filenames (fast, zero S3 reads)
     stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, months))
-    stage4 = _read_json_records_from_s3(stage4_keys)
-    stage6 = _read_json_records_from_s3(stage6_keys)
+    stage6 = _parse_records_from_keys(stage6_keys)
     stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, months))
-    stage7 = _read_json_records_from_s3(stage7_keys)
-
-    # Also check Historical Archive for archived bills
+    stage7 = _parse_records_from_keys(stage7_keys)
     archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, months))
-    archive = _read_json_records_from_s3(archive_keys)
+    stage7.extend(_parse_records_from_keys(archive_keys))
 
-    # Merge archive into stage7 so archived bills show as POSTED
-    stage7.extend(archive)
+    # S4: still needs file reads (filenames are timestamps, not parseable)
+    # But S4 has far fewer files than S6/S7/Archive
+    stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, months))
+    stage4 = _read_json_records_from_s3(stage4_keys)
+    print(f"[TRACK] Parsed {len(stage6)} S6 + {len(stage7)} S7/archive from filenames, read {len(stage4)} S4 from files ({len(stage4_keys)} keys)")
 
     def norm_rec(rec: dict) -> dict:
         pid = rec.get("EnrichedPropertyID") or rec.get("propertyId") or rec.get("PropertyID")
