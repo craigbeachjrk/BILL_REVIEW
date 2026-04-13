@@ -13348,11 +13348,13 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
     """
     from zoneinfo import ZoneInfo
 
+    _submitter_filter = submitter  # capture in closure-safe local
+
     def _compute_wow():
         pacific = ZoneInfo("America/Los_Angeles")
         utc = ZoneInfo("UTC")
 
-        print(f"[WEEK_OVER_WEEK] Computing stats for last {weeks} weeks, submitter filter: '{submitter}'")
+        print(f"[WEEK_OVER_WEEK] Computing stats for last {weeks} weeks, submitter filter: '{_submitter_filter}'")
 
         # Calculate week boundaries (Monday-Sunday)
         today = dt.datetime.now(pacific).date()
@@ -13551,8 +13553,8 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
         weeks_list.sort(key=lambda x: x["week_start"], reverse=True)
 
         # Apply submitter filter if specified - recalculate totals for just that submitter
-        if submitter:
-            submitter_lower = submitter.lower()
+        if _submitter_filter:
+            submitter_lower = _submitter_filter.lower()
             for week in weeks_list:
                 by_sub = week.get("by_submitter", {})
                 # Find matching submitter (case-insensitive)
@@ -13618,7 +13620,7 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
         result = {
             "weeks": weeks_list,
             "submitter_totals": submitter_list,
-            "submitter_filter": submitter if submitter else None,
+            "submitter_filter": _submitter_filter if _submitter_filter else None,
             "all_submitters": sorted(all_submitters),
         }
 
