@@ -203,8 +203,29 @@ All converted to `_metrics_serve()` (S3-persisted cache, survives deploys, serve
 - `vendor-cache-builder` — memory 512→2048MB, cache rebuilt, dim_vendor synced (FIXED)
 - `jrk-forms-analyzer` — IAM S3 GetObject scope widened from `Forms_Submissions/*` to `*` (FIXED)
 
-### Still Broken (needs manual intervention)
-- `jrk-acq-sheets-sync` — cryptography package incompatible with Python 3.12 (needs repackage)
-- `jrk-hr-compliance-email-sender` — missing S3 config file (needs correct path)
-- `jrk-data-feeds-executor` — 2 Entrata API methods invalid (ar-payments, ar-invoices)
+### Additional Fixes (2026-04-13)
+- `jrk-acq-sheets-sync` — **FIXED.** Repackaged with Linux/Python 3.12 compatible cryptography. 1,089 deals synced successfully.
+- `jrk-hr-compliance-email-sender` — **FIXED.** Added `urllib.parse.unquote_plus()` for URL-encoded S3 keys in event notifications.
+- 4 broken Entrata AR EventBridge rules — **DISABLED** (ar-payments, ar-invoices, ar-codes, mits-lease-ar-transactions). Method names have never been valid since Jan 2026.
+- 7 slow endpoints (10-30s) — **ALL CACHED** with `_metrics_serve()`
+- `async_cold` mode added to `_metrics_serve()` — heavy endpoints return `{"building": true}` on cold cache instead of 504 gateway timeout
+- `submitter-stats` and `late-fees` — added `_metrics_serve()` with `async_cold=True`
+
+### CloudWatch Alarms Created (2026-04-13)
+SNS topic `jrk-lambda-alerts` created with `cbeach@jrk.com` subscribed.
+8 alarms monitoring Lambda errors (1hr evaluation, threshold > 0):
+- `vendor-cache-builder-errors`
+- `jrk-bill-enricher-errors`
+- `jrk-bill-parser-errors`
+- `jrk-bill-router-errors`
+- `jrk-email-ingest-errors`
+- `jrk-data-feeds-executor-errors`
+- `jrk-acq-sheets-sync-errors`
+- `jrk-hr-compliance-email-sender-errors`
+
+**ACTION REQUIRED:** Confirm SNS subscription email in inbox for alerts to work.
+
+### Remaining
 - IMPROVE agent Docker image — needs Docker Desktop to rebuild
+- 3 Entrata AR API methods — need correct method names from Entrata docs before re-enabling
+- `/api/track` cold cache — still slow on first request after deploy (needs bill_index approach)
