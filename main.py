@@ -8022,7 +8022,7 @@ def api_ubi_stats_by_property(
     """Get count of unassigned invoices grouped by property (not line items, invoices).
     Returns property names sorted by invoice count descending.
     """
-    try:
+    def _compute():
         from datetime import datetime, timedelta
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from collections import defaultdict
@@ -8120,11 +8120,8 @@ def api_ubi_stats_by_property(
             "processing_time_seconds": round(elapsed, 1)
         }
 
-    except Exception as e:
-        print(f"[UBI STATS BY PROPERTY] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    cache_name = f"ubi_stats_by_property_{days_back}"
+    return _metrics_serve(cache_name, _compute)
 
 
 @app.get("/billback/charts", response_class=HTMLResponse)
@@ -8692,7 +8689,8 @@ def api_acctmgr_duplicate_bills(days: int = 90, user: str = Depends(require_user
     """Detect bills posted more than once (same vendor+account+date+amount)."""
     if user not in ADMIN_USERS:
         return JSONResponse({"error": "Admin access required"}, status_code=403)
-    try:
+
+    def _compute():
         from collections import defaultdict
         cutoff = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat() + "Z"
         # Paginate through POSTED_INVOICES
@@ -8759,8 +8757,9 @@ def api_acctmgr_duplicate_bills(days: int = 90, user: str = Depends(require_user
             "total_duplicate_amount": round(total_dup_amount, 2),
             "scanned_invoices": len(all_items),
         }
-    except Exception as e:
-        return JSONResponse({"error": _sanitize_error(e, "duplicate bills")}, status_code=500)
+
+    cache_name = f"duplicate_bills_{days}"
+    return _metrics_serve(cache_name, _compute, async_cold=True)
 
 
 @app.get("/api/account-manager/closed-accounts")
@@ -9110,7 +9109,7 @@ def api_archived_accounts(user: str = Depends(require_user)):
     if user not in ADMIN_USERS:
         return JSONResponse({"error": "Admin access required"}, status_code=403)
 
-    try:
+    def _compute():
         accounts = _get_accounts_to_track()
         archived = [a for a in accounts if a.get("status") == "archived"]
 
@@ -9128,8 +9127,8 @@ def api_archived_accounts(user: str = Depends(require_user)):
             })
 
         return {"accounts": result, "total": len(result)}
-    except Exception as e:
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+    return _metrics_serve("archived_accounts", _compute)
 
 
 @app.post("/api/workflow/accounts/update")
@@ -9271,7 +9270,7 @@ def api_vendor_correction_suspects(user: str = Depends(require_user), days: int 
     # Clamp days to reasonable range
     scan_days = max(7, min(90, days))
 
-    try:
+    def _compute():
         from collections import defaultdict
         from datetime import datetime, timedelta
 
@@ -9280,7 +9279,7 @@ def api_vendor_correction_suspects(user: str = Depends(require_user), days: int 
         accounts = _get_accounts_to_track()
         if not isinstance(accounts, list):
             print(f"[VENDOR CORRECT] ERROR: accounts is not a list: {type(accounts)}")
-            return JSONResponse({"error": "Failed to load accounts data"}, status_code=500)
+            return {"error": "Failed to load accounts data", "suspects": [], "total_accounts": 0}
 
         active_accounts = [a for a in accounts if isinstance(a, dict) and a.get("status") != "archived"]
         print(f"[VENDOR CORRECT] Checking {len(active_accounts)} tracked accounts for duplicates")
@@ -9470,31 +9469,13 @@ def api_vendor_correction_suspects(user: str = Depends(require_user), days: int 
 
         print(f"[VENDOR CORRECT] Found {len(suspects)} property+account combos with multiple vendors")
 
-        # Build response and ensure it's JSON serializable
-        response_data = {
+        return {
             "suspects": suspects,
             "total_accounts": len(active_accounts)
         }
 
-        # Validate the response is JSON serializable before returning
-        try:
-            json.dumps(response_data, ensure_ascii=False)
-        except (TypeError, ValueError) as json_err:
-            print(f"[VENDOR CORRECT] JSON serialization error: {json_err}")
-            # Return a safe fallback
-            return JSONResponse({
-                "suspects": [],
-                "total_accounts": len(active_accounts),
-                "error": "Data serialization issue, please try again"
-            }, status_code=200)
-
-        return JSONResponse(response_data, status_code=200)
-
-    except Exception as e:
-        print(f"[VENDOR CORRECT] Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({"error": "Server error processing vendor corrections", "suspects": [], "total_accounts": 0}, status_code=500)
+    cache_name = f"vendor_correction_suspects_{scan_days}"
+    return _metrics_serve(cache_name, _compute)
 
 
 @app.post("/api/vendor-corrections/analyze")
@@ -16789,7 +16770,7 @@ def api_admin_backfill_late_fees(weeks: int = 6, user: str = Depends(require_use
 @app.get("/api/failed/jobs")
 def api_get_failed_jobs(user: str = Depends(require_user)):
     """Get list of failed parsing jobs from S3 with error info from .notes.json files."""
-    try:
+    def _compute():
         jobs = []
         all_files = {}  # key -> obj info
         notes_files = {}  # base_name -> notes content
@@ -16882,9 +16863,8 @@ def api_get_failed_jobs(user: str = Depends(require_user)):
         # Sort by last_modified descending (newest first)
         jobs.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
         return {"jobs": jobs, "count": len(jobs)}
-    except Exception as e:
-        print(f"[FAILED JOBS] Error: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+    return _metrics_serve("failed_jobs", _compute)
 
 
 @app.get("/api/failed/errors")
@@ -22846,86 +22826,90 @@ def api_debug_orphaned_stage7(user: str = Depends(require_user), days_back: int 
     the DDB exclusion table. Any matches are 'orphaned' - they should have been
     removed from Stage 7 during assignment.
     """
-    from datetime import datetime, timedelta
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import time as _time
+    def _compute():
+        from datetime import datetime, timedelta
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time as _time
 
-    t0 = _time.time()
-    excluded_hashes = _get_cached_exclusion_hashes(days_back)
-    print(f"[ORPHAN CHECK] Using {len(excluded_hashes)} exclusion hashes")
+        t0 = _time.time()
+        excluded_hashes = _get_cached_exclusion_hashes(days_back)
+        print(f"[ORPHAN CHECK] Using {len(excluded_hashes)} exclusion hashes")
 
-    # Scan Stage 7 files
-    today = datetime.now()
-    all_keys = []
-    for i in range(days_back):
-        d = today - timedelta(days=i)
-        prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-        try:
-            paginator = s3.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                for obj in page.get('Contents', []):
-                    if obj['Key'].endswith('.jsonl'):
-                        all_keys.append(obj['Key'])
-        except Exception:
-            continue
+        # Scan Stage 7 files
+        today = datetime.now()
+        all_keys = []
+        for i in range(days_back):
+            d = today - timedelta(days=i)
+            prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+            try:
+                paginator = s3.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                    for obj in page.get('Contents', []):
+                        if obj['Key'].endswith('.jsonl'):
+                            all_keys.append(obj['Key'])
+            except Exception:
+                continue
 
-    print(f"[ORPHAN CHECK] Scanning {len(all_keys)} Stage 7 files")
+        print(f"[ORPHAN CHECK] Scanning {len(all_keys)} Stage 7 files")
 
-    orphaned_files = []
-    clean_files = 0
+        orphaned_files = []
+        clean_files = 0
 
-    def check_file(key):
-        try:
-            body = _read_s3_text(BUCKET, key)
-            lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-            total_lines = 0
-            excluded_lines = 0
-            for line in lines:
-                try:
-                    rec = json.loads(line)
-                    lh = _compute_stable_line_hash(rec)
-                    total_lines += 1
-                    if lh in excluded_hashes:
-                        excluded_lines += 1
-                except Exception:
-                    continue
-            if excluded_lines > 0:
-                first = json.loads(lines[0])
-                return {
-                    "s3_key": key,
-                    "total_lines": total_lines,
-                    "excluded_lines": excluded_lines,
-                    "all_excluded": excluded_lines == total_lines,
-                    "account": first.get("Account Number", ""),
-                    "vendor": first.get("EnrichedVendorName", ""),
-                    "property": first.get("EnrichedPropertyName", ""),
-                }
-            return None
-        except Exception:
-            return None
+        def check_file(key):
+            try:
+                body = _read_s3_text(BUCKET, key)
+                lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+                total_lines = 0
+                excluded_lines = 0
+                for line in lines:
+                    try:
+                        rec = json.loads(line)
+                        lh = _compute_stable_line_hash(rec)
+                        total_lines += 1
+                        if lh in excluded_hashes:
+                            excluded_lines += 1
+                    except Exception:
+                        continue
+                if excluded_lines > 0:
+                    first = json.loads(lines[0])
+                    return {
+                        "s3_key": key,
+                        "total_lines": total_lines,
+                        "excluded_lines": excluded_lines,
+                        "all_excluded": excluded_lines == total_lines,
+                        "account": first.get("Account Number", ""),
+                        "vendor": first.get("EnrichedVendorName", ""),
+                        "property": first.get("EnrichedPropertyName", ""),
+                    }
+                return None
+            except Exception:
+                return None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(check_file, k): k for k in all_keys}
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                orphaned_files.append(result)
-            else:
-                clean_files += 1
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = {executor.submit(check_file, k): k for k in all_keys}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    orphaned_files.append(result)
+                else:
+                    clean_files += 1
 
-    elapsed = _time.time() - t0
-    fully_orphaned = [f for f in orphaned_files if f["all_excluded"]]
-    partially_orphaned = [f for f in orphaned_files if not f["all_excluded"]]
+        elapsed = _time.time() - t0
+        fully_orphaned = [f for f in orphaned_files if f["all_excluded"]]
+        partially_orphaned = [f for f in orphaned_files if not f["all_excluded"]]
 
-    return {
-        "total_stage7_files": len(all_keys),
-        "clean_files": clean_files,
-        "fully_orphaned": len(fully_orphaned),
-        "partially_orphaned": len(partially_orphaned),
-        "orphaned_details": orphaned_files[:50],
-        "exclusion_hash_count": len(excluded_hashes),
-        "scan_seconds": round(elapsed, 1),
-    }
+        return {
+            "total_stage7_files": len(all_keys),
+            "clean_files": clean_files,
+            "fully_orphaned": len(fully_orphaned),
+            "partially_orphaned": len(partially_orphaned),
+            "orphaned_details": orphaned_files[:50],
+            "exclusion_hash_count": len(excluded_hashes),
+            "scan_seconds": round(elapsed, 1),
+        }
+
+    cache_name = f"orphaned_stage7_{days_back}"
+    return _metrics_serve(cache_name, _compute)
 
 
 @app.post("/api/debug/cleanup-orphaned-stage7")
@@ -28286,9 +28270,9 @@ def api_meters_scan(user: str = Depends(require_user)):
     """
     Trigger incremental scan via Lambda (files modified in last day).
     """
-    print("[METER SCAN] Triggering incremental scan via Lambda...")
+    def _compute():
+        print("[METER SCAN] Triggering incremental scan via Lambda...")
 
-    try:
         lambda_client = boto3.client("lambda", region_name="us-east-1")
         response = lambda_client.invoke(
             FunctionName="jrk-meter-cleaner",
@@ -28308,9 +28292,8 @@ def api_meters_scan(user: str = Depends(require_user)):
                 "message": body.get("message", "Scan complete")
             }
         return {"ok": True, **result}
-    except Exception as e:
-        print(f"[METER SCAN] Lambda error: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+    return _metrics_serve("meters_scan", _compute)
 
 
 def _api_meters_scan_local(user: str):
