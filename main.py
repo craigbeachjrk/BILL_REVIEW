@@ -13333,7 +13333,7 @@ def api_metrics_submitter_stats(date: str = "", start_date: str = "", end_date: 
             "aggregate_by_submitter": aggregate_by_submitter
         }
 
-    return _metrics_serve(cache_name, _compute)
+    return _metrics_serve(cache_name, _compute, async_cold=True)
 
 
 @app.get("/api/metrics/week-over-week")
