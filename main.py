@@ -5671,6 +5671,8 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
         _pipeline_track(s3_key, "UBI_ASSIGNED", f"app:ubi_assign:{user}", "S8", {"periods": ",".join(ubi_periods), "count": assigned_count})
 
         _remove_bill_from_ubi_cache(s3_key)
+        _METRICS_CACHE.pop("ubi_suggestions", None)
+        _METRICS_CACHE.pop("ubi_assigned", None)
 
         # Update UBI account history for smarter future suggestions
         if assigned_items:
@@ -5709,218 +5711,225 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
 def api_billback_ubi_suggestions(user: str = Depends(require_user), page: int = 1, page_size: int = 50, days_back: int = 90):
     """Get UBI allocation suggestions for unassigned bills with service period dates."""
     try:
-        from datetime import datetime, timedelta
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _compute():
+            from datetime import datetime, timedelta
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        start_time = datetime.now()
-        print(f"[UBI SUGGESTIONS] Loading suggestions for unassigned bills")
+            start_time = datetime.now()
+            print(f"[UBI SUGGESTIONS] Loading suggestions for unassigned bills")
 
-        # Load UBI accounts - only show bills for accounts marked is_ubi=true AND is_tracked=true
-        accounts_to_track = _get_accounts_to_track()
-        ubi_account_keys = set()
-        for acct in accounts_to_track:
-            if acct.get("is_ubi") == True and acct.get("is_tracked", True):
-                prop_id = str(acct.get("propertyId", "")).strip()
-                vendor_id = str(acct.get("vendorId", "")).strip()
-                acct_num = str(acct.get("accountNumber", "")).strip()
-                if prop_id and acct_num:
-                    ubi_account_keys.add(f"{prop_id}|{vendor_id}|{acct_num}")
-                    ubi_account_keys.add(f"{prop_id}||{acct_num}")
-        print(f"[UBI SUGGESTIONS] Found {len(ubi_account_keys)} UBI account keys")
+            # Load UBI accounts - only show bills for accounts marked is_ubi=true AND is_tracked=true
+            accounts_to_track = _get_accounts_to_track()
+            ubi_account_keys = set()
+            for acct in accounts_to_track:
+                if acct.get("is_ubi") == True and acct.get("is_tracked", True):
+                    prop_id = str(acct.get("propertyId", "")).strip()
+                    vendor_id = str(acct.get("vendorId", "")).strip()
+                    acct_num = str(acct.get("accountNumber", "")).strip()
+                    if prop_id and acct_num:
+                        ubi_account_keys.add(f"{prop_id}|{vendor_id}|{acct_num}")
+                        ubi_account_keys.add(f"{prop_id}||{acct_num}")
+            print(f"[UBI SUGGESTIONS] Found {len(ubi_account_keys)} UBI account keys")
 
-        # Load UBI account history for better suggestions
-        history_data = _s3_get_ubi_account_history()
-        account_histories = history_data.get("accounts", {})
+            # Load UBI account history for better suggestions
+            history_data = _s3_get_ubi_account_history()
+            account_histories = history_data.get("accounts", {})
 
-        # Also get Stage 8 history for more accurate suggestions
-        stage8_history = _get_last_ubi_periods_from_stage8()
-        print(f"[UBI SUGGESTIONS] Got {len(stage8_history)} accounts from Stage 8 history")
+            # Also get Stage 8 history for more accurate suggestions
+            stage8_history = _get_last_ubi_periods_from_stage8()
+            print(f"[UBI SUGGESTIONS] Got {len(stage8_history)} accounts from Stage 8 history")
 
-        # Use cached exclusion hashes
-        excluded_hashes = _get_cached_exclusion_hashes(days_back)
+            # Use cached exclusion hashes
+            excluded_hashes = _get_cached_exclusion_hashes(days_back)
 
-        # Build date-partitioned prefixes
-        prefixes_to_scan = []
-        today = datetime.now()
-        for i in range(days_back):
-            d = today - timedelta(days=i)
-            prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append(prefix)
+            # Build date-partitioned prefixes
+            prefixes_to_scan = []
+            today = datetime.now()
+            for i in range(days_back):
+                d = today - timedelta(days=i)
+                prefix = f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+                prefixes_to_scan.append(prefix)
 
-        # Collect all S3 keys
-        all_keys = []
-        for prefix in prefixes_to_scan:
-            try:
-                paginator = s3.get_paginator('list_objects_v2')
-                s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
-                for s3_page in s3_pages:
-                    for obj in s3_page.get('Contents', []):
-                        key = obj['Key']
-                        if key.endswith('.jsonl'):
-                            all_keys.append(key)
-            except Exception:
-                continue
-
-        print(f"[UBI SUGGESTIONS] Found {len(all_keys)} files to check")
-
-        def process_file_for_suggestions(key):
-            """Process a single file and calculate suggestions."""
-            try:
-                obj_data = s3.get_object(Bucket=BUCKET, Key=key)
-                txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
-                lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
-
-                if not lines:
-                    return None
-
+            # Collect all S3 keys
+            all_keys = []
+            for prefix in prefixes_to_scan:
                 try:
-                    first_rec = json.loads(lines[0])
-                except json.JSONDecodeError:
+                    paginator = s3.get_paginator('list_objects_v2')
+                    s3_pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix)
+                    for s3_page in s3_pages:
+                        for obj in s3_page.get('Contents', []):
+                            key = obj['Key']
+                            if key.endswith('.jsonl'):
+                                all_keys.append(key)
+                except Exception:
+                    continue
+
+            print(f"[UBI SUGGESTIONS] Found {len(all_keys)} files to check")
+
+            def process_file_for_suggestions(key):
+                """Process a single file and calculate suggestions."""
+                try:
+                    obj_data = s3.get_object(Bucket=BUCKET, Key=key)
+                    txt = obj_data['Body'].read().decode('utf-8', errors='ignore')
+                    lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+
+                    if not lines:
+                        return None
+
+                    try:
+                        first_rec = json.loads(lines[0])
+                    except json.JSONDecodeError:
+                        return None
+
+                    # Skip if all lines are already assigned
+                    has_unassigned = False
+                    for line in lines:
+                        try:
+                            rec = json.loads(line)
+                            _lh = _compute_stable_line_hash(rec)
+                            if _lh not in excluded_hashes:
+                                has_unassigned = True
+                                break
+                        except Exception:
+                            continue
+
+                    if not has_unassigned:
+                        return None
+
+                    # Parse bill info
+                    property_id = first_rec.get("EnrichedPropertyID", "")
+                    vendor_id = first_rec.get("EnrichedVendorID", "")
+                    account_number = str(first_rec.get("Account Number", "")).strip()
+                    account_key = f"{property_id}|{vendor_id}|{account_number}"
+                    account_key_no_vendor = f"{property_id}||{account_number}"
+
+                    # Check if this is a UBI account (for suggestion purposes)
+                    is_ubi_account = account_key in ubi_account_keys or account_key_no_vendor in ubi_account_keys
+
+                    # Get account history if exists (only for UBI accounts)
+                    acct_history = account_histories.get(account_key) if is_ubi_account else None
+
+                    # Parse service dates
+                    service_start_str = first_rec.get("Bill Period Start", "")
+                    service_end_str = first_rec.get("Bill Period End", "")
+
+                    service_start = _parse_date_any(service_start_str) if service_start_str else None
+                    service_end = _parse_date_any(service_end_str) if service_end_str else None
+
+                    # Calculate total amount
+                    total_amount = 0.0
+                    unassigned_count = 0
+                    for line in lines:
+                        try:
+                            rec = json.loads(line)
+                            _lh = _compute_stable_line_hash(rec)
+                            if _lh not in excluded_hashes:
+                                charge_str = str(rec.get("Line Item Charge", "0")).replace("$", "").replace(",", "").strip()
+                                try:
+                                    total_amount += float(charge_str)
+                                except Exception:
+                                    pass
+                                unassigned_count += 1
+                        except Exception:
+                            continue
+
+                    # Calculate suggestion - ONLY for UBI accounts
+                    suggestion = None
+                    if is_ubi_account:
+                        # Prefer Stage 8 history over ubi_account_history.json
+                        stage8_data = stage8_history.get(account_key)
+                        if stage8_data and stage8_data.get("last_ubi_period"):
+                            # Use Stage 8 history - suggest next period after last assigned
+                            last_ubi = stage8_data["last_ubi_period"]
+                            next_ubi = _get_next_ubi_period(last_ubi)
+                            suggestion = {
+                                "suggested_periods": [{
+                                    "period": next_ubi,
+                                    "days": 30,
+                                    "amount": round(total_amount, 2),
+                                    "pct": 100.0
+                                }],
+                                "confidence": "high",
+                                "reason": f"Next sequential period after {last_ubi} (from Stage 8 history)",
+                                "last_period": last_ubi,
+                                "spans_months": False
+                            }
+                        else:
+                            # Fall back to ubi_account_history.json calculation
+                            suggestion = _calculate_ubi_suggestion(
+                                service_start,
+                                service_end,
+                                total_amount,
+                                acct_history
+                            )
+
+                    # Get posted date
+                    posted_at = first_rec.get("PostedAt", "")
+                    if not posted_at:
+                        s3_last_mod = obj_data.get('LastModified')
+                        if s3_last_mod:
+                            posted_at = s3_last_mod.strftime("%Y-%m-%dT%H:%M:%S")
+
+                    return {
+                        "s3_key": key,
+                        "pdf_id": first_rec.get("pdf_id", ""),
+                        "vendor": first_rec.get("Vendor Name", ""),
+                        "vendor_id": vendor_id,
+                        "property": first_rec.get("EnrichedPropertyName", ""),
+                        "property_id": property_id,
+                        "account": account_number,
+                        "account_key": account_key,
+                        "invoice_no": first_rec.get("Invoice Number", ""),
+                        "bill_date": first_rec.get("Bill Date", ""),
+                        "service_start": service_start_str,
+                        "service_end": service_end_str,
+                        "total_amount": round(total_amount, 2),
+                        "unassigned_lines": unassigned_count,
+                        "posted_at": posted_at,
+                        "suggestion": suggestion,
+                        "has_history": acct_history is not None,
+                        "avg_service_days": acct_history.get("avgServiceDays") if acct_history else None,
+                        "last_ubi_periods": acct_history.get("lastUbiPeriods", []) if acct_history else []
+                    }
+                except Exception as e:
+                    print(f"[UBI SUGGESTIONS] Error processing {key}: {e}")
                     return None
 
-                # Skip if all lines are already assigned
-                has_unassigned = False
-                for line in lines:
-                    try:
-                        rec = json.loads(line)
-                        _lh = _compute_stable_line_hash(rec)
-                        if _lh not in excluded_hashes:
-                            has_unassigned = True
-                            break
-                    except Exception:
-                        continue
+            # Process files concurrently
+            bills_with_suggestions = []
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = {executor.submit(process_file_for_suggestions, key): key for key in all_keys}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        bills_with_suggestions.append(result)
 
-                if not has_unassigned:
-                    return None
+            # Sort by confidence (high first), then by amount
+            confidence_order = {"high": 0, "medium": 1, "low": 2}
+            bills_with_suggestions.sort(
+                key=lambda x: (confidence_order.get((x.get("suggestion") or {}).get("confidence", ""), 3), -x.get("total_amount", 0))
+            )
 
-                # Parse bill info
-                property_id = first_rec.get("EnrichedPropertyID", "")
-                vendor_id = first_rec.get("EnrichedVendorID", "")
-                account_number = str(first_rec.get("Account Number", "")).strip()
-                account_key = f"{property_id}|{vendor_id}|{account_number}"
-                account_key_no_vendor = f"{property_id}||{account_number}"
+            elapsed = (datetime.now() - start_time).total_seconds()
+            print(f"[UBI SUGGESTIONS] Computed {len(bills_with_suggestions)} bills in {round(elapsed, 1)}s")
 
-                # Check if this is a UBI account (for suggestion purposes)
-                is_ubi_account = account_key in ubi_account_keys or account_key_no_vendor in ubi_account_keys
+            return {"all_bills": bills_with_suggestions}
 
-                # Get account history if exists (only for UBI accounts)
-                acct_history = account_histories.get(account_key) if is_ubi_account else None
+        # Serve from S3-persisted cache; rebuild in background when stale
+        cached_result = _metrics_serve("ubi_suggestions", _compute)
+        all_bills = cached_result.get("all_bills", [])
 
-                # Parse service dates
-                service_start_str = first_rec.get("Bill Period Start", "")
-                service_end_str = first_rec.get("Bill Period End", "")
-
-                service_start = _parse_date_any(service_start_str) if service_start_str else None
-                service_end = _parse_date_any(service_end_str) if service_end_str else None
-
-                # Calculate total amount
-                total_amount = 0.0
-                unassigned_count = 0
-                for line in lines:
-                    try:
-                        rec = json.loads(line)
-                        _lh = _compute_stable_line_hash(rec)
-                        if _lh not in excluded_hashes:
-                            charge_str = str(rec.get("Line Item Charge", "0")).replace("$", "").replace(",", "").strip()
-                            try:
-                                total_amount += float(charge_str)
-                            except Exception:
-                                pass
-                            unassigned_count += 1
-                    except Exception:
-                        continue
-
-                # Calculate suggestion - ONLY for UBI accounts
-                suggestion = None
-                if is_ubi_account:
-                    # Prefer Stage 8 history over ubi_account_history.json
-                    stage8_data = stage8_history.get(account_key)
-                    if stage8_data and stage8_data.get("last_ubi_period"):
-                        # Use Stage 8 history - suggest next period after last assigned
-                        last_ubi = stage8_data["last_ubi_period"]
-                        next_ubi = _get_next_ubi_period(last_ubi)
-                        suggestion = {
-                            "suggested_periods": [{
-                                "period": next_ubi,
-                                "days": 30,
-                                "amount": round(total_amount, 2),
-                                "pct": 100.0
-                            }],
-                            "confidence": "high",
-                            "reason": f"Next sequential period after {last_ubi} (from Stage 8 history)",
-                            "last_period": last_ubi,
-                            "spans_months": False
-                        }
-                    else:
-                        # Fall back to ubi_account_history.json calculation
-                        suggestion = _calculate_ubi_suggestion(
-                            service_start,
-                            service_end,
-                            total_amount,
-                            acct_history
-                        )
-
-                # Get posted date
-                posted_at = first_rec.get("PostedAt", "")
-                if not posted_at:
-                    s3_last_mod = obj_data.get('LastModified')
-                    if s3_last_mod:
-                        posted_at = s3_last_mod.strftime("%Y-%m-%dT%H:%M:%S")
-
-                return {
-                    "s3_key": key,
-                    "pdf_id": first_rec.get("pdf_id", ""),
-                    "vendor": first_rec.get("Vendor Name", ""),
-                    "vendor_id": vendor_id,
-                    "property": first_rec.get("EnrichedPropertyName", ""),
-                    "property_id": property_id,
-                    "account": account_number,
-                    "account_key": account_key,
-                    "invoice_no": first_rec.get("Invoice Number", ""),
-                    "bill_date": first_rec.get("Bill Date", ""),
-                    "service_start": service_start_str,
-                    "service_end": service_end_str,
-                    "total_amount": round(total_amount, 2),
-                    "unassigned_lines": unassigned_count,
-                    "posted_at": posted_at,
-                    "suggestion": suggestion,
-                    "has_history": acct_history is not None,
-                    "avg_service_days": acct_history.get("avgServiceDays") if acct_history else None,
-                    "last_ubi_periods": acct_history.get("lastUbiPeriods", []) if acct_history else []
-                }
-            except Exception as e:
-                print(f"[UBI SUGGESTIONS] Error processing {key}: {e}")
-                return None
-
-        # Process files concurrently
-        bills_with_suggestions = []
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(process_file_for_suggestions, key): key for key in all_keys}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    bills_with_suggestions.append(result)
-
-        # Sort by confidence (high first), then by amount
-        confidence_order = {"high": 0, "medium": 1, "low": 2}
-        bills_with_suggestions.sort(
-            key=lambda x: (confidence_order.get((x.get("suggestion") or {}).get("confidence", ""), 3), -x.get("total_amount", 0))
-        )
-
-        # Pagination
-        total_bills = len(bills_with_suggestions)
+        # Apply pagination AFTER cache retrieval
+        total_bills = len(all_bills)
         total_pages = (total_bills + page_size - 1) // page_size if total_bills > 0 else 1
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
-        paginated = bills_with_suggestions[start_idx:end_idx]
+        paginated = all_bills[start_idx:end_idx]
 
         # Calculate summary stats
-        high_confidence = sum(1 for b in bills_with_suggestions if (b.get("suggestion") or {}).get("confidence") == "high")
-        medium_confidence = sum(1 for b in bills_with_suggestions if (b.get("suggestion") or {}).get("confidence") == "medium")
-        low_confidence = sum(1 for b in bills_with_suggestions if (b.get("suggestion") or {}).get("confidence") == "low")
-
-        elapsed = (datetime.now() - start_time).total_seconds()
-        print(f"[UBI SUGGESTIONS] Returning {len(paginated)} of {total_bills} bills ({high_confidence} high, {medium_confidence} medium, {low_confidence} low confidence)")
+        high_confidence = sum(1 for b in all_bills if (b.get("suggestion") or {}).get("confidence") == "high")
+        medium_confidence = sum(1 for b in all_bills if (b.get("suggestion") or {}).get("confidence") == "medium")
+        low_confidence = sum(1 for b in all_bills if (b.get("suggestion") or {}).get("confidence") == "low")
 
         return {
             "bills": paginated,
@@ -5933,7 +5942,7 @@ def api_billback_ubi_suggestions(user: str = Depends(require_user), page: int = 
                 "medium_confidence": medium_confidence,
                 "low_confidence": low_confidence
             },
-            "processing_time_seconds": round(elapsed, 1)
+            "processing_time_seconds": 0
         }
 
     except Exception as e:
@@ -6151,6 +6160,8 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
         )
 
         _remove_bill_from_ubi_cache(s3_key)
+        _METRICS_CACHE.pop("ubi_suggestions", None)
+        _METRICS_CACHE.pop("ubi_assigned", None)
 
         return {
             "ok": True,
@@ -6251,187 +6262,190 @@ async def api_billback_ubi_calculate_suggestion(request: Request, user: str = De
 def api_billback_ubi_assigned(user: str = Depends(require_user), period: str = "", days_back: int = 90):
     """Load line items assigned to a specific UBI period from Stage 8 (S3)."""
     try:
-        from datetime import datetime, timedelta
-        from collections import defaultdict
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _compute():
+            from datetime import datetime, timedelta
+            from collections import defaultdict
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        print(f"[UBI ASSIGNED] Loading assigned items from Stage 8" + (f" for period {period}" if period else ""))
+            print(f"[UBI ASSIGNED] Loading ALL assigned items from Stage 8")
 
-        # Build date-partitioned prefixes for the last N days
-        prefixes_to_scan = []
-        today = datetime.now()
-        for i in range(days_back):
-            d = today - timedelta(days=i)
-            prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append(prefix)
+            # Build date-partitioned prefixes for the last N days
+            prefixes_to_scan = []
+            today = datetime.now()
+            for i in range(days_back):
+                d = today - timedelta(days=i)
+                prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+                prefixes_to_scan.append(prefix)
 
-        # Collect all S3 keys
-        all_keys = []
-        for prefix in prefixes_to_scan:
-            try:
-                paginator = s3.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                    for obj in page.get('Contents', []):
-                        key = obj['Key']
-                        if key.endswith('.jsonl'):
-                            all_keys.append(key)
-            except Exception as e:
-                print(f"[UBI ASSIGNED] Error listing {prefix}: {e}")
+            # Collect all S3 keys
+            all_keys = []
+            for prefix in prefixes_to_scan:
+                try:
+                    paginator = s3.get_paginator('list_objects_v2')
+                    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                        for obj in page.get('Contents', []):
+                            key = obj['Key']
+                            if key.endswith('.jsonl'):
+                                all_keys.append(key)
+                except Exception as e:
+                    print(f"[UBI ASSIGNED] Error listing {prefix}: {e}")
 
-        print(f"[UBI ASSIGNED] Found {len(all_keys)} files in Stage 8")
+            print(f"[UBI ASSIGNED] Found {len(all_keys)} files in Stage 8")
 
-        # Group by period, then by S3 key
-        by_period = defaultdict(lambda: {"total_amount": 0.0, "line_count": 0, "bills": {}})
+            def process_file(key):
+                """Process a single S3 file — no period filtering (cache full dataset)."""
+                try:
+                    body = _read_s3_text(BUCKET, key)
+                    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+                    if not lines:
+                        return []
 
-        def process_file(key):
-            """Process a single S3 file."""
-            try:
-                body = _read_s3_text(BUCKET, key)
-                lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-                if not lines:
-                    return []
+                    results = []
+                    first_rec = json.loads(lines[0])
 
-                results = []
-                first_rec = json.loads(lines[0])
+                    # Compute pdf_id from s3_key and extract review date from path
+                    computed_pdf_id = pdf_id_from_key(key)
+                    import re
+                    date_match = re.search(r'yyyy=(\d{4})/mm=(\d{2})/dd=(\d{2})', key)
+                    review_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else ""
 
-                # Compute pdf_id from s3_key and extract review date from path
-                computed_pdf_id = pdf_id_from_key(key)
-                # Extract date from path like Bill_Parser_8_UBI_Assigned/yyyy=2025/mm=12/dd=01/...
-                import re
-                date_match = re.search(r'yyyy=(\d{4})/mm=(\d{2})/dd=(\d{2})', key)
-                review_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else ""
+                    for line in lines:
+                        rec = json.loads(line)
+                        line_hash = _compute_stable_line_hash(rec)
 
-                for line in lines:
-                    rec = json.loads(line)
-                    line_hash = _compute_stable_line_hash(rec)
+                        # Exclude large fields
+                        EXCLUDE_FIELDS = {'__pdf_b64__', '__pdf_filename__', 'EnrichedProperty'}
+                        filtered_rec = {k: v for k, v in rec.items() if k not in EXCLUDE_FIELDS}
 
-                    # Exclude large fields
-                    EXCLUDE_FIELDS = {'__pdf_b64__', '__pdf_filename__', 'EnrichedProperty'}
-                    filtered_rec = {k: v for k, v in rec.items() if k not in EXCLUDE_FIELDS}
+                        # Handle multi-period format (ubi_assignments array)
+                        ubi_assignments = rec.get("ubi_assignments", [])
+                        if ubi_assignments:
+                            for asn in ubi_assignments:
+                                asn_period = asn.get("period", "")
+                                if not asn_period:
+                                    continue
 
-                    # Handle multi-period format (ubi_assignments array)
-                    ubi_assignments = rec.get("ubi_assignments", [])
-                    if ubi_assignments:
-                        # New format: iterate through all assignments
-                        for asn in ubi_assignments:
-                            asn_period = asn.get("period", "")
-                            if period and asn_period != period:
+                                charge = asn.get("amount", 0.0)
+                                if charge == 0.0:
+                                    charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+                                    charge = float(charge_str) if charge_str else 0.0
+
+                                results.append({
+                                    "s3_key": key,
+                                    "ubi_period": asn_period,
+                                    "line_hash": line_hash,
+                                    "assignment_id": f"{key}||{line_hash}",
+                                    "line_data": filtered_rec,
+                                    "charge": charge,
+                                    "vendor": rec.get("Vendor Name", ""),
+                                    "account": rec.get("Account Number", ""),
+                                    "pdf_id": computed_pdf_id,
+                                    "review_date": review_date,
+                                    "invoice_no": rec.get("Invoice Number", ""),
+                                    "ubi_period_count": len(ubi_assignments),
+                                    "assigned_date": asn.get("assigned_date", ""),
+                                    "assigned_by": asn.get("assigned_by", "")
+                                })
+                        else:
+                            line_ubi_period = rec.get("ubi_period", "")
+                            if not line_ubi_period:
                                 continue
-                            if not asn_period:
-                                continue
 
-                            charge = asn.get("amount", 0.0)
+                            charge = rec.get("ubi_amount", 0.0)
                             if charge == 0.0:
                                 charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
                                 charge = float(charge_str) if charge_str else 0.0
 
                             results.append({
                                 "s3_key": key,
-                                "ubi_period": asn_period,
+                                "ubi_period": line_ubi_period,
                                 "line_hash": line_hash,
-                                "assignment_id": f"{key}||{line_hash}",  # Composite ID for unassign
+                                "assignment_id": f"{key}||{line_hash}",
                                 "line_data": filtered_rec,
                                 "charge": charge,
                                 "vendor": rec.get("Vendor Name", ""),
                                 "account": rec.get("Account Number", ""),
-                                "pdf_id": computed_pdf_id,  # Computed from s3_key
-                                "review_date": review_date,  # For /review URL
+                                "pdf_id": computed_pdf_id,
+                                "review_date": review_date,
                                 "invoice_no": rec.get("Invoice Number", ""),
-                                "ubi_period_count": len(ubi_assignments),
-                                "assigned_date": asn.get("assigned_date", ""),
-                                "assigned_by": asn.get("assigned_by", "")
+                                "ubi_period_count": 1,
+                                "assigned_date": rec.get("ubi_assigned_date", ""),
+                                "assigned_by": rec.get("ubi_assigned_by", "")
                             })
-                    else:
-                        # Legacy format: single ubi_period field
-                        line_ubi_period = rec.get("ubi_period", "")
-                        if period and line_ubi_period != period:
-                            continue
-                        if not line_ubi_period:
-                            continue
+                    return results
+                except Exception as e:
+                    print(f"[UBI ASSIGNED] Error processing {key}: {e}")
+                    return []
 
-                        charge = rec.get("ubi_amount", 0.0)
-                        if charge == 0.0:
-                            charge_str = str(rec.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
-                            charge = float(charge_str) if charge_str else 0.0
+            # Process files concurrently
+            all_items = []
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = {executor.submit(process_file, key): key for key in all_keys}
+                for future in as_completed(futures):
+                    all_items.extend(future.result())
 
-                        results.append({
-                            "s3_key": key,
-                            "ubi_period": line_ubi_period,
-                            "line_hash": line_hash,
-                            "assignment_id": f"{key}||{line_hash}",  # Composite ID for unassign
-                            "line_data": filtered_rec,
-                            "charge": charge,
-                            "vendor": rec.get("Vendor Name", ""),
-                            "account": rec.get("Account Number", ""),
-                            "pdf_id": computed_pdf_id,  # Computed from s3_key
-                            "review_date": review_date,  # For /review URL
-                            "invoice_no": rec.get("Invoice Number", ""),
-                            "ubi_period_count": 1,
-                            "assigned_date": rec.get("ubi_assigned_date", ""),
-                            "assigned_by": rec.get("ubi_assigned_by", "")
-                        })
-                return results
-            except Exception as e:
-                print(f"[UBI ASSIGNED] Error processing {key}: {e}")
-                return []
+            # Group results by period and bill
+            by_period = defaultdict(lambda: {"total_amount": 0.0, "line_count": 0, "bills": {}})
 
-        # Process files concurrently
-        all_items = []
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(process_file, key): key for key in all_keys}
-            for future in as_completed(futures):
-                all_items.extend(future.result())
+            for item in all_items:
+                ubi_period_key = item["ubi_period"]
+                s3_key = item["s3_key"]
 
-        # Group results by period and bill
-        for item in all_items:
-            ubi_period_key = item["ubi_period"]
-            s3_key = item["s3_key"]
+                if s3_key not in by_period[ubi_period_key]["bills"]:
+                    by_period[ubi_period_key]["bills"][s3_key] = {
+                        "s3_key": s3_key,
+                        "vendor": item["vendor"],
+                        "account": item["account"],
+                        "pdf_id": item["pdf_id"],
+                        "invoice_no": item["invoice_no"],
+                        "assigned_lines": [],
+                        "assigned_date": item.get("assigned_date", ""),
+                        "assigned_by": item.get("assigned_by", "")
+                    }
+                else:
+                    existing_date = by_period[ubi_period_key]["bills"][s3_key].get("assigned_date", "")
+                    new_date = item.get("assigned_date", "")
+                    if new_date and (not existing_date or new_date > existing_date):
+                        by_period[ubi_period_key]["bills"][s3_key]["assigned_date"] = new_date
+                        by_period[ubi_period_key]["bills"][s3_key]["assigned_by"] = item.get("assigned_by", "")
 
-            if s3_key not in by_period[ubi_period_key]["bills"]:
-                by_period[ubi_period_key]["bills"][s3_key] = {
-                    "s3_key": s3_key,
-                    "vendor": item["vendor"],
-                    "account": item["account"],
-                    "pdf_id": item["pdf_id"],
-                    "invoice_no": item["invoice_no"],
-                    "assigned_lines": [],
+                by_period[ubi_period_key]["bills"][s3_key]["assigned_lines"].append({
+                    "line_hash": item["line_hash"],
+                    "assignment_id": item["assignment_id"],
+                    "line_data": item["line_data"],
+                    "charge": item["charge"],
                     "assigned_date": item.get("assigned_date", ""),
                     "assigned_by": item.get("assigned_by", "")
-                }
-            else:
-                # Track most recent assigned_date for the bill
-                existing_date = by_period[ubi_period_key]["bills"][s3_key].get("assigned_date", "")
-                new_date = item.get("assigned_date", "")
-                if new_date and (not existing_date or new_date > existing_date):
-                    by_period[ubi_period_key]["bills"][s3_key]["assigned_date"] = new_date
-                    by_period[ubi_period_key]["bills"][s3_key]["assigned_by"] = item.get("assigned_by", "")
+                })
+                by_period[ubi_period_key]["total_amount"] += item["charge"]
+                by_period[ubi_period_key]["line_count"] += 1
 
-            by_period[ubi_period_key]["bills"][s3_key]["assigned_lines"].append({
-                "line_hash": item["line_hash"],
-                "assignment_id": item["assignment_id"],  # Composite ID for unassign/reassign
-                "line_data": item["line_data"],
-                "charge": item["charge"],
-                "assigned_date": item.get("assigned_date", ""),
-                "assigned_by": item.get("assigned_by", "")
-            })
-            by_period[ubi_period_key]["total_amount"] += item["charge"]
-            by_period[ubi_period_key]["line_count"] += 1
+            # Convert to list format (ALL periods, no filtering)
+            result = []
+            for ubi_period_key, data in by_period.items():
+                bills_list = list(data["bills"].values())
+                result.append({
+                    "ubi_period": ubi_period_key,
+                    "total_amount": round(data["total_amount"], 2),
+                    "line_count": data["line_count"],
+                    "bills": bills_list
+                })
 
-        # Convert to list format
-        result = []
-        for ubi_period_key, data in by_period.items():
-            bills_list = list(data["bills"].values())
-            result.append({
-                "ubi_period": ubi_period_key,
-                "total_amount": round(data["total_amount"], 2),
-                "line_count": data["line_count"],
-                "bills": bills_list
-            })
+            result.sort(key=lambda x: x["ubi_period"], reverse=True)
 
-        result.sort(key=lambda x: x["ubi_period"], reverse=True)
+            print(f"[UBI ASSIGNED] Computed {len(result)} periods with {sum(r['line_count'] for r in result)} total lines")
+            return {"all_periods": result}
 
-        print(f"[UBI ASSIGNED] Returning {len(result)} periods with {sum(r['line_count'] for r in result)} total lines")
-        return {"periods": result}
+        # Serve from S3-persisted cache; rebuild in background when stale
+        cached_result = _metrics_serve("ubi_assigned", _compute)
+        all_periods = cached_result.get("all_periods", [])
+
+        # Apply period filter AFTER cache retrieval
+        if period:
+            all_periods = [p for p in all_periods if p["ubi_period"] == period]
+
+        print(f"[UBI ASSIGNED] Returning {len(all_periods)} periods" + (f" filtered to {period}" if period else ""))
+        return {"periods": all_periods}
 
     except Exception as e:
         print(f"[UBI ASSIGNED] Error: {e}")
@@ -6607,6 +6621,8 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
         # duplicate warnings and suggestions after unassign
         _CACHE.pop(("ubi_unassigned",), None)
         _remove_bill_from_ubi_cache(s3_key)
+        _METRICS_CACHE.pop("ubi_suggestions", None)
+        _METRICS_CACHE.pop("ubi_assigned", None)
 
         print(f"[UBI UNASSIGN] COMPLETED: Moved {total_unassigned} items back to Stage 7")
         _pipeline_track(s3_key, "UBI_UNASSIGNED", f"app:ubi_unassign:{user}", "S7", {"count": total_unassigned})
@@ -6790,6 +6806,8 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
 
         # Invalidate caches
         _CACHE.pop(("ubi_unassigned",), None)
+        _METRICS_CACHE.pop("ubi_suggestions", None)
+        _METRICS_CACHE.pop("ubi_assigned", None)
 
         # CRITICAL: Invalidate the Stage 8 history cache so BILLBACK shows correct
         # duplicate warnings and suggestions after unassign
@@ -7015,6 +7033,7 @@ async def api_billback_ubi_reassign_account(request: Request, user: str = Depend
 
         # Invalidate UBI cache so the change is reflected immediately
         _CACHE.pop(("ubi_unassigned",), None)
+        _METRICS_CACHE.pop("ubi_assigned", None)
 
         return {"ok": True, "reassigned": total_reassigned}
 
@@ -7159,6 +7178,7 @@ async def api_billback_ubi_reassign(request: Request, user: str = Depends(requir
 
         # Invalidate UBI cache so the change is reflected immediately
         _CACHE.pop(("ubi_unassigned",), None)
+        _METRICS_CACHE.pop("ubi_assigned", None)
 
         return {"ok": True, "reassigned": total_updated, "new_period": new_period}
 
@@ -7300,6 +7320,7 @@ async def api_billback_ubi_archive(request: Request, user: str = Depends(require
             print(f"[UBI ARCHIVE] Deleted empty source file {s3_key}")
 
         _remove_bill_from_ubi_cache(s3_key)
+        _METRICS_CACHE.pop("ubi_suggestions", None)
 
         print(f"[UBI ARCHIVE] COMPLETED: Moved {len(archived_items)} items to Stage 99")
         return {"ok": True, "archived": len(archived_items)}
@@ -8844,148 +8865,149 @@ def api_vacant_accounts(
         return JSONResponse({"error": "Admin access required"}, status_code=403)
 
     try:
-        print(f"[VACANT DETECT] Scanning for accounts with {min_vacant_pct}%+ vacant lines...")
+        def _compute():
+            print(f"[VACANT DETECT] Scanning for all accounts with vacant lines...")
 
-        # Load tracked accounts
-        accounts = _get_accounts_to_track()
-        account_keys = {}
-        for a in accounts:
-            key = f"{a.get('propertyId')}|{a.get('vendorId')}|{a.get('accountNumber')}"
-            if a.get('status') == 'archived':
-                continue  # Skip already archived
-            if not a.get('is_tracked', True):
-                continue  # Skip removed accounts
-            account_keys[key] = a
+            # Load tracked accounts
+            accounts = _get_accounts_to_track()
+            account_keys = {}
+            for a in accounts:
+                key = f"{a.get('propertyId')}|{a.get('vendorId')}|{a.get('accountNumber')}"
+                if a.get('status') == 'archived':
+                    continue  # Skip already archived
+                if not a.get('is_tracked', True):
+                    continue  # Skip removed accounts
+                account_keys[key] = a
 
-        # Check cache (10-minute TTL — admin-only, infrequent)
-        cache_key = ("vacant_accounts", min_vacant_pct)
-        cached = _CACHE.get(cache_key)
-        if cached and (time.time() - cached.get("ts", 0) < 600):
-            return cached["data"]
+            # Scan recent bills — use MONTH-level prefixes (3 months * 2 stages = ~6 instead of 180)
+            today = dt.date.today()
+            month_prefixes = set()
+            for i in range(3):
+                d = today - dt.timedelta(days=i * 30)
+                month_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/")
+                month_prefixes.add(f"{HIST_ARCHIVE_PREFIX}yyyy={d.year}/mm={d.month:02d}/")
 
-        # Scan recent bills — use MONTH-level prefixes (3 months * 2 stages = ~6 instead of 180)
-        today = dt.date.today()
-        month_prefixes = set()
-        for i in range(3):
-            d = today - dt.timedelta(days=i * 30)
-            month_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={d.year}/mm={d.month:02d}/")
-            month_prefixes.add(f"{HIST_ARCHIVE_PREFIX}yyyy={d.year}/mm={d.month:02d}/")
+            # List all matching keys
+            all_keys = []
+            paginator = s3.get_paginator('list_objects_v2')
+            for mp in month_prefixes:
+                try:
+                    for page in paginator.paginate(Bucket=BUCKET, Prefix=mp):
+                        for obj in page.get("Contents", []) or []:
+                            key = obj.get("Key", "")
+                            if key.endswith('.jsonl'):
+                                all_keys.append(key)
+                except Exception:
+                    pass
 
-        # List all matching keys
-        all_keys = []
-        paginator = s3.get_paginator('list_objects_v2')
-        for mp in month_prefixes:
-            try:
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=mp):
-                    for obj in page.get("Contents", []) or []:
-                        key = obj.get("Key", "")
-                        if key.endswith('.jsonl'):
-                            all_keys.append(key)
-            except Exception:
-                pass
+            # Parallel S3 reads
+            account_stats = {}
 
-        # Parallel S3 reads
-        account_stats = {}
-
-        def _read_for_vacant(key):
-            try:
-                file_obj = s3.get_object(Bucket=BUCKET, Key=key)
-                content = file_obj['Body'].read().decode('utf-8', errors='ignore')
-                first_line = content.split('\n')[0].strip()
-                if not first_line:
-                    return None
-                rec = json.loads(first_line)
-                rec_acct = str(rec.get("Account Number", "") or rec.get("Line Item Account Number", "")).strip()
-                rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
-                rec_vendor = str(rec.get("EnrichedVendorID", "")).strip()
-                acct_key = f"{rec_prop}|{rec_vendor}|{rec_acct}"
-                if acct_key not in account_keys:
-                    return None
-                invoice_num = rec.get("Invoice Number", "")
-                vacant_count = 0
-                house_count = 0
-                for line in content.strip().split('\n'):
-                    if not line.strip():
-                        continue
-                    try:
-                        line_rec = json.loads(line)
-                        hov = str(line_rec.get("House Or Vacant", "")).lower().strip()
-                        if hov == "vacant":
-                            vacant_count += 1
-                        elif hov == "house":
-                            house_count += 1
-                    except Exception:
-                        continue
-                return {
-                    "account_key": acct_key,
-                    "invoice_num": invoice_num,
-                    "vacant": vacant_count,
-                    "house": house_count,
-                    "property_name": rec.get("EnrichedPropertyName", ""),
-                    "vendor_name": rec.get("EnrichedVendorName", ""),
-                    "account_number": rec_acct,
-                }
-            except Exception:
-                return None
-
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            for result in executor.map(_read_for_vacant, all_keys):
-                if not result:
-                    continue
-                ak = result["account_key"]
-                if ak not in account_stats:
-                    account_stats[ak] = {
-                        "vacant": 0, "house": 0, "total_bills": 0, "invoices": set(),
-                        "property_name": result["property_name"],
-                        "vendor_name": result["vendor_name"],
-                        "account_number": result["account_number"],
+            def _read_for_vacant(key):
+                try:
+                    file_obj = s3.get_object(Bucket=BUCKET, Key=key)
+                    content = file_obj['Body'].read().decode('utf-8', errors='ignore')
+                    first_line = content.split('\n')[0].strip()
+                    if not first_line:
+                        return None
+                    rec = json.loads(first_line)
+                    rec_acct = str(rec.get("Account Number", "") or rec.get("Line Item Account Number", "")).strip()
+                    rec_prop = str(rec.get("EnrichedPropertyID", "")).strip()
+                    rec_vendor = str(rec.get("EnrichedVendorID", "")).strip()
+                    acct_key = f"{rec_prop}|{rec_vendor}|{rec_acct}"
+                    if acct_key not in account_keys:
+                        return None
+                    invoice_num = rec.get("Invoice Number", "")
+                    vacant_count = 0
+                    house_count = 0
+                    for line in content.strip().split('\n'):
+                        if not line.strip():
+                            continue
+                        try:
+                            line_rec = json.loads(line)
+                            hov = str(line_rec.get("House Or Vacant", "")).lower().strip()
+                            if hov == "vacant":
+                                vacant_count += 1
+                            elif hov == "house":
+                                house_count += 1
+                        except Exception:
+                            continue
+                    return {
+                        "account_key": acct_key,
+                        "invoice_num": invoice_num,
+                        "vacant": vacant_count,
+                        "house": house_count,
+                        "property_name": rec.get("EnrichedPropertyName", ""),
+                        "vendor_name": rec.get("EnrichedVendorName", ""),
+                        "account_number": rec_acct,
                     }
-                if result["invoice_num"] not in account_stats[ak]["invoices"]:
-                    account_stats[ak]["invoices"].add(result["invoice_num"])
-                    account_stats[ak]["total_bills"] += 1
-                account_stats[ak]["vacant"] += result["vacant"]
-                account_stats[ak]["house"] += result["house"]
+                except Exception:
+                    return None
 
-        # Calculate percentages and filter
-        vacant_accounts = []
-        for key, stats in account_stats.items():
-            total_lines = stats["vacant"] + stats["house"]
-            if total_lines == 0:
-                continue
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                for result in executor.map(_read_for_vacant, all_keys):
+                    if not result:
+                        continue
+                    ak = result["account_key"]
+                    if ak not in account_stats:
+                        account_stats[ak] = {
+                            "vacant": 0, "house": 0, "total_bills": 0, "invoices": set(),
+                            "property_name": result["property_name"],
+                            "vendor_name": result["vendor_name"],
+                            "account_number": result["account_number"],
+                        }
+                    if result["invoice_num"] not in account_stats[ak]["invoices"]:
+                        account_stats[ak]["invoices"].add(result["invoice_num"])
+                        account_stats[ak]["total_bills"] += 1
+                    account_stats[ak]["vacant"] += result["vacant"]
+                    account_stats[ak]["house"] += result["house"]
 
-            vacant_pct = round(stats["vacant"] / total_lines * 100, 1)
-            if vacant_pct < min_vacant_pct:
-                continue
+            # Calculate percentages for ALL accounts (no threshold filtering — cache full dataset)
+            all_vacant_accounts = []
+            for key, stats in account_stats.items():
+                total_lines = stats["vacant"] + stats["house"]
+                if total_lines == 0:
+                    continue
 
-            # Get additional info from accounts_to_track
-            acct_info = account_keys.get(key, {})
+                vacant_pct = round(stats["vacant"] / total_lines * 100, 1)
 
-            vacant_accounts.append({
-                "account_key": key,
-                "property_id": acct_info.get("propertyId", ""),
-                "vendor_id": acct_info.get("vendorId", ""),
-                "property_name": stats["property_name"] or acct_info.get("propertyName", ""),
-                "vendor_name": stats["vendor_name"] or acct_info.get("vendorName", ""),
-                "account_number": stats["account_number"],
-                "vacant_lines": stats["vacant"],
-                "house_lines": stats["house"],
-                "total_bills": stats["total_bills"],
-                "vacant_pct": vacant_pct,
-                "is_ubi": acct_info.get("is_ubi", False)
-            })
+                # Get additional info from accounts_to_track
+                acct_info = account_keys.get(key, {})
 
-        # Sort by vacant percentage descending
-        vacant_accounts.sort(key=lambda x: x["vacant_pct"], reverse=True)
+                all_vacant_accounts.append({
+                    "account_key": key,
+                    "property_id": acct_info.get("propertyId", ""),
+                    "vendor_id": acct_info.get("vendorId", ""),
+                    "property_name": stats["property_name"] or acct_info.get("propertyName", ""),
+                    "vendor_name": stats["vendor_name"] or acct_info.get("vendorName", ""),
+                    "account_number": stats["account_number"],
+                    "vacant_lines": stats["vacant"],
+                    "house_lines": stats["house"],
+                    "total_bills": stats["total_bills"],
+                    "vacant_pct": vacant_pct,
+                    "is_ubi": acct_info.get("is_ubi", False)
+                })
 
-        print(f"[VACANT DETECT] Found {len(vacant_accounts)} accounts with {min_vacant_pct}%+ vacant")
+            # Sort by vacant percentage descending
+            all_vacant_accounts.sort(key=lambda x: x["vacant_pct"], reverse=True)
 
-        response_data = {
-            "accounts": vacant_accounts,
-            "total": len(vacant_accounts),
+            print(f"[VACANT DETECT] Computed {len(all_vacant_accounts)} accounts with vacant stats")
+            return {"all_accounts": all_vacant_accounts}
+
+        # Serve from S3-persisted cache; rebuild in background when stale
+        cached_result = _metrics_serve("vacant_accounts", _compute)
+        all_accounts = cached_result.get("all_accounts", [])
+
+        # Apply min_vacant_pct filter AFTER cache retrieval
+        filtered = [a for a in all_accounts if a.get("vacant_pct", 0) >= min_vacant_pct]
+
+        print(f"[VACANT DETECT] Found {len(filtered)} accounts with {min_vacant_pct}%+ vacant")
+
+        return {
+            "accounts": filtered,
+            "total": len(filtered),
             "threshold": min_vacant_pct
         }
-        _CACHE[cache_key] = {"ts": time.time(), "data": response_data}
-        return response_data
     except Exception as e:
         import traceback
         print(f"[VACANT DETECT] Error: {e}\n{traceback.format_exc()}")
@@ -21100,10 +21122,10 @@ def api_delete_manual_entry(entry_id: str, user: str = Depends(require_admin)):
             )
         except Exception:
             pass
-        # Bust completion tracker cache
-        keys_to_bust = [k for k in list(_CACHE.keys()) if isinstance(k, tuple) and len(k) > 0 and k[0] == "completion_tracker"]
+        # Bust completion tracker cache (now in _METRICS_CACHE via _metrics_serve)
+        keys_to_bust = [k for k in list(_METRICS_CACHE.keys()) if k.startswith("completion_tracker__")]
         for k in keys_to_bust:
-            _CACHE.pop(k, None)
+            _METRICS_CACHE.pop(k, None)
         print(f"[MANUAL DELETE] Deleted entry {entry_id} by {user}")
         return {"success": True, "deleted": entry_id}
     except Exception as e:
@@ -21150,610 +21172,613 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
     Get UBI completion tracker data showing which accounts have bills for a given period.
     Returns rollup by property, charge code, and account.
     """
-    print(f"[COMPLETION TRACKER] Starting for period: {period or 'all'}")
-
-    # Check cache first (5-minute TTL since this scans many files)
-    cache_key = ("completion_tracker", period)
-    now = time.time()
-    ent = _CACHE.get(cache_key)
-    if ent and (now - ent["ts"]) < 300:  # 5 minutes
-        print(f"[COMPLETION TRACKER] Returning cached result")
-        return ent["data"]
-
-    # 0. Build set of cleansed scraper account IDs for flagging
-    import re as _re
-    _load_scraper_mappings()
-    _scraper_acct_ids_clean = set()
-    for _sa in _scraper_account_map.values():
-        _aid = _sa.get("account_id", "")
-        if _aid:
-            _scraper_acct_ids_clean.add(_re.sub(r'[^A-Za-z0-9]', '', _aid).lower())
-    print(f"[COMPLETION TRACKER] Loaded {len(_scraper_acct_ids_clean)} scraper account IDs")
-
-    # 1. Get all UBI accounts from accounts_track config (S3-primary)
-    accounts_track = _get_accounts_to_track()
-
-    # Filter to only UBI accounts that are still tracked
-    ubi_accounts = [acc for acc in accounts_track if acc.get("is_ubi", False) and acc.get("is_tracked", True)]
-    print(f"[COMPLETION TRACKER] Found {len(ubi_accounts)} UBI accounts")
-
-    # Load AP mapping to show AP name per property
-    ap_mapping_raw = _ddb_get_config("ap-mapping") or []
-    ap_by_property = {}  # property_id -> AP name
-    for ap in ap_mapping_raw:
-        if isinstance(ap, dict):
-            pid = str(ap.get("propertyId") or "").strip()
-            name = str(ap.get("name") or "").strip()
-            if pid and name:
-                ap_by_property[pid] = name
-    print(f"[COMPLETION TRACKER] Loaded {len(ap_by_property)} AP mappings")
-
-    # Build property name -> ID lookup for fallback when JSONL has empty Property ID
-    property_name_to_id = {}
     try:
-        prop_rows = _load_dim_records(DIM_PROPERTY_PREFIX)
-        for r in prop_rows:
-            pid = (r.get("propertyId") or r.get("PROPERTY_ID") or r.get("Property ID") or r.get("id") or r.get("PROPERTYID") or r.get("PROP_ID"))
-            pname = (r.get("name") or r.get("NAME") or r.get("propertyName") or r.get("Property Name") or r.get("PROPERTY_NAME") or r.get("Property") or r.get("PROPERTY"))
-            if pid and pname:
-                property_name_to_id[str(pname).strip().lower()] = str(pid).strip()
-        print(f"[COMPLETION TRACKER] Built property name->ID lookup with {len(property_name_to_id)} entries")
-    except Exception as e:
-        print(f"[COMPLETION TRACKER] Error building property name lookup: {e}")
+        # Cache key includes period since the computation is deeply period-dependent
+        _cache_name = f"completion_tracker__{period or 'all'}"
 
-    # 2. Get assigned accounts from S3 Stage 8 files
-    assigned_accounts = set()  # Set of (property_id, account_number, vendor_name) tuples
+        def _compute():
+            print(f"[COMPLETION TRACKER] Starting for period: {period or 'all'}")
 
-    try:
-        # Scan Stage 8 files for assignments
-        # Look at recent 12 months of data
-        from datetime import timedelta
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=365)
+            # 0. Build set of cleansed scraper account IDs for flagging
+            import re as _re
+            _load_scraper_mappings()
+            _scraper_acct_ids_clean = set()
+            for _sa in _scraper_account_map.values():
+                _aid = _sa.get("account_id", "")
+                if _aid:
+                    _scraper_acct_ids_clean.add(_re.sub(r'[^A-Za-z0-9]', '', _aid).lower())
+            print(f"[COMPLETION TRACKER] Loaded {len(_scraper_acct_ids_clean)} scraper account IDs")
 
-        prefixes_to_scan = set()
-        current = start_date
-        while current <= end_date:
-            prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={current.year}/mm={current.month:02d}/"
-            prefixes_to_scan.add(prefix)
-            # Move to next month
-            if current.month == 12:
-                current = current.replace(year=current.year + 1, month=1, day=1)
-            else:
-                current = current.replace(month=current.month + 1, day=1)
+            # 1. Get all UBI accounts from accounts_track config (S3-primary)
+            accounts_track = _get_accounts_to_track()
 
-        # List all Stage 8 files IN PARALLEL
-        def _list_tracker_prefix(prefix):
-            keys = []
+            # Filter to only UBI accounts that are still tracked
+            ubi_accounts = [acc for acc in accounts_track if acc.get("is_ubi", False) and acc.get("is_tracked", True)]
+            print(f"[COMPLETION TRACKER] Found {len(ubi_accounts)} UBI accounts")
+
+            # Load AP mapping to show AP name per property
+            ap_mapping_raw = _ddb_get_config("ap-mapping") or []
+            ap_by_property = {}  # property_id -> AP name
+            for ap in ap_mapping_raw:
+                if isinstance(ap, dict):
+                    pid = str(ap.get("propertyId") or "").strip()
+                    name = str(ap.get("name") or "").strip()
+                    if pid and name:
+                        ap_by_property[pid] = name
+            print(f"[COMPLETION TRACKER] Loaded {len(ap_by_property)} AP mappings")
+
+            # Build property name -> ID lookup for fallback when JSONL has empty Property ID
+            property_name_to_id = {}
             try:
-                paginator = s3.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                    for obj in page.get('Contents', []):
-                        if obj['Key'].endswith('.jsonl'):
-                            keys.append(obj['Key'])
+                prop_rows = _load_dim_records(DIM_PROPERTY_PREFIX)
+                for r in prop_rows:
+                    pid = (r.get("propertyId") or r.get("PROPERTY_ID") or r.get("Property ID") or r.get("id") or r.get("PROPERTYID") or r.get("PROP_ID"))
+                    pname = (r.get("name") or r.get("NAME") or r.get("propertyName") or r.get("Property Name") or r.get("PROPERTY_NAME") or r.get("Property") or r.get("PROPERTY"))
+                    if pid and pname:
+                        property_name_to_id[str(pname).strip().lower()] = str(pid).strip()
+                print(f"[COMPLETION TRACKER] Built property name->ID lookup with {len(property_name_to_id)} entries")
             except Exception as e:
-                print(f"[COMPLETION TRACKER] Error listing prefix {prefix}: {e}")
-            return keys
+                print(f"[COMPLETION TRACKER] Error building property name lookup: {e}")
 
-        all_keys = []
-        list_futures = [_GLOBAL_EXECUTOR.submit(_list_tracker_prefix, p) for p in prefixes_to_scan]
-        for future in as_completed(list_futures):
-            all_keys.extend(future.result())
-
-        print(f"[COMPLETION TRACKER] Scanning {len(all_keys)} Stage 8 files")
-
-        # Helper function to process a single S3 file
-        # Returns (account_periods_dict, vacant_stats_dict, service_dates_dict)
-        # account_periods_dict: (prop_id, acct_num, vendor_name) -> set of assigned periods
-        # service_dates_dict: (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
-        def process_s3_file(s3_key):
-            acct_periods = {}  # acct_key -> set of periods
-            file_vacant_stats = {}  # (prop_id, acct_num, vendor_name) -> {"vacant": N, "house": N}
-            file_service_dates = {}  # (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
-
-            # Parse property name from filename as fallback (format: PropertyName-VendorName-AccountNum-...)
-            filename_prop_name = ""
-            try:
-                fname = s3_key.split("/")[-1]  # Get just the filename
-                if "-" in fname:
-                    filename_prop_name = fname.split("-")[0].strip()
-            except Exception:
-                pass
+            # 2. Get assigned accounts from S3 Stage 8 files
+            assigned_accounts = set()  # Set of (property_id, account_number, vendor_name) tuples
 
             try:
-                obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
-                body = obj["Body"].read()
-                if s3_key.endswith('.gz'):
-                    import gzip
-                    body = gzip.decompress(body)
-                lines = body.decode('utf-8').strip().split('\n')
+                # Scan Stage 8 files for assignments
+                # Look at recent 12 months of data
+                from datetime import timedelta
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=365)
 
-                for line in lines:
+                prefixes_to_scan = set()
+                current = start_date
+                while current <= end_date:
+                    prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={current.year}/mm={current.month:02d}/"
+                    prefixes_to_scan.add(prefix)
+                    # Move to next month
+                    if current.month == 12:
+                        current = current.replace(year=current.year + 1, month=1, day=1)
+                    else:
+                        current = current.replace(month=current.month + 1, day=1)
+
+                # List all Stage 8 files IN PARALLEL
+                def _list_tracker_prefix(prefix):
+                    keys = []
                     try:
-                        parsed = json.loads(line)
-                        property_id = parsed.get("EnrichedPropertyID", parsed.get("Property ID", ""))
-                        account_number = parsed.get("Account Number", parsed.get("AccountNumber", ""))
-                        vendor_name = parsed.get("EnrichedVendorName", parsed.get("Vendor Name", parsed.get("VendorName", "")))
+                        paginator = s3.get_paginator('list_objects_v2')
+                        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                            for obj in page.get('Contents', []):
+                                if obj['Key'].endswith('.jsonl'):
+                                    keys.append(obj['Key'])
+                    except Exception as e:
+                        print(f"[COMPLETION TRACKER] Error listing prefix {prefix}: {e}")
+                    return keys
 
-                        # Fallback: if property_id is empty, try to look it up from filename property name
-                        if not property_id and filename_prop_name:
-                            property_id = property_name_to_id.get(filename_prop_name.lower(), "")
+                all_keys = []
+                list_futures = [_GLOBAL_EXECUTOR.submit(_list_tracker_prefix, p) for p in prefixes_to_scan]
+                for future in as_completed(list_futures):
+                    all_keys.extend(future.result())
 
-                        if not property_id or not account_number:
+                print(f"[COMPLETION TRACKER] Scanning {len(all_keys)} Stage 8 files")
+
+                # Helper function to process a single S3 file
+                # Returns (account_periods_dict, vacant_stats_dict, service_dates_dict)
+                # account_periods_dict: (prop_id, acct_num, vendor_name) -> set of assigned periods
+                # service_dates_dict: (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
+                def process_s3_file(s3_key):
+                    acct_periods = {}  # acct_key -> set of periods
+                    file_vacant_stats = {}  # (prop_id, acct_num, vendor_name) -> {"vacant": N, "house": N}
+                    file_service_dates = {}  # (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
+
+                    # Parse property name from filename as fallback (format: PropertyName-VendorName-AccountNum-...)
+                    filename_prop_name = ""
+                    try:
+                        fname = s3_key.split("/")[-1]  # Get just the filename
+                        if "-" in fname:
+                            filename_prop_name = fname.split("-")[0].strip()
+                    except Exception:
+                        pass
+
+                    try:
+                        obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
+                        body = obj["Body"].read()
+                        if s3_key.endswith('.gz'):
+                            import gzip
+                            body = gzip.decompress(body)
+                        lines = body.decode('utf-8').strip().split('\n')
+
+                        for line in lines:
+                            try:
+                                parsed = json.loads(line)
+                                property_id = parsed.get("EnrichedPropertyID", parsed.get("Property ID", ""))
+                                account_number = parsed.get("Account Number", parsed.get("AccountNumber", ""))
+                                vendor_name = parsed.get("EnrichedVendorName", parsed.get("Vendor Name", parsed.get("VendorName", "")))
+
+                                # Fallback: if property_id is empty, try to look it up from filename property name
+                                if not property_id and filename_prop_name:
+                                    property_id = property_name_to_id.get(filename_prop_name.lower(), "")
+
+                                if not property_id or not account_number:
+                                    continue
+                                norm_acct = _normalize_account_number(account_number)
+                                acct_key = (property_id, norm_acct, vendor_name)
+
+                                # Get service dates from the line item
+                                svc_start = parsed.get("Bill Period Start", parsed.get("billPeriodStart", ""))
+                                svc_end = parsed.get("Bill Period End", parsed.get("billPeriodEnd", ""))
+
+                                # Collect ALL assigned periods for this account
+                                line_periods = set()
+                                ubi_assignments = parsed.get("ubi_assignments", [])
+                                if ubi_assignments:
+                                    for asn in ubi_assignments:
+                                        p = asn.get("period", "")
+                                        if p:
+                                            line_periods.add(p)
+                                            # Track service dates per account+period
+                                            svc_key = (property_id, account_number, vendor_name, p)
+                                            if svc_key not in file_service_dates:
+                                                file_service_dates[svc_key] = {"start": svc_start, "end": svc_end, "s3_key": s3_key}
+                                else:
+                                    lp = parsed.get("ubi_period", "")
+                                    if lp:
+                                        line_periods.add(lp)
+                                        svc_key = (property_id, account_number, vendor_name, lp)
+                                        if svc_key not in file_service_dates:
+                                            file_service_dates[svc_key] = {"start": svc_start, "end": svc_end, "s3_key": s3_key}
+
+                                if line_periods:
+                                    if acct_key not in acct_periods:
+                                        acct_periods[acct_key] = set()
+                                    acct_periods[acct_key].update(line_periods)
+
+                                # Track vacant/house status (for all lines, not just matching period)
+                                hov = str(parsed.get("House Or Vacant", "")).lower().strip()
+                                if acct_key not in file_vacant_stats:
+                                    file_vacant_stats[acct_key] = {"vacant": 0, "house": 0}
+                                if hov == "vacant":
+                                    file_vacant_stats[acct_key]["vacant"] += 1
+                                elif hov == "house":
+                                    file_vacant_stats[acct_key]["house"] += 1
+                            except Exception:
+                                continue
+                    except Exception as e:
+                        pass  # Silently skip errors for individual files
+                    return acct_periods, file_vacant_stats, file_service_dates
+
+                # Process files in parallel using ThreadPoolExecutor
+                total_assignments = 0
+                vacant_stats = {}  # (prop_id, acct_num, vendor_name) -> {"vacant": N, "house": N}
+                account_all_periods = {}  # (prop_id, acct_num, vendor_name) -> set of ALL assigned periods
+                service_dates = {}  # (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
+                with ThreadPoolExecutor(max_workers=50) as executor:
+                    futures = {executor.submit(process_s3_file, key): key for key in all_keys}
+                    for future in as_completed(futures):
+                        try:
+                            acct_periods, file_vs, file_svc_dates = future.result()
+                            for acct_key, periods_set in acct_periods.items():
+                                if acct_key not in account_all_periods:
+                                    account_all_periods[acct_key] = set()
+                                account_all_periods[acct_key].update(periods_set)
+                                # Mark as assigned for selected period
+                                if period and period in periods_set:
+                                    assigned_accounts.add(acct_key)
+                                    total_assignments += 1
+                                elif not period:
+                                    assigned_accounts.add(acct_key)
+                                    total_assignments += 1
+                            # Merge vacant stats
+                            for acct_key, counts in file_vs.items():
+                                if acct_key not in vacant_stats:
+                                    vacant_stats[acct_key] = {"vacant": 0, "house": 0}
+                                vacant_stats[acct_key]["vacant"] += counts["vacant"]
+                                vacant_stats[acct_key]["house"] += counts["house"]
+                            # Merge service dates
+                            for svc_key, svc_info in file_svc_dates.items():
+                                if svc_key not in service_dates:
+                                    service_dates[svc_key] = svc_info
+                        except Exception as e:
+                            pass
+
+                print(f"[COMPLETION TRACKER] Found {total_assignments} assignments for period {period or 'all'}")
+
+            except Exception as e:
+                print(f"[COMPLETION TRACKER] Error loading assignments: {e}")
+                import traceback
+                traceback.print_exc()
+
+            print(f"[COMPLETION TRACKER] Found {len(assigned_accounts)} unique property+account+vendor combinations with assignments")
+
+            # 2a. Also check manual billback entries (jrk-manual-billback-entries DDB table)
+            try:
+                # Build property name -> ID lookup from ubi_accounts
+                _prop_name_to_id = {}
+                for acc in ubi_accounts:
+                    pname = str(acc.get("propertyName", "")).strip().lower()
+                    pid = str(acc.get("propertyId", "")).strip()
+                    if pname and pid:
+                        _prop_name_to_id[pname] = pid
+
+                manual_paginator = ddb.get_paginator('scan')
+                manual_added = 0
+                for page in manual_paginator.paginate(TableName=MANUAL_BILLBACK_TABLE):
+                    for item in page.get('Items', []):
+                        entry_period = item.get('ubi_period', {}).get('S', '')
+                        if period and entry_period != period:
                             continue
-                        norm_acct = _normalize_account_number(account_number)
-                        acct_key = (property_id, norm_acct, vendor_name)
-
-                        # Get service dates from the line item
-                        svc_start = parsed.get("Bill Period Start", parsed.get("billPeriodStart", ""))
-                        svc_end = parsed.get("Bill Period End", parsed.get("billPeriodEnd", ""))
-
-                        # Collect ALL assigned periods for this account
-                        line_periods = set()
-                        ubi_assignments = parsed.get("ubi_assignments", [])
-                        if ubi_assignments:
-                            for asn in ubi_assignments:
-                                p = asn.get("period", "")
-                                if p:
-                                    line_periods.add(p)
-                                    # Track service dates per account+period
-                                    svc_key = (property_id, account_number, vendor_name, p)
-                                    if svc_key not in file_service_dates:
-                                        file_service_dates[svc_key] = {"start": svc_start, "end": svc_end, "s3_key": s3_key}
-                        else:
-                            lp = parsed.get("ubi_period", "")
-                            if lp:
-                                line_periods.add(lp)
-                                svc_key = (property_id, account_number, vendor_name, lp)
-                                if svc_key not in file_service_dates:
-                                    file_service_dates[svc_key] = {"start": svc_start, "end": svc_end, "s3_key": s3_key}
-
-                        if line_periods:
-                            if acct_key not in acct_periods:
-                                acct_periods[acct_key] = set()
-                            acct_periods[acct_key].update(line_periods)
-
-                        # Track vacant/house status (for all lines, not just matching period)
-                        hov = str(parsed.get("House Or Vacant", "")).lower().strip()
-                        if acct_key not in file_vacant_stats:
-                            file_vacant_stats[acct_key] = {"vacant": 0, "house": 0}
-                        if hov == "vacant":
-                            file_vacant_stats[acct_key]["vacant"] += 1
-                        elif hov == "house":
-                            file_vacant_stats[acct_key]["house"] += 1
-                    except Exception:
-                        continue
+                        prop_name = item.get('property_name', {}).get('S', '').strip()
+                        acct_num = item.get('account_number', {}).get('S', '').strip()
+                        vendor = item.get('vendor_name', {}).get('S', '').strip()
+                        if not prop_name or not acct_num:
+                            continue
+                        # Resolve property name to ID
+                        prop_id = _prop_name_to_id.get(prop_name.lower(), "")
+                        if not prop_id:
+                            continue
+                        acct_key = (prop_id, acct_num, vendor)
+                        assigned_accounts.add(acct_key)
+                        # Also add to account_all_periods for prev/next period indicators
+                        if entry_period:
+                            if acct_key not in account_all_periods:
+                                account_all_periods[acct_key] = set()
+                            account_all_periods[acct_key].add(entry_period)
+                        manual_added += 1
+                print(f"[COMPLETION TRACKER] Added {manual_added} manual entries to assigned accounts")
             except Exception as e:
-                pass  # Silently skip errors for individual files
-            return acct_periods, file_vacant_stats, file_service_dates
+                print(f"[COMPLETION TRACKER] Error loading manual entries: {e}")
 
-        # Process files in parallel using ThreadPoolExecutor
-        total_assignments = 0
-        vacant_stats = {}  # (prop_id, acct_num, vendor_name) -> {"vacant": N, "house": N}
-        account_all_periods = {}  # (prop_id, acct_num, vendor_name) -> set of ALL assigned periods
-        service_dates = {}  # (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = {executor.submit(process_s3_file, key): key for key in all_keys}
-            for future in as_completed(futures):
+            # 2a-2. Also check accrual/manual entries (jrk-bill-manual-entries DDB table)
+            accrual_entries_map = {}  # (property_id, account_number, vendor_name) -> entry_type
+            if period:
                 try:
-                    acct_periods, file_vs, file_svc_dates = future.result()
-                    for acct_key, periods_set in acct_periods.items():
-                        if acct_key not in account_all_periods:
-                            account_all_periods[acct_key] = set()
-                        account_all_periods[acct_key].update(periods_set)
-                        # Mark as assigned for selected period
-                        if period and period in periods_set:
-                            assigned_accounts.add(acct_key)
-                            total_assignments += 1
-                        elif not period:
-                            assigned_accounts.add(acct_key)
-                            total_assignments += 1
-                    # Merge vacant stats
-                    for acct_key, counts in file_vs.items():
-                        if acct_key not in vacant_stats:
-                            vacant_stats[acct_key] = {"vacant": 0, "house": 0}
-                        vacant_stats[acct_key]["vacant"] += counts["vacant"]
-                        vacant_stats[acct_key]["house"] += counts["house"]
-                    # Merge service dates
-                    for svc_key, svc_info in file_svc_dates.items():
-                        if svc_key not in service_dates:
-                            service_dates[svc_key] = svc_info
+                    me_response = ddb.query(
+                        TableName=MANUAL_ENTRIES_TABLE,
+                        IndexName="period-index",
+                        KeyConditionExpression="period = :p",
+                        ExpressionAttributeValues={":p": {"S": period}}
+                    )
+                    me_items = me_response.get("Items", [])
+                    while me_response.get("LastEvaluatedKey"):
+                        me_response = ddb.query(
+                            TableName=MANUAL_ENTRIES_TABLE,
+                            IndexName="period-index",
+                            KeyConditionExpression="period = :p",
+                            ExpressionAttributeValues={":p": {"S": period}},
+                            ExclusiveStartKey=me_response["LastEvaluatedKey"]
+                        )
+                        me_items.extend(me_response.get("Items", []))
+
+                    for me_item in me_items:
+                        me_key = (
+                            me_item.get("property_id", {}).get("S", ""),
+                            _normalize_account_number(me_item.get("account_number", {}).get("S", "")),
+                            me_item.get("vendor_name", {}).get("S", "")
+                        )
+                        accrual_entries_map[me_key] = me_item.get("entry_type", {}).get("S", "MANUAL")
+                        # Also mark as assigned so it counts toward completion
+                        assigned_accounts.add(me_key)
+
+                    print(f"[COMPLETION TRACKER] Found {len(accrual_entries_map)} accrual/manual entries for period {period}")
                 except Exception as e:
-                    pass
+                    print(f"[COMPLETION TRACKER] Error loading accrual entries: {e}")
 
-        print(f"[COMPLETION TRACKER] Found {total_assignments} assignments for period {period or 'all'}")
+            # 2b. Check ACTUAL Stage 7 files for bills waiting to be assigned (not stale DDB data)
+            # This ensures "posted" indicator only shows when there's a real file in BILLBACK
+            posted_accounts = {}  # (property_id, account_number, vendor_name) -> list of s3_keys
 
-    except Exception as e:
-        print(f"[COMPLETION TRACKER] Error loading assignments: {e}")
-        import traceback
-        traceback.print_exc()
-
-    print(f"[COMPLETION TRACKER] Found {len(assigned_accounts)} unique property+account+vendor combinations with assignments")
-
-    # 2a. Also check manual billback entries (jrk-manual-billback-entries DDB table)
-    try:
-        # Build property name -> ID lookup from ubi_accounts
-        _prop_name_to_id = {}
-        for acc in ubi_accounts:
-            pname = str(acc.get("propertyName", "")).strip().lower()
-            pid = str(acc.get("propertyId", "")).strip()
-            if pname and pid:
-                _prop_name_to_id[pname] = pid
-
-        manual_paginator = ddb.get_paginator('scan')
-        manual_added = 0
-        for page in manual_paginator.paginate(TableName=MANUAL_BILLBACK_TABLE):
-            for item in page.get('Items', []):
-                entry_period = item.get('ubi_period', {}).get('S', '')
-                if period and entry_period != period:
-                    continue
-                prop_name = item.get('property_name', {}).get('S', '').strip()
-                acct_num = item.get('account_number', {}).get('S', '').strip()
-                vendor = item.get('vendor_name', {}).get('S', '').strip()
-                if not prop_name or not acct_num:
-                    continue
-                # Resolve property name to ID
-                prop_id = _prop_name_to_id.get(prop_name.lower(), "")
-                if not prop_id:
-                    continue
-                acct_key = (prop_id, acct_num, vendor)
-                assigned_accounts.add(acct_key)
-                # Also add to account_all_periods for prev/next period indicators
-                if entry_period:
-                    if acct_key not in account_all_periods:
-                        account_all_periods[acct_key] = set()
-                    account_all_periods[acct_key].add(entry_period)
-                manual_added += 1
-        print(f"[COMPLETION TRACKER] Added {manual_added} manual entries to assigned accounts")
-    except Exception as e:
-        print(f"[COMPLETION TRACKER] Error loading manual entries: {e}")
-
-    # 2a-2. Also check accrual/manual entries (jrk-bill-manual-entries DDB table)
-    accrual_entries_map = {}  # (property_id, account_number, vendor_name) -> entry_type
-    if period:
-        try:
-            me_response = ddb.query(
-                TableName=MANUAL_ENTRIES_TABLE,
-                IndexName="period-index",
-                KeyConditionExpression="period = :p",
-                ExpressionAttributeValues={":p": {"S": period}}
-            )
-            me_items = me_response.get("Items", [])
-            while me_response.get("LastEvaluatedKey"):
-                me_response = ddb.query(
-                    TableName=MANUAL_ENTRIES_TABLE,
-                    IndexName="period-index",
-                    KeyConditionExpression="period = :p",
-                    ExpressionAttributeValues={":p": {"S": period}},
-                    ExclusiveStartKey=me_response["LastEvaluatedKey"]
-                )
-                me_items.extend(me_response.get("Items", []))
-
-            for me_item in me_items:
-                me_key = (
-                    me_item.get("property_id", {}).get("S", ""),
-                    _normalize_account_number(me_item.get("account_number", {}).get("S", "")),
-                    me_item.get("vendor_name", {}).get("S", "")
-                )
-                accrual_entries_map[me_key] = me_item.get("entry_type", {}).get("S", "MANUAL")
-                # Also mark as assigned so it counts toward completion
-                assigned_accounts.add(me_key)
-
-            print(f"[COMPLETION TRACKER] Found {len(accrual_entries_map)} accrual/manual entries for period {period}")
-        except Exception as e:
-            print(f"[COMPLETION TRACKER] Error loading accrual entries: {e}")
-
-    # 2b. Check ACTUAL Stage 7 files for bills waiting to be assigned (not stale DDB data)
-    # This ensures "posted" indicator only shows when there's a real file in BILLBACK
-    posted_accounts = {}  # (property_id, account_number, vendor_name) -> list of s3_keys
-
-    # Parse selected period into prev/current/next for comparison
-    _sel_prev_period = ""
-    _sel_next_period = ""
-    if period:
-        try:
-            pm, py = int(period.split("/")[0]), int(period.split("/")[1])
-            prev_m, prev_y = (pm - 1, py) if pm > 1 else (12, py - 1)
-            next_m, next_y = (pm + 1, py) if pm < 12 else (1, py + 1)
-            _sel_prev_period = f"{prev_m:02d}/{prev_y}"
-            _sel_next_period = f"{next_m:02d}/{next_y}"
-        except (ValueError, IndexError):
-            pass
-
-    # Build set of UBI account keys for filtering Stage 7 scan
-    # Normalize account numbers to strip punctuation for reliable matching
-    _ubi_acct_lookup = set()
-    for acc in ubi_accounts:
-        pid = str(acc.get("propertyId", "")).strip()
-        acct = str(acc.get("accountNumber", "")).strip()
-        if pid and acct:
-            _ubi_acct_lookup.add((pid, _normalize_account_number(acct)))
-
-    try:
-        # Scan Stage 7 files (last 90 days) to find actual bills waiting to be assigned
-        from datetime import timedelta
-        stage7_end = datetime.now()
-        stage7_start = stage7_end - timedelta(days=90)
-
-        stage7_prefixes = set()
-        current = stage7_start
-        while current <= stage7_end:
-            stage7_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={current.year}/mm={current.month:02d}/")
-            if current.month == 12:
-                current = current.replace(year=current.year + 1, month=1, day=1)
-            else:
-                current = current.replace(month=current.month + 1, day=1)
-
-        # List Stage 7 files
-        stage7_keys = []
-        for prefix in stage7_prefixes:
-            try:
-                paginator = s3.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                    for obj in page.get('Contents', []):
-                        if obj['Key'].endswith('.jsonl'):
-                            stage7_keys.append(obj['Key'])
-            except Exception:
-                pass
-
-        print(f"[COMPLETION TRACKER] Scanning {len(stage7_keys)} Stage 7 files for posted bills")
-
-        # Read first line of each Stage 7 file to get account info
-        def _read_stage7_account(s3_key):
-            try:
-                obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
-                body = obj["Body"].read()
-                if s3_key.endswith('.gz'):
-                    import gzip
-                    body = gzip.decompress(body)
-                first_line = body.decode('utf-8', errors='ignore').strip().split('\n')[0]
-                rec = json.loads(first_line)
-                pid = str(rec.get("EnrichedPropertyID") or rec.get("Property ID") or "").strip()
-                acct = str(rec.get("Account Number") or rec.get("AccountNumber") or "").strip()
-                vname = str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or "").strip()
-                norm_acct = _normalize_account_number(acct)
-                # Only include if it's a UBI account
-                if pid and acct and (pid, norm_acct) in _ubi_acct_lookup:
-                    return (pid, norm_acct, vname), s3_key
-            except Exception:
-                pass
-            return None, None
-
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [executor.submit(_read_stage7_account, key) for key in stage7_keys]
-            for future in as_completed(futures):
+            # Parse selected period into prev/current/next for comparison
+            _sel_prev_period = ""
+            _sel_next_period = ""
+            if period:
                 try:
-                    acct_key, s3_key = future.result()
-                    if acct_key and s3_key:
-                        if acct_key not in posted_accounts:
-                            posted_accounts[acct_key] = []
-                        posted_accounts[acct_key].append(s3_key)
-                except Exception:
+                    pm, py = int(period.split("/")[0]), int(period.split("/")[1])
+                    prev_m, prev_y = (pm - 1, py) if pm > 1 else (12, py - 1)
+                    next_m, next_y = (pm + 1, py) if pm < 12 else (1, py + 1)
+                    _sel_prev_period = f"{prev_m:02d}/{prev_y}"
+                    _sel_next_period = f"{next_m:02d}/{next_y}"
+                except (ValueError, IndexError):
                     pass
 
-        print(f"[COMPLETION TRACKER] Found {len(posted_accounts)} UBI accounts with bills in Stage 7 (BILLBACK)")
-    except Exception as e:
-        print(f"[COMPLETION TRACKER] Error scanning Stage 7: {e}")
+            # Build set of UBI account keys for filtering Stage 7 scan
+            # Normalize account numbers to strip punctuation for reliable matching
+            _ubi_acct_lookup = set()
+            for acc in ubi_accounts:
+                pid = str(acc.get("propertyId", "")).strip()
+                acct = str(acc.get("accountNumber", "")).strip()
+                if pid and acct:
+                    _ubi_acct_lookup.add((pid, _normalize_account_number(acct)))
 
-    # 2c. For tracked accounts that have posted bills but NO Stage 8 data,
-    #     read the actual JSONL files to get vacant stats
-    ubi_account_keys = set()
-    for acc in ubi_accounts:
-        pid = str(acc.get("propertyId", "")).strip()
-        acct = str(acc.get("accountNumber", "")).strip()
-        vname = str(acc.get("vendorName", "")).strip()
-        if pid and acct:
-            ubi_account_keys.add((pid, acct, vname))
-
-    # Find accounts that need vacant stats from posted files (have posted bill but no Stage 8 data)
-    accounts_needing_vacant = {}
-    for acct_key in ubi_account_keys:
-        if acct_key not in vacant_stats and acct_key in posted_accounts:
-            # Pick the most recent s3_key (last in list)
-            s3_keys = posted_accounts[acct_key]
-            if s3_keys:
-                accounts_needing_vacant[acct_key] = s3_keys[-1]
-
-    if accounts_needing_vacant:
-        print(f"[COMPLETION TRACKER] Reading {len(accounts_needing_vacant)} posted JSONL files for vacant stats")
-
-        def _read_vacant_from_posted(acct_key_and_s3key):
-            acct_key, s3_key = acct_key_and_s3key
-            vs = {"vacant": 0, "house": 0}
             try:
-                obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
-                body = obj["Body"].read()
-                if s3_key.endswith('.gz'):
-                    import gzip
-                    body = gzip.decompress(body)
-                for raw_line in body.decode('utf-8', errors='ignore').strip().split('\n'):
+                # Scan Stage 7 files (last 90 days) to find actual bills waiting to be assigned
+                from datetime import timedelta
+                stage7_end = datetime.now()
+                stage7_start = stage7_end - timedelta(days=90)
+
+                stage7_prefixes = set()
+                current = stage7_start
+                while current <= stage7_end:
+                    stage7_prefixes.add(f"{POST_ENTRATA_PREFIX}yyyy={current.year}/mm={current.month:02d}/")
+                    if current.month == 12:
+                        current = current.replace(year=current.year + 1, month=1, day=1)
+                    else:
+                        current = current.replace(month=current.month + 1, day=1)
+
+                # List Stage 7 files
+                stage7_keys = []
+                for prefix in stage7_prefixes:
                     try:
-                        rec = json.loads(raw_line)
-                        hov = str(rec.get("House Or Vacant", "")).lower().strip()
-                        if hov == "vacant":
-                            vs["vacant"] += 1
-                        elif hov == "house":
-                            vs["house"] += 1
+                        paginator = s3.get_paginator('list_objects_v2')
+                        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                            for obj in page.get('Contents', []):
+                                if obj['Key'].endswith('.jsonl'):
+                                    stage7_keys.append(obj['Key'])
                     except Exception:
-                        continue
-            except Exception:
-                pass
-            return acct_key, vs
+                        pass
 
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [executor.submit(_read_vacant_from_posted, (k, v)) for k, v in accounts_needing_vacant.items()]
-            for future in as_completed(futures):
-                try:
-                    acct_key, vs = future.result()
-                    if vs["vacant"] > 0 or vs["house"] > 0:
-                        vacant_stats[acct_key] = vs
-                except Exception:
-                    pass
+                print(f"[COMPLETION TRACKER] Scanning {len(stage7_keys)} Stage 7 files for posted bills")
 
-        print(f"[COMPLETION TRACKER] Vacant stats now cover {len(vacant_stats)} accounts total")
+                # Read first line of each Stage 7 file to get account info
+                def _read_stage7_account(s3_key):
+                    try:
+                        obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
+                        body = obj["Body"].read()
+                        if s3_key.endswith('.gz'):
+                            import gzip
+                            body = gzip.decompress(body)
+                        first_line = body.decode('utf-8', errors='ignore').strip().split('\n')[0]
+                        rec = json.loads(first_line)
+                        pid = str(rec.get("EnrichedPropertyID") or rec.get("Property ID") or "").strip()
+                        acct = str(rec.get("Account Number") or rec.get("AccountNumber") or "").strip()
+                        vname = str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or "").strip()
+                        norm_acct = _normalize_account_number(acct)
+                        # Only include if it's a UBI account
+                        if pid and acct and (pid, norm_acct) in _ubi_acct_lookup:
+                            return (pid, norm_acct, vname), s3_key
+                    except Exception:
+                        pass
+                    return None, None
 
-    # 3. Build rollup structure
-    # Group by property -> accounts (deduplicate by property+account+vendor)
-    properties = {}  # property_id -> {name, accounts: [{account_number, vendor_name, has_bill}]}
-    seen_accounts = set()  # Deduplicate entries
+                with ThreadPoolExecutor(max_workers=50) as executor:
+                    futures = [executor.submit(_read_stage7_account, key) for key in stage7_keys]
+                    for future in as_completed(futures):
+                        try:
+                            acct_key, s3_key = future.result()
+                            if acct_key and s3_key:
+                                if acct_key not in posted_accounts:
+                                    posted_accounts[acct_key] = []
+                                posted_accounts[acct_key].append(s3_key)
+                        except Exception:
+                            pass
 
-    # Build secondary lookup: (property_id, normalized_account) -> True for vendor-agnostic matching
-    _assigned_by_prop_acct = set()
-    for k in assigned_accounts:
-        _assigned_by_prop_acct.add((k[0], k[1]))  # (property_id, normalized_account)
-    _posted_by_prop_acct = set()
-    for k in posted_accounts:
-        _posted_by_prop_acct.add((k[0], k[1]))
-    _accrual_by_prop_acct = {}
-    for k, v in accrual_entries_map.items():
-        _accrual_by_prop_acct[(k[0], k[1])] = v
-    # Build period lookup by (property_id, normalized_account) ignoring vendor
-    _periods_by_prop_acct = {}
-    for k, periods_set in account_all_periods.items():
-        pa_key = (k[0], k[1])
-        if pa_key not in _periods_by_prop_acct:
-            _periods_by_prop_acct[pa_key] = set()
-        _periods_by_prop_acct[pa_key].update(periods_set)
-    # Service dates by (property_id, normalized_account, period) ignoring vendor
-    _svc_by_prop_acct_period = {}
-    for k, v in service_dates.items():
-        pa_key = (k[0], _normalize_account_number(k[1]), k[3])  # (pid, norm_acct, period)
-        if pa_key not in _svc_by_prop_acct_period:
-            _svc_by_prop_acct_period[pa_key] = v
+                print(f"[COMPLETION TRACKER] Found {len(posted_accounts)} UBI accounts with bills in Stage 7 (BILLBACK)")
+            except Exception as e:
+                print(f"[COMPLETION TRACKER] Error scanning Stage 7: {e}")
 
-    for acc in ubi_accounts:
-        property_id = str(acc.get("propertyId", "")).strip()
-        property_name = str(acc.get("propertyName", "")).strip()
-        account_number = str(acc.get("accountNumber", "")).strip()
-        vendor_name = str(acc.get("vendorName", "")).strip()
-        norm_acct = _normalize_account_number(account_number)
+            # 2c. For tracked accounts that have posted bills but NO Stage 8 data,
+            #     read the actual JSONL files to get vacant stats
+            ubi_account_keys = set()
+            for acc in ubi_accounts:
+                pid = str(acc.get("propertyId", "")).strip()
+                acct = str(acc.get("accountNumber", "")).strip()
+                vname = str(acc.get("vendorName", "")).strip()
+                if pid and acct:
+                    ubi_account_keys.add((pid, acct, vname))
 
-        if not property_id or not account_number:
-            continue
+            # Find accounts that need vacant stats from posted files (have posted bill but no Stage 8 data)
+            accounts_needing_vacant = {}
+            for acct_key in ubi_account_keys:
+                if acct_key not in vacant_stats and acct_key in posted_accounts:
+                    # Pick the most recent s3_key (last in list)
+                    s3_keys = posted_accounts[acct_key]
+                    if s3_keys:
+                        accounts_needing_vacant[acct_key] = s3_keys[-1]
 
-        # Skip duplicate entries for the same property+account (vendor-agnostic dedup)
-        dedup_key = (property_id, norm_acct, vendor_name)
-        if dedup_key in seen_accounts:
-            continue
-        seen_accounts.add(dedup_key)
+            if accounts_needing_vacant:
+                print(f"[COMPLETION TRACKER] Reading {len(accounts_needing_vacant)} posted JSONL files for vacant stats")
 
-        if property_id not in properties:
-            properties[property_id] = {
-                "property_id": property_id,
-                "property_name": property_name,
-                "ap_name": ap_by_property.get(property_id, ""),
-                "accounts": [],
-                "total": 0,
-                "complete": 0,
-                "posted_unassigned": 0
+                def _read_vacant_from_posted(acct_key_and_s3key):
+                    acct_key, s3_key = acct_key_and_s3key
+                    vs = {"vacant": 0, "house": 0}
+                    try:
+                        obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
+                        body = obj["Body"].read()
+                        if s3_key.endswith('.gz'):
+                            import gzip
+                            body = gzip.decompress(body)
+                        for raw_line in body.decode('utf-8', errors='ignore').strip().split('\n'):
+                            try:
+                                rec = json.loads(raw_line)
+                                hov = str(rec.get("House Or Vacant", "")).lower().strip()
+                                if hov == "vacant":
+                                    vs["vacant"] += 1
+                                elif hov == "house":
+                                    vs["house"] += 1
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    return acct_key, vs
+
+                with ThreadPoolExecutor(max_workers=50) as executor:
+                    futures = [executor.submit(_read_vacant_from_posted, (k, v)) for k, v in accounts_needing_vacant.items()]
+                    for future in as_completed(futures):
+                        try:
+                            acct_key, vs = future.result()
+                            if vs["vacant"] > 0 or vs["house"] > 0:
+                                vacant_stats[acct_key] = vs
+                        except Exception:
+                            pass
+
+                print(f"[COMPLETION TRACKER] Vacant stats now cover {len(vacant_stats)} accounts total")
+
+            # 3. Build rollup structure
+            # Group by property -> accounts (deduplicate by property+account+vendor)
+            properties = {}  # property_id -> {name, accounts: [{account_number, vendor_name, has_bill}]}
+            seen_accounts = set()  # Deduplicate entries
+
+            # Build secondary lookup: (property_id, normalized_account) -> True for vendor-agnostic matching
+            _assigned_by_prop_acct = set()
+            for k in assigned_accounts:
+                _assigned_by_prop_acct.add((k[0], k[1]))  # (property_id, normalized_account)
+            _posted_by_prop_acct = set()
+            for k in posted_accounts:
+                _posted_by_prop_acct.add((k[0], k[1]))
+            _accrual_by_prop_acct = {}
+            for k, v in accrual_entries_map.items():
+                _accrual_by_prop_acct[(k[0], k[1])] = v
+            # Build period lookup by (property_id, normalized_account) ignoring vendor
+            _periods_by_prop_acct = {}
+            for k, periods_set in account_all_periods.items():
+                pa_key = (k[0], k[1])
+                if pa_key not in _periods_by_prop_acct:
+                    _periods_by_prop_acct[pa_key] = set()
+                _periods_by_prop_acct[pa_key].update(periods_set)
+            # Service dates by (property_id, normalized_account, period) ignoring vendor
+            _svc_by_prop_acct_period = {}
+            for k, v in service_dates.items():
+                pa_key = (k[0], _normalize_account_number(k[1]), k[3])  # (pid, norm_acct, period)
+                if pa_key not in _svc_by_prop_acct_period:
+                    _svc_by_prop_acct_period[pa_key] = v
+
+            for acc in ubi_accounts:
+                property_id = str(acc.get("propertyId", "")).strip()
+                property_name = str(acc.get("propertyName", "")).strip()
+                account_number = str(acc.get("accountNumber", "")).strip()
+                vendor_name = str(acc.get("vendorName", "")).strip()
+                norm_acct = _normalize_account_number(account_number)
+
+                if not property_id or not account_number:
+                    continue
+
+                # Skip duplicate entries for the same property+account (vendor-agnostic dedup)
+                dedup_key = (property_id, norm_acct, vendor_name)
+                if dedup_key in seen_accounts:
+                    continue
+                seen_accounts.add(dedup_key)
+
+                if property_id not in properties:
+                    properties[property_id] = {
+                        "property_id": property_id,
+                        "property_name": property_name,
+                        "ap_name": ap_by_property.get(property_id, ""),
+                        "accounts": [],
+                        "total": 0,
+                        "complete": 0,
+                        "posted_unassigned": 0
+                    }
+
+                # Match by exact 3-tuple first, then fall back to (property_id, normalized_account) ignoring vendor
+                prop_acct_key = (property_id, norm_acct)
+                has_bill = dedup_key in assigned_accounts or prop_acct_key in _assigned_by_prop_acct
+
+                # Check which periods this account actually has assignments for (from Stage 8)
+                acct_assigned_periods = account_all_periods.get(dedup_key, set()) or _periods_by_prop_acct.get(prop_acct_key, set())
+
+                # Show "posted, not assigned" if there's a posted invoice and THIS period
+                # doesn't have an assignment yet (could be assigned to other periods)
+                has_posted_bill = (dedup_key in posted_accounts or prop_acct_key in _posted_by_prop_acct) and not has_bill
+                has_prev = _sel_prev_period in acct_assigned_periods if _sel_prev_period else False
+                has_next = _sel_next_period in acct_assigned_periods if _sel_next_period else False
+
+                # Look up vacant stats for this account (from Stage 8 OR posted files)
+                vs = vacant_stats.get(dedup_key, {"vacant": 0, "house": 0})
+                if vs["vacant"] == 0 and vs["house"] == 0:
+                    # Try vendor-agnostic lookup
+                    for vk, vcounts in vacant_stats.items():
+                        if vk[0] == property_id and vk[1] == norm_acct:
+                            vs = vcounts
+                            break
+                total_lines = vs["vacant"] + vs["house"]
+                vpct = round(vs["vacant"] / total_lines * 100, 1) if total_lines > 0 else 0
+
+                # Check if this account exists in the scraper
+                _clean_acct = _re.sub(r'[^A-Za-z0-9]', '', account_number).lower()
+                in_scraper = _clean_acct in _scraper_acct_ids_clean if _clean_acct else False
+
+                # Get service dates for this account+period (current period) - try normalized lookup
+                svc_key = (property_id, account_number, vendor_name, period)
+                svc_info = service_dates.get(svc_key, {})
+                if not svc_info:
+                    svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, period), {})
+                service_start = svc_info.get("start", "")
+                service_end = svc_info.get("end", "")
+                assignment_s3_key = svc_info.get("s3_key", "")
+
+                # Get service dates for prev/next periods (for tooltip display)
+                prev_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_prev_period), {}) if _sel_prev_period else {}
+                next_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_next_period), {}) if _sel_next_period else {}
+
+                # Check for accrual/manual entry - try exact then vendor-agnostic
+                has_accrual_entry = dedup_key in accrual_entries_map or prop_acct_key in _accrual_by_prop_acct
+                accrual_entry_type = accrual_entries_map.get(dedup_key, "") or _accrual_by_prop_acct.get(prop_acct_key, "")
+
+                properties[property_id]["accounts"].append({
+                    "account_number": account_number,
+                    "vendor_name": vendor_name,
+                    "has_bill": has_bill,
+                    "has_posted_bill": has_posted_bill,
+                    "has_prev_period": has_prev,
+                    "has_next_period": has_next,
+                    "prev_service_start": _normalize_date_display(prev_svc_info.get("start", "")),
+                    "prev_service_end": _normalize_date_display(prev_svc_info.get("end", "")),
+                    "next_service_start": _normalize_date_display(next_svc_info.get("start", "")),
+                    "next_service_end": _normalize_date_display(next_svc_info.get("end", "")),
+                    "vacant_lines": vs["vacant"],
+                    "house_lines": vs["house"],
+                    "vacant_pct": vpct,
+                    "in_scraper": in_scraper,
+                    "service_start": _normalize_date_display(service_start),
+                    "service_end": _normalize_date_display(service_end),
+                    "s3_key": assignment_s3_key,
+                    "has_manual_entry": has_accrual_entry,
+                    "manual_entry_type": accrual_entry_type
+                })
+                properties[property_id]["total"] += 1
+                if has_bill:
+                    properties[property_id]["complete"] += 1
+                elif has_posted_bill:
+                    properties[property_id]["posted_unassigned"] += 1
+
+            # Calculate percentages and convert to list
+            properties_list = []
+            for prop in properties.values():
+                prop["percentage"] = round((prop["complete"] / prop["total"] * 100), 1) if prop["total"] > 0 else 0
+                # Count accounts that are predominantly vacant (>50%)
+                prop["vacant_accounts"] = sum(1 for a in prop["accounts"] if a.get("vacant_pct", 0) > 50)
+                properties_list.append(prop)
+
+            # Sort by property name
+            properties_list.sort(key=lambda x: x.get("property_name", ""))
+
+            # Calculate overall totals
+            total_accounts = sum(p["total"] for p in properties_list)
+            total_complete = sum(p["complete"] for p in properties_list)
+            total_posted_unassigned = sum(p["posted_unassigned"] for p in properties_list)
+            overall_percentage = round((total_complete / total_accounts * 100), 1) if total_accounts > 0 else 0
+
+            result = {
+                "period": period,
+                "overall": {
+                    "total": total_accounts,
+                    "complete": total_complete,
+                    "posted_unassigned": total_posted_unassigned,
+                    "percentage": overall_percentage
+                },
+                "properties": properties_list
             }
 
-        # Match by exact 3-tuple first, then fall back to (property_id, normalized_account) ignoring vendor
-        prop_acct_key = (property_id, norm_acct)
-        has_bill = dedup_key in assigned_accounts or prop_acct_key in _assigned_by_prop_acct
+            print(f"[COMPLETION TRACKER] Returning {len(properties_list)} properties, {total_complete}/{total_accounts} complete, {total_posted_unassigned} posted-unassigned ({overall_percentage}%)")
 
-        # Check which periods this account actually has assignments for (from Stage 8)
-        acct_assigned_periods = account_all_periods.get(dedup_key, set()) or _periods_by_prop_acct.get(prop_acct_key, set())
+            return result
 
-        # Show "posted, not assigned" if there's a posted invoice and THIS period
-        # doesn't have an assignment yet (could be assigned to other periods)
-        has_posted_bill = (dedup_key in posted_accounts or prop_acct_key in _posted_by_prop_acct) and not has_bill
-        has_prev = _sel_prev_period in acct_assigned_periods if _sel_prev_period else False
-        has_next = _sel_next_period in acct_assigned_periods if _sel_next_period else False
+        # Serve from S3-persisted cache; rebuild in background when stale
+        return _metrics_serve(_cache_name, _compute)
 
-        # Look up vacant stats for this account (from Stage 8 OR posted files)
-        vs = vacant_stats.get(dedup_key, {"vacant": 0, "house": 0})
-        if vs["vacant"] == 0 and vs["house"] == 0:
-            # Try vendor-agnostic lookup
-            for vk, vcounts in vacant_stats.items():
-                if vk[0] == property_id and vk[1] == norm_acct:
-                    vs = vcounts
-                    break
-        total_lines = vs["vacant"] + vs["house"]
-        vpct = round(vs["vacant"] / total_lines * 100, 1) if total_lines > 0 else 0
-
-        # Check if this account exists in the scraper
-        _clean_acct = _re.sub(r'[^A-Za-z0-9]', '', account_number).lower()
-        in_scraper = _clean_acct in _scraper_acct_ids_clean if _clean_acct else False
-
-        # Get service dates for this account+period (current period) - try normalized lookup
-        svc_key = (property_id, account_number, vendor_name, period)
-        svc_info = service_dates.get(svc_key, {})
-        if not svc_info:
-            svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, period), {})
-        service_start = svc_info.get("start", "")
-        service_end = svc_info.get("end", "")
-        assignment_s3_key = svc_info.get("s3_key", "")
-
-        # Get service dates for prev/next periods (for tooltip display)
-        prev_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_prev_period), {}) if _sel_prev_period else {}
-        next_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_next_period), {}) if _sel_next_period else {}
-
-        # Check for accrual/manual entry - try exact then vendor-agnostic
-        has_accrual_entry = dedup_key in accrual_entries_map or prop_acct_key in _accrual_by_prop_acct
-        accrual_entry_type = accrual_entries_map.get(dedup_key, "") or _accrual_by_prop_acct.get(prop_acct_key, "")
-
-        properties[property_id]["accounts"].append({
-            "account_number": account_number,
-            "vendor_name": vendor_name,
-            "has_bill": has_bill,
-            "has_posted_bill": has_posted_bill,
-            "has_prev_period": has_prev,
-            "has_next_period": has_next,
-            "prev_service_start": _normalize_date_display(prev_svc_info.get("start", "")),
-            "prev_service_end": _normalize_date_display(prev_svc_info.get("end", "")),
-            "next_service_start": _normalize_date_display(next_svc_info.get("start", "")),
-            "next_service_end": _normalize_date_display(next_svc_info.get("end", "")),
-            "vacant_lines": vs["vacant"],
-            "house_lines": vs["house"],
-            "vacant_pct": vpct,
-            "in_scraper": in_scraper,
-            "service_start": _normalize_date_display(service_start),
-            "service_end": _normalize_date_display(service_end),
-            "s3_key": assignment_s3_key,
-            "has_manual_entry": has_accrual_entry,
-            "manual_entry_type": accrual_entry_type
-        })
-        properties[property_id]["total"] += 1
-        if has_bill:
-            properties[property_id]["complete"] += 1
-        elif has_posted_bill:
-            properties[property_id]["posted_unassigned"] += 1
-
-    # Calculate percentages and convert to list
-    properties_list = []
-    for prop in properties.values():
-        prop["percentage"] = round((prop["complete"] / prop["total"] * 100), 1) if prop["total"] > 0 else 0
-        # Count accounts that are predominantly vacant (>50%)
-        prop["vacant_accounts"] = sum(1 for a in prop["accounts"] if a.get("vacant_pct", 0) > 50)
-        properties_list.append(prop)
-
-    # Sort by property name
-    properties_list.sort(key=lambda x: x.get("property_name", ""))
-
-    # Calculate overall totals
-    total_accounts = sum(p["total"] for p in properties_list)
-    total_complete = sum(p["complete"] for p in properties_list)
-    total_posted_unassigned = sum(p["posted_unassigned"] for p in properties_list)
-    overall_percentage = round((total_complete / total_accounts * 100), 1) if total_accounts > 0 else 0
-
-    result = {
-        "period": period,
-        "overall": {
-            "total": total_accounts,
-            "complete": total_complete,
-            "posted_unassigned": total_posted_unassigned,
-            "percentage": overall_percentage
-        },
-        "properties": properties_list
-    }
-
-    print(f"[COMPLETION TRACKER] Returning {len(properties_list)} properties, {total_complete}/{total_accounts} complete, {total_posted_unassigned} posted-unassigned ({overall_percentage}%)")
-
-    # Cache the result for 5 minutes
-    _CACHE[cache_key] = {"ts": time.time(), "data": result}
-
-    return result
+    except Exception as e:
+        print(f"[COMPLETION TRACKER] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
 # -------- Accrual / Manual Entries API --------
@@ -21997,10 +22022,10 @@ def api_delete_accrual_entry(entry_id: str, user: str = Depends(require_user)):
         except Exception:
             pass
 
-        # Bust completion tracker cache so it picks up the deletion
-        keys_to_bust = [k for k in list(_CACHE.keys()) if isinstance(k, tuple) and len(k) > 0 and k[0] == "completion_tracker"]
+        # Bust completion tracker cache (now in _METRICS_CACHE via _metrics_serve)
+        keys_to_bust = [k for k in list(_METRICS_CACHE.keys()) if k.startswith("completion_tracker__")]
         for k in keys_to_bust:
-            _CACHE.pop(k, None)
+            _METRICS_CACHE.pop(k, None)
 
         print(f"[ACCRUAL DELETE] Deleted entry {entry_id} by {user}")
         return {"success": True, "deleted": entry_id}
