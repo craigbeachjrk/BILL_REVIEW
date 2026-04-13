@@ -205,6 +205,52 @@ def test_api_endpoints(opener):
             fail(f"{name} — {e}")
 
 
+def test_previously_broken(opener):
+    """Verify all endpoints that were broken during the Apr 10-13 health audit."""
+    import time
+    print("\n=== Previously Broken Endpoints ===")
+    endpoints = [
+        # Were 500 crashes (IAM + pytz fixes)
+        ("/api/billback/summary", "billback summary"),
+        ("/api/metrics/late-fees", "late fees"),
+        ("/api/ai-review/stats", "AI review stats"),
+        ("/api/ai-learning/stats", "AI learning stats"),
+        ("/api/ai-learning/quarantined", "AI quarantined"),
+        # Were timeouts (now _metrics_serve cached)
+        ("/api/billback/ubi/suggestions", "UBI suggestions"),
+        ("/api/workflow/ap-priority", "AP priority"),
+        ("/api/metrics/user-timing", "user timing"),
+        ("/api/track", "track"),
+        # Were slow (now cached)
+        ("/api/catalog/vendors", "vendor catalog"),
+        ("/api/workflow/completion-tracker", "completion tracker"),
+        ("/api/config/accounts-to-track", "accounts to track"),
+    ]
+    for path, name in endpoints:
+        try:
+            t0 = time.time()
+            d = get_json(opener, path)
+            elapsed = time.time() - t0
+            is_error = isinstance(d, dict) and d.get("error")
+            is_building = isinstance(d, dict) and d.get("building")
+            if is_error:
+                fail(f"{name} ({path}) — error: {d['error'][:50]}")
+            elif is_building:
+                ok(f"{name} ({path}) — building (async cold cache) {elapsed:.1f}s")
+            elif elapsed > 30:
+                warn(f"{name} ({path}) — slow {elapsed:.1f}s")
+            else:
+                ok(f"{name} ({path}) — {elapsed:.1f}s")
+        except urllib.error.HTTPError as e:
+            fail(f"{name} ({path}) — HTTP {e.code}")
+        except Exception as e:
+            err = str(e)[:50]
+            if "timed out" in err.lower():
+                fail(f"{name} ({path}) — TIMEOUT")
+            else:
+                fail(f"{name} ({path}) — {err}")
+
+
 def main():
     print("=" * 60)
     print("PRODUCTION SMOKE TEST")
@@ -222,6 +268,7 @@ def main():
     test_transactions_page(opener)
     test_pages_load(opener)
     test_api_endpoints(opener)
+    test_previously_broken(opener)
 
     print("\n" + "=" * 60)
     print(f"RESULTS: {passed} passed, {failed} failed, {warnings} warnings")
