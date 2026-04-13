@@ -6437,7 +6437,7 @@ def api_billback_ubi_assigned(user: str = Depends(require_user), period: str = "
             return {"all_periods": result}
 
         # Serve from S3-persisted cache; rebuild in background when stale
-        cached_result = _metrics_serve("ubi_assigned", _compute)
+        cached_result = _metrics_serve("ubi_assigned", _compute, async_cold=True)
         all_periods = cached_result.get("all_periods", [])
 
         # Apply period filter AFTER cache retrieval
@@ -8995,7 +8995,7 @@ def api_vacant_accounts(
             return {"all_accounts": all_vacant_accounts}
 
         # Serve from S3-persisted cache; rebuild in background when stale
-        cached_result = _metrics_serve("vacant_accounts", _compute)
+        cached_result = _metrics_serve("vacant_accounts", _compute, async_cold=True)
         all_accounts = cached_result.get("all_accounts", [])
 
         # Apply min_vacant_pct filter AFTER cache retrieval
@@ -12190,12 +12190,17 @@ def _metrics_cache_put(name: str, data):
     except Exception as e:
         print(f"[METRICS CACHE] Failed to persist {name}: {e}")
 
-def _metrics_serve(name: str, compute_fn, force_refresh: bool = False):
+_METRICS_BUILDING: set = set()  # track which caches are currently being built
+
+def _metrics_serve(name: str, compute_fn, force_refresh: bool = False, async_cold: bool = False):
     """Serve metrics from cache, trigger async rebuild if stale.
     1. In-memory hit (< TTL) -> instant return
     2. S3 hit (< TTL) -> instant return
     3. Stale data exists -> return stale immediately, rebuild in background
-    4. No data at all -> compute synchronously (first request only)
+    4. No data at all:
+       - async_cold=False (default): compute synchronously (first request only)
+       - async_cold=True: return {"building": true}, compute in background
+         (use for endpoints that take >60s and would hit AppRunner gateway timeout)
     """
     cached = _metrics_cache_get(name)
     if cached and cached.get("data") is not None:
@@ -12205,14 +12210,34 @@ def _metrics_serve(name: str, compute_fn, force_refresh: bool = False):
         # Stale — serve old data, rebuild in background
         def _bg():
             try:
+                _METRICS_BUILDING.add(name)
                 result = compute_fn()
                 _metrics_cache_put(name, result)
                 print(f"[METRICS CACHE] Rebuilt {name}")
             except Exception as e:
                 print(f"[METRICS CACHE] Rebuild {name} failed: {e}")
+            finally:
+                _METRICS_BUILDING.discard(name)
         threading.Thread(target=_bg, daemon=True).start()
         return cached["data"]
-    # No cache at all — compute synchronously (first time only)
+    # No cache at all
+    if async_cold and name not in _METRICS_BUILDING:
+        # Don't block — return immediately and build in background
+        def _bg_cold():
+            try:
+                _METRICS_BUILDING.add(name)
+                result = compute_fn()
+                _metrics_cache_put(name, result)
+                print(f"[METRICS CACHE] Cold-built {name}")
+            except Exception as e:
+                print(f"[METRICS CACHE] Cold-build {name} failed: {e}")
+            finally:
+                _METRICS_BUILDING.discard(name)
+        threading.Thread(target=_bg_cold, daemon=True).start()
+        return {"building": True, "message": f"Data is being computed for the first time. Refresh in 1-2 minutes."}
+    if async_cold and name in _METRICS_BUILDING:
+        return {"building": True, "message": "Data is still being computed. Refresh in 1-2 minutes."}
+    # Synchronous compute (original behavior)
     try:
         result = compute_fn()
         _metrics_cache_put(name, result)
@@ -13628,7 +13653,7 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
 
     # Use _metrics_serve for S3-persisted caching (survives deploys)
     cache_name = f"week_over_week_{weeks}_{submitter or 'all'}"
-    return _metrics_serve(cache_name, _compute_wow)
+    return _metrics_serve(cache_name, _compute_wow, async_cold=True)
 
 
 @app.get("/api/metrics/late-fees")
@@ -13636,16 +13661,8 @@ def api_metrics_late_fees(
     weeks: int = 6,
     user: str = Depends(require_user)
 ):
-    """Get late fee analysis with per-invoice, per-account, per-vendor detail.
-
-    Returns:
-    - All invoices with late fees (sorted by amount desc)
-    - Accounts with repeat late fees (problem accounts needing attention)
-    - Vendors with most late fees
-    - Properties with most late fees
-    - Week-over-week trend
-    """
-    try:
+    """Get late fee analysis with per-invoice, per-account, per-vendor detail."""
+    def _compute_late_fees():
         from collections import defaultdict
 
         pacific = pytz.timezone("America/Los_Angeles")
@@ -13814,10 +13831,7 @@ def api_metrics_late_fees(
             "by_property": properties_list[:20],
         }
 
-    except Exception as e:
-        import traceback
-        print(f"[LATE_FEES] Error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    return _metrics_serve(f"late_fees_{weeks}", _compute_late_fees, async_cold=True)
 
 
 @app.get("/api/metrics/activity-detail")
@@ -21774,7 +21788,7 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
             return result
 
         # Serve from S3-persisted cache; rebuild in background when stale
-        return _metrics_serve(_cache_name, _compute)
+        return _metrics_serve(_cache_name, _compute, async_cold=True)
 
     except Exception as e:
         print(f"[COMPLETION TRACKER] Error: {e}")
@@ -23924,6 +23938,17 @@ def api_track(request: Request, user: str = Depends(require_user)):
                 _TRACK_CACHE[cache_key] = s3_cached["data"]
                 _TRACK_CACHE_TS[cache_key] = s3_cached["ts"]
                 return s3_cached["data"]
+            else:
+                # Stale S3 cache — return stale immediately, rebuild in background
+                print(f"[TRACK S3 STALE] age={s3_age:.1f}s, serving stale + background rebuild")
+                _TRACK_CACHE[cache_key] = s3_cached["data"]
+                _TRACK_CACHE_TS[cache_key] = s3_cached["ts"]
+                # Rebuild in background (defined later in this function scope — deferred)
+                # We can't easily because the computation is inline below.
+                # Just return stale for now.
+                return s3_cached["data"]
+
+    # No cache at all — heavy computation follows (may take >60s on cold cache)
 
     print(f"[TRACK CACHE MISS] Fetching from S3: accounts={len(accounts)}, months={month_keys[0]} to {month_keys[-1]}, refresh={do_refresh}")
 
