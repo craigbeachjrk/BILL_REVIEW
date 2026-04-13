@@ -11071,8 +11071,7 @@ def _get_ubi_account_amounts_from_stage8() -> dict:
 def api_workflow_ap_priority(user: str = Depends(require_user)):
     """Get AP Priority list - accounts missing bills for upcoming UBI period, sorted by magnitude.
     This helps AP team prioritize which bills to find for UBI."""
-    try:
-        import time
+    def _compute():
         start = time.time()
         today = dt.date.today()
 
@@ -11190,10 +11189,8 @@ def api_workflow_ap_priority(user: str = Depends(require_user)):
             },
             "computedAt": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+    return _metrics_serve("ap_priority", _compute)
 
 
 # ========== WEEKLY OBJECTIVES ==========
@@ -11971,8 +11968,7 @@ def metrics_view(request: Request, user: str = Depends(require_user)):
 @app.get("/api/metrics/user-timing")
 def api_metrics_user_timing(date: str = "", user: str = Depends(require_user)):
     """Get all user timing data across all users for metrics."""
-    try:
-        # Scan for all timing records (paginated)
+    def _compute():
         all_items = []
         scan_params = {
             "TableName": DRAFTS_TABLE,
@@ -11985,16 +11981,12 @@ def api_metrics_user_timing(date: str = "", user: str = Depends(require_user)):
             if "LastEvaluatedKey" not in response:
                 break
             scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-        # Group by user
         by_user = {}
         for item in all_items:
             u = item.get("user", {}).get("S", "unknown")
             invoice_id = item.get("invoice_id", {}).get("S", "")
             total_secs = int(item.get("total_seconds", {}).get("N", 0))
             updated = item.get("updated_utc", {}).get("S", "")
-            # Filter by date if provided
-            if date and updated and not updated.startswith(date):
-                continue
             if u not in by_user:
                 by_user[u] = {"user": u, "invoices": [], "total_seconds": 0}
             by_user[u]["invoices"].append({
@@ -12003,8 +11995,6 @@ def api_metrics_user_timing(date: str = "", user: str = Depends(require_user)):
                 "updated": updated,
             })
             by_user[u]["total_seconds"] += total_secs
-
-        # Format results
         users = []
         for u, data in by_user.items():
             users.append({
@@ -12016,18 +12006,29 @@ def api_metrics_user_timing(date: str = "", user: str = Depends(require_user)):
                 "avg_seconds_per_invoice": round(data["total_seconds"] / len(data["invoices"]), 1) if data["invoices"] else 0,
             })
         users.sort(key=lambda x: x["total_seconds"], reverse=True)
-
         total_all = sum(u["total_seconds"] for u in users)
         return {
-            "date_filter": date,
             "users": users,
             "user_count": len(users),
             "total_seconds": total_all,
             "total_hours": round(total_all / 3600, 2),
         }
-    except Exception as e:
-        print(f"[METRICS] Error: {e}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    result = _metrics_serve("user_timing", _compute)
+    # Apply client-side date filter (cache stores all data, filter at serve time)
+    if date and isinstance(result, dict) and result.get("users"):
+        for u in result["users"]:
+            u["invoices"] = [i for i in u.get("invoices", []) if not date or (i.get("updated", "").startswith(date))]
+            u["invoice_count"] = len(u["invoices"])
+            u["total_seconds"] = sum(i["seconds"] for i in u["invoices"])
+            u["total_minutes"] = round(u["total_seconds"] / 60, 1)
+            u["total_hours"] = round(u["total_seconds"] / 3600, 2)
+            u["avg_seconds_per_invoice"] = round(u["total_seconds"] / len(u["invoices"]), 1) if u["invoices"] else 0
+        result["users"] = [u for u in result["users"] if u["invoices"]]
+        result["date_filter"] = date
+        result["total_seconds"] = sum(u["total_seconds"] for u in result["users"])
+        result["total_hours"] = round(result["total_seconds"] / 3600, 2)
+        result["user_count"] = len(result["users"])
+    return result
 
 
 @app.get("/api/metrics/parsing-volume")
@@ -13325,18 +13326,9 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
     """
     from zoneinfo import ZoneInfo
 
-    try:
+    def _compute_wow():
         pacific = ZoneInfo("America/Los_Angeles")
         utc = ZoneInfo("UTC")
-
-        # Check cache first
-        cache_key = f"wow|{weeks}|{submitter}"
-        if cache_key in _WEEK_OVER_WEEK_CACHE:
-            cached = _WEEK_OVER_WEEK_CACHE[cache_key]
-            cache_age = (dt.datetime.now() - cached.get("ts", dt.datetime.min)).total_seconds()
-            if cache_age < _WEEK_OVER_WEEK_TTL:
-                print(f"[WEEK_OVER_WEEK] Returning cached result (age: {cache_age:.1f}s)")
-                return cached["data"]
 
         print(f"[WEEK_OVER_WEEK] Computing stats for last {weeks} weeks, submitter filter: '{submitter}'")
 
@@ -13608,16 +13600,11 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
             "all_submitters": sorted(all_submitters),
         }
 
-        # Cache the result
-        _WEEK_OVER_WEEK_CACHE[cache_key] = {"data": result, "ts": dt.datetime.now()}
-        print(f"[WEEK_OVER_WEEK] Cached result for {cache_key}")
-
         return result
 
-    except Exception as e:
-        import traceback
-        print(f"[WEEK_OVER_WEEK] Error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+    # Use _metrics_serve for S3-persisted caching (survives deploys)
+    cache_name = f"week_over_week_{weeks}_{submitter or 'all'}"
+    return _metrics_serve(cache_name, _compute_wow)
 
 
 @app.get("/api/metrics/late-fees")
@@ -17284,12 +17271,13 @@ def _read_first_record_from_s3(keys: list[str]) -> list[dict]:
 
 
 def _read_json_records_from_s3(keys: list[str]) -> list[dict]:
-    out = []
-    for key in keys:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _read_one(key):
+        records = []
         try:
             obj = s3.get_object(Bucket=BUCKET, Key=key)
             body = obj["Body"].read()
-            # jsonl or json
             txt = body.decode("utf-8", errors="ignore")
             if "\n" in txt:
                 for line in txt.splitlines():
@@ -17297,20 +17285,32 @@ def _read_json_records_from_s3(keys: list[str]) -> list[dict]:
                     if not line:
                         continue
                     try:
-                        out.append(json.loads(line))
+                        records.append(json.loads(line))
                     except Exception:
                         pass
             else:
                 try:
                     data = json.loads(txt)
                     if isinstance(data, list):
-                        out.extend([x for x in data if isinstance(x, dict)])
+                        records.extend([x for x in data if isinstance(x, dict)])
                     elif isinstance(data, dict):
-                        out.append(data)
+                        records.append(data)
                 except Exception:
                     pass
         except Exception:
-            continue
+            pass
+        return records
+
+    if not keys:
+        return []
+    out = []
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(_read_one, k): k for k in keys}
+        for f in as_completed(futures):
+            try:
+                out.extend(f.result())
+            except Exception:
+                pass
     return out
 
 
@@ -23887,6 +23887,17 @@ def api_track(request: Request, user: str = Depends(require_user)):
         print(f"[TRACK CACHE HIT] age={cache_age:.1f}s, accounts={len(accounts)}, months={month_keys[0]} to {month_keys[-1]}")
         return _TRACK_CACHE[cache_key]
 
+    # Try S3-persisted cache (survives deploys) if no in-memory cache
+    if not do_refresh:
+        s3_cached = _metrics_cache_get("track_data")
+        if s3_cached and s3_cached.get("data") is not None:
+            s3_age = now_ts - s3_cached.get("ts", 0)
+            if s3_age < _TRACK_TTL_SECONDS:
+                print(f"[TRACK S3 CACHE HIT] age={s3_age:.1f}s")
+                _TRACK_CACHE[cache_key] = s3_cached["data"]
+                _TRACK_CACHE_TS[cache_key] = s3_cached["ts"]
+                return s3_cached["data"]
+
     print(f"[TRACK CACHE MISS] Fetching from S3: accounts={len(accounts)}, months={month_keys[0]} to {month_keys[-1]}, refresh={do_refresh}")
 
     # Determine day range for S3 scans
@@ -24034,6 +24045,8 @@ def api_track(request: Request, user: str = Depends(require_user)):
     out = {"months": month_labels, "rows": rows}
     _TRACK_CACHE[cache_key] = out
     _TRACK_CACHE_TS[cache_key] = now_ts
+    # Also persist to S3 so it survives deploys
+    _metrics_cache_put("track_data", out)
     return out
 @app.post("/api/delete_preentrata")
 def api_delete_preentrata(key: str = Form(...), user: str = Depends(require_user)):
