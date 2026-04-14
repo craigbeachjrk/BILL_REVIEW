@@ -6437,7 +6437,7 @@ def api_billback_ubi_assigned(user: str = Depends(require_user), period: str = "
             return {"all_periods": result}
 
         # Serve from S3-persisted cache; rebuild in background when stale
-        cached_result = _metrics_serve("ubi_assigned", _compute, async_cold=True)
+        cached_result = _metrics_serve("ubi_assigned", _compute, async_cold=False)
         all_periods = cached_result.get("all_periods", [])
 
         # Apply period filter AFTER cache retrieval
@@ -8759,7 +8759,7 @@ def api_acctmgr_duplicate_bills(days: int = 90, user: str = Depends(require_user
         }
 
     cache_name = f"duplicate_bills_{days}"
-    return _metrics_serve(cache_name, _compute, async_cold=True)
+    return _metrics_serve(cache_name, _compute, async_cold=False)
 
 
 @app.get("/api/account-manager/closed-accounts")
@@ -8994,7 +8994,7 @@ def api_vacant_accounts(
             return {"all_accounts": all_vacant_accounts}
 
         # Serve from S3-persisted cache; rebuild in background when stale
-        cached_result = _metrics_serve("vacant_accounts", _compute, async_cold=True)
+        cached_result = _metrics_serve("vacant_accounts", _compute, async_cold=False)
         all_accounts = cached_result.get("all_accounts", [])
 
         # Apply min_vacant_pct filter AFTER cache retrieval
@@ -12180,7 +12180,7 @@ def _metrics_serve(name: str, compute_fn, force_refresh: bool = False, async_col
     3. Stale data exists -> return stale immediately, rebuild in background
     4. No data at all:
        - async_cold=False (default): compute synchronously (first request only)
-       - async_cold=True: return {"building": true}, compute in background
+       - async_cold=False: return {"building": true}, compute in background
          (use for endpoints that take >60s and would hit AppRunner gateway timeout)
     """
     cached = _metrics_cache_get(name)
@@ -13333,7 +13333,7 @@ def api_metrics_submitter_stats(date: str = "", start_date: str = "", end_date: 
             "aggregate_by_submitter": aggregate_by_submitter
         }
 
-    return _metrics_serve(cache_name, _compute, async_cold=True)
+    return _metrics_serve(cache_name, _compute, async_cold=False)
 
 
 @app.get("/api/metrics/week-over-week")
@@ -13634,7 +13634,7 @@ def api_metrics_week_over_week(weeks: int = 6, submitter: str = "", user: str = 
 
     # Use _metrics_serve for S3-persisted caching (survives deploys)
     cache_name = f"week_over_week_{weeks}_{submitter or 'all'}"
-    return _metrics_serve(cache_name, _compute_wow, async_cold=True)
+    return _metrics_serve(cache_name, _compute_wow, async_cold=False)
 
 
 @app.get("/api/metrics/late-fees")
@@ -13812,7 +13812,7 @@ def api_metrics_late_fees(
             "by_property": properties_list[:20],
         }
 
-    return _metrics_serve(f"late_fees_{weeks}", _compute_late_fees, async_cold=True)
+    return _metrics_serve(f"late_fees_{weeks}", _compute_late_fees, async_cold=False)
 
 
 @app.get("/api/metrics/activity-detail")
@@ -21768,7 +21768,7 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
             return result
 
         # Serve from S3-persisted cache; rebuild in background when stale
-        return _metrics_serve(_cache_name, _compute, async_cold=True)
+        return _metrics_serve(_cache_name, _compute, async_cold=False)
 
     except Exception as e:
         print(f"[COMPLETION TRACKER] Error: {e}")
