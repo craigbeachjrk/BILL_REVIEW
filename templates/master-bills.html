@@ -811,7 +811,7 @@
             <td onclick="event.stopPropagation()"><input type="checkbox" class="mb-select" value="${mb.master_bill_id.replace(/"/g, '&quot;')}" onchange="updateReclassifyBtn()"></td>
             <td>${escapeHtml(mb.property_name) || 'N/A'} ${duplicateBadge} ${manualBadge} ${accrualBadge}</td>
             <td style="font-size:11px;color:#64748b">${escapeHtml(mb.property_lookup_code) || ''}</td>
-            <td>${escapeHtml(chargeCodeDisplay)}</td>
+            <td>${isUnmapped ? chargeCodeDisplay : escapeHtml(chargeCodeDisplay)}</td>
             <td>${escapeHtml(mb.utility_name) || 'N/A'}</td>
             <td>${mb.billback_month_start || 'N/A'}</td>
             <td>${mb.billback_month_end || 'N/A'}</td>

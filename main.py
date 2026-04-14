@@ -19821,6 +19821,7 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
 
         # Process each assigned line item
         master_bills = {}  # key: property_id|charge_code|utility_name|ubi_period
+        gl_mappings = _ddb_get_config("gl-charge-code-mapping") or []
 
         print("[GENERATE MASTER BILLS] Processing assigned items...")
         for idx, line_data in enumerate(all_line_items):
@@ -19873,11 +19874,44 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                     gl_code = line_data.get("EnrichedGLAccountNumber", line_data.get("GL Account Number", ""))
                     gl_name = line_data.get("EnrichedGLAccountName", line_data.get("GL Account Name", ""))
                     description = line_data.get("Line Item Description", "")
-                    # Get bill_id from __stage8_key__ (the actual Stage 8 S3 key for unassign API)
                     bill_id_from_s3 = line_data.get("__stage8_key__", "")
                     line_index_from_s3 = int(line_data.get("Line Index", 0))
                     account_number = line_data.get("Account Number", line_data.get("AccountNumber", ""))
                     vendor_name = line_data.get("EnrichedVendorName", line_data.get("Vendor Name", ""))
+
+                    # Standardize utility name
+                    _UTILITY_NORMALIZE = {
+                        "electricity": "Electric", "electric": "Electric",
+                        "natural gas": "Gas", "nat gas": "Gas",
+                        "stormwater": "Stormwater", "storm water": "Stormwater",
+                        "sewage": "Sewer", "wastewater": "Sewer",
+                        "refuse": "Trash", "garbage": "Trash", "waste": "Trash",
+                    }
+                    if utility_name:
+                        utility_name = _UTILITY_NORMALIZE.get(utility_name.lower().strip(), utility_name.strip())
+                    # If utility_name is still empty, derive from GL account name
+                    if not utility_name and gl_name:
+                        gln = gl_name.lower()
+                        if "electric" in gln: utility_name = "Electric"
+                        elif "gas" in gln: utility_name = "Gas"
+                        elif "water" in gln and "storm" not in gln: utility_name = "Water"
+                        elif "sewer" in gln: utility_name = "Sewer"
+                        elif "storm" in gln: utility_name = "Stormwater"
+                        elif "trash" in gln or "refuse" in gln: utility_name = "Trash"
+                        elif "pest" in gln: utility_name = "Pest Control"
+                        elif "vacant" in gln:
+                            for kw, ut in [("electric", "Electric"), ("water", "Water"), ("gas", "Gas"), ("sewer", "Sewer")]:
+                                if kw in gln:
+                                    utility_name = f"Vacant {ut}"
+                                    break
+                    # Last resort: derive from charge code mapping
+                    if not utility_name and charge_code:
+                        for _m in gl_mappings:
+                            if _m.get("charge_code") == charge_code and _m.get("utility_name"):
+                                utility_name = _m["utility_name"]
+                                break
+                    if not utility_name:
+                        utility_name = "Other"
 
                     # Skip excluded line items
                     is_excluded = line_data.get("Is Excluded From UBI", 0)
@@ -19896,10 +19930,10 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
                         print(f"[GENERATE MASTER BILLS] Skipping line: missing property_id")
                         continue
 
-                    # Use default charge code if missing (allows lines to be included even without mapping)
+                    # Use default charge code if missing
                     if not charge_code or charge_code == "N/A":
                         charge_code = "UNMAPPED"
-                        print(f"[GENERATE MASTER BILLS] Line missing charge code, using UNMAPPED for property {property_id}")
+                        print(f"[GENERATE MASTER BILLS] Line missing charge code for property {property_id}, GL={gl_code} {gl_name}")
 
                     # Parse period (format: "12/2025 to 12/2025" or "01/2025 to 03/2025")
                     period_parts = ubi_period.split(" to ")
