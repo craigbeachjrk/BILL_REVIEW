@@ -8,7 +8,13 @@ Audited in 6 parallel sections. Categories: Bugs, Dead Code, Security, Performan
 
 ## CRITICAL ISSUES
 
-### 1. Corrupted records on JSON parse failure (lines 7111-7113, 7253-7256)
+### 0. Hardcoded production API keys in source code (lines 148, 527)
+**Severity: CRITICAL | Category: SECURITY**
+- Line 148: `SCRAPER_API_TOKEN` default value contains a real production token committed to git
+- Line 527: `EntrataARClient(api_key='288f3174-...')` — Entrata API key hardcoded in source
+**Fix:** Move both to env vars or Secrets Manager immediately. Rotate the keys.
+
+### 1. Corrupted records on JSON parse failure (lines 7111-7113, 7253-7256, 6632, 6837)
 **Severity: CRITICAL | Category: DATA INTEGRITY**
 During reassign/reassign-account operations, if a JSONL line fails to parse, the code appends empty `{}` to `modified_items`. This writes a corrupt empty JSON record back to S3, **permanently destroying the original data** for that line.
 **Fix:** Skip unparseable lines entirely or preserve raw text.
@@ -146,24 +152,77 @@ Any authenticated user can delete ALL portfolio data. No role check.
 
 ---
 
-## SUMMARY BY SEVERITY
+## FROM LINES 1-7000 (additional findings)
+
+### Bugs
+- `api_billback_submit` is a complete **no-op** — always returns `{"submitted": 0}` (line 5230)
+- `api_billback_archive` matches too broadly (account+dates only) — archives unintended lines (line 5046)
+- `_entrata_post_succeeded` defined before imports (line 1)
+- `api_verify_entrata_sync` O(n²) list.remove (line 2595)
+
+### Security
+- `APP_SECRET` has predictable default `"dev-secret-change-me"` (line 102)
+- `api_scraper_import` copies arbitrary keys from scraper bucket without validation (line 4400)
+
+### Performance
+- `_scan_historical_pairs_for_prefix` reads every JSONL file body instead of filenames (line 1039)
+- `post_view` reads first 16KB of every Stage 6 file sequentially, not parallel (line 4748)
+
+### Data Integrity
+- UBI cache has no thread synchronization — `_remove_bill_from_ubi_cache` and `_load_ubi_cache_from_s3` race (lines 898, 1194)
+
+---
+
+## TEMPLATE AUDIT (26 findings)
+
+### XSS — Unescaped data in innerHTML (9 instances)
+Most templates have `escapeHtml()`/`esc()` functions but miss them in spots:
+- **billback.html** (4 spots): notes, charge code, vendor name, account in assigned bills
+- **review.html** (2 spots): unit modal fields, AI garbage line reason
+- **workflow.html** (1 spot): skip modal property/vendor/account
+- **ai_review_dashboard.html** (1 spot): error message
+- **debug.html** (1 spot): type/status/requestor fields
+
+### Dead Templates
+- `config_old.html` (832 lines) — deprecated, should be deleted
+- `invoices.html.bak` (123 lines) — backup file, should be deleted
+
+### Hardcoded Values
+- `billback.html:563` — hardcoded `Craig Beach` in email template signature
+- `billback.html:565` — hardcoded CC email addresses
+
+---
+
+## FINAL SUMMARY
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 3 |
-| HIGH | 17 |
-| MEDIUM | 30 |
-| LOW | 50+ |
+| CRITICAL | 4 |
+| HIGH | 21 |
+| MEDIUM | 39 |
+| LOW | 70+ |
+| **Total** | **134+** |
 
 ## PRIORITY FIX ORDER
 
-1. **CRITICAL-1:** Fix corrupted records on JSON parse failure
-2. **CRITICAL-2:** Add ETag locking to Stage 8 override writes
-3. **CRITICAL-3:** Add admin checks to portfolio clear/delete
-4. **HIGH security:** Add admin checks to all financial write endpoints
-5. **HIGH security:** Add S3 key validation to 3 reassign/archive endpoints
-6. **HIGH performance:** Switch 365-day prefixes to month-level (3 endpoints)
-7. **HIGH dedup:** Extract Stage 6 cleanup helper, PDF generation helper
-8. **MEDIUM integrity:** Add ETag-based writes for master bills
-9. **MEDIUM integrity:** Fix threading locks on shared state
-10. **MEDIUM caching:** Add cache invalidation to 4 missing locations
+### Immediate (today)
+1. **CRITICAL-0:** Rotate and remove hardcoded API keys (Entrata, Scraper)
+2. **CRITICAL-1:** Fix corrupted records on JSON parse failure (4 locations)
+3. **CRITICAL-2:** Add ETag locking to Stage 8 override writes
+4. **CRITICAL-3:** Add admin checks to portfolio clear/delete
+
+### This week
+5. **HIGH security:** Add admin checks to all financial write endpoints (5 endpoints)
+6. **HIGH security:** Add S3 key validation to 3 reassign/archive endpoints
+7. **HIGH bug:** Implement or remove no-op `api_billback_submit`
+8. **HIGH performance:** Switch 365-day prefixes to month-level (3 endpoints)
+9. **HIGH performance:** Cache meter data (4 endpoints loading full file each request)
+10. **HIGH dedup:** Extract Stage 6 cleanup helper, PDF generation helper
+
+### Next sprint
+11. **MEDIUM integrity:** Add ETag-based writes for master bills
+12. **MEDIUM integrity:** Fix threading locks on 4 shared state locations
+13. **MEDIUM integrity:** Fix `api_billback_archive` broad matching
+14. **MEDIUM caching:** Add cache invalidation to 4 missing locations
+15. **MEDIUM XSS:** Fix 9 unescaped innerHTML spots in templates
+16. **MEDIUM quality:** Extract duplicated DDB parsing, property/vendor lookups
