@@ -19932,15 +19932,15 @@ async def api_generate_master_bills(request: Request, user: str = Depends(requir
 
                     # Look up charge code from GL mapping if missing
                     if not charge_code or charge_code == "N/A":
-                        gl_match = _lookup_charge_code(property_id, "", gl_code, gl_mappings)
+                        gl_match = _lookup_charge_code(str(property_id).strip(), "", str(gl_code).strip(), gl_mappings)
                         if gl_match and gl_match.get("charge_code"):
                             charge_code = gl_match["charge_code"]
-                            # Also fill utility_name from mapping if still generic
                             if gl_match.get("utility_name") and utility_name in ("Other", ""):
                                 utility_name = gl_match["utility_name"]
+                            print(f"[GENERATE MASTER BILLS] Resolved via GL mapping: property={property_id} GL={gl_code} -> CC={charge_code}")
                         else:
                             charge_code = "UNMAPPED"
-                            print(f"[GENERATE MASTER BILLS] No charge code mapping for property {property_id}, GL={gl_code} {gl_name}")
+                            print(f"[GENERATE MASTER BILLS] UNMAPPED: property={property_id} GL={gl_code} gl_name={gl_name} (mappings loaded: {len(gl_mappings)})")
 
                     # Parse period (format: "12/2025 to 12/2025" or "01/2025 to 03/2025")
                     period_parts = ubi_period.split(" to ")
