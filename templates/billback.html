@@ -2047,12 +2047,16 @@
       if (!accountNumber) return false;
       const acctStr = String(accountNumber).trim();
       const vendorStr = String(vendorName || '').trim();
+      // Try exact match first, then account-only (vendor names may differ between S3 and tracker)
       return accountsToTrack.some(a => {
-        // Support both camelCase and snake_case field names
         const configAcct = String(a.accountNumber || a.account_number || '').trim();
+        if (configAcct !== acctStr) return false;
+        if (a.is_tracked === false) return false;
         const configVendor = String(a.vendorName || a.vendor_name || '').trim();
-        // Check new field name (is_tracked) and fallback to presence in array
-        return configAcct === acctStr && configVendor === vendorStr && (a.is_tracked === true || a.is_tracked === undefined);
+        return configVendor === vendorStr || !vendorStr;
+      }) || accountsToTrack.some(a => {
+        const configAcct = String(a.accountNumber || a.account_number || '').trim();
+        return configAcct === acctStr && (a.is_tracked === true || a.is_tracked === undefined);
       });
     }
 
@@ -2061,11 +2065,18 @@
       if (!accountNumber) return '';
       const acctStr = String(accountNumber).trim();
       const vendorStr = String(vendorName || '').trim();
-      const acct = accountsToTrack.find(a => {
+      // Try exact match first, then account-only fallback
+      let acct = accountsToTrack.find(a => {
         const configAcct = String(a.accountNumber || a.account_number || '').trim();
         const configVendor = String(a.vendorName || a.vendor_name || '').trim();
         return configAcct === acctStr && configVendor === vendorStr;
       });
+      if (!acct) {
+        acct = accountsToTrack.find(a => {
+          const configAcct = String(a.accountNumber || a.account_number || '').trim();
+          return configAcct === acctStr;
+        });
+      }
       return acct ? (acct.comment || '') : '';
     }
 

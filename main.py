@@ -18821,7 +18821,11 @@ async def api_update_account_comment(request: Request, user: str = Depends(requi
         arr = _get_accounts_to_track()
 
         # Find existing account and update comment
+        # Match by account number first; vendor name may differ between
+        # S3 JSONL (enriched name) and tracker config (user-entered name),
+        # so fall back to account-only match if exact vendor match fails.
         found = False
+        account_only_match = None
         for item in arr:
             item_acct = str(item.get("accountNumber") or item.get("account_number") or "").strip()
             item_vendor = str(item.get("vendorName") or item.get("vendor_name") or "").strip()
@@ -18830,6 +18834,14 @@ async def api_update_account_comment(request: Request, user: str = Depends(requi
                 found = True
                 print(f"[ACCOUNT COMMENT] Updated comment for {account_number} ({vendor_name}): {comment[:50]}...")
                 break
+            elif item_acct == account_number and account_only_match is None:
+                account_only_match = item
+
+        if not found and account_only_match is not None:
+            account_only_match["comment"] = comment
+            found = True
+            actual_vendor = str(account_only_match.get("vendorName") or account_only_match.get("vendor_name") or "")
+            print(f"[ACCOUNT COMMENT] Updated via account-only match: {account_number} (requested vendor={vendor_name}, matched vendor={actual_vendor})")
 
         if not found:
             return JSONResponse({"error": "Account not found in tracker"}, status_code=404)
@@ -18874,24 +18886,33 @@ async def api_update_account_skip_reason(request: Request, user: str = Depends(r
         arr = _get_accounts_to_track()
 
         found = False
+        account_only_match = None
         for item in arr:
             item_acct = str(item.get("accountNumber") or item.get("account_number") or "").strip()
             item_vendor = str(item.get("vendorName") or item.get("vendor_name") or "").strip()
             if item_acct == account_number and item_vendor == vendor_name:
-                skip_reasons = item.get("skip_reasons") or {}
-                if not isinstance(skip_reasons, dict):
-                    skip_reasons = {}
-                if reason:
-                    skip_reasons[month] = reason
-                else:
-                    skip_reasons.pop(month, None)
-                item["skip_reasons"] = skip_reasons
+                target_item = item
                 found = True
-                print(f"[ACCOUNT SKIP] {account_number} ({vendor_name}) month={month}: {reason[:50]}...")
                 break
+            elif item_acct == account_number and account_only_match is None:
+                account_only_match = item
+
+        if not found and account_only_match is not None:
+            target_item = account_only_match
+            found = True
 
         if not found:
             return JSONResponse({"error": "Account not found in tracker"}, status_code=404)
+
+        skip_reasons = target_item.get("skip_reasons") or {}
+        if not isinstance(skip_reasons, dict):
+            skip_reasons = {}
+        if reason:
+            skip_reasons[month] = reason
+        else:
+            skip_reasons.pop(month, None)
+        target_item["skip_reasons"] = skip_reasons
+        print(f"[ACCOUNT SKIP] {account_number} ({vendor_name}) month={month}: {reason[:50]}...")
 
         # Snapshot the tracker cache data before _put_accounts_to_track clears it
         _wt = _CACHE.get(("workflow_tracker",))
