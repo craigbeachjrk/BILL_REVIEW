@@ -145,7 +145,13 @@ UBI_ASSIGNED_PREFIX = os.getenv("UBI_ASSIGNED_PREFIX", "Bill_Parser_8_UBI_Assign
 SCRAPER_BUCKET = os.getenv("SCRAPER_BUCKET", "jrk-utility-pdfs")
 # Scraper API for integration/account metadata
 SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "http://3.150.100.244:3000")
-SCRAPER_API_TOKEN = os.getenv("SCRAPER_API_TOKEN", "jrk_6435ebb70d6929079be8a35199815552f97e25a2a292bb72")
+SCRAPER_API_TOKEN = os.getenv("SCRAPER_API_TOKEN", "")
+if not SCRAPER_API_TOKEN:
+    try:
+        _scraper_secret = boto3.client("secretsmanager", region_name="us-east-1").get_secret_value(SecretId="jrk/scraper-api-token")
+        SCRAPER_API_TOKEN = _scraper_secret.get("SecretString", "")
+    except Exception:
+        SCRAPER_API_TOKEN = ""
 # Gemini API for PDF date extraction
 GEMINI_SECRET_NAME = os.getenv("GEMINI_SECRET_NAME", "gemini/parser-keys")
 FLAGGED_REVIEW_PREFIX = os.getenv("FLAGGED_REVIEW_PREFIX", "Bill_Parser_9_Flagged_Review/")
@@ -524,7 +530,12 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # ── Vacant Electric module ──
 _ve_store = VEBatchStore(ddb, 'jrk-ve-batches')
-_ve_ar_client = EntrataARClient(api_key='288f3174-2ec2-48e5-8f31-742ec278e53b')
+def _get_ve_ar_key():
+    try:
+        return boto3.client("secretsmanager", region_name="us-east-1").get_secret_value(SecretId="jrk/entrata-ar-api-key").get("SecretString", "")
+    except Exception:
+        return os.getenv("ENTRATA_AR_API_KEY", "")
+_ve_ar_client = EntrataARClient(api_key=_get_ve_ar_key())
 _ve_bill_locator = None   # TODO: requires s3_property_mapping data
 _ve_clause_finder = LeaseClauseFinder(s3)
 
