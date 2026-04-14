@@ -1163,8 +1163,24 @@
           tasks.push(fetch('/api/drafts', { method:'PUT', credentials: 'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}));
         }catch(_){ }
       });
-      try{ await Promise.allSettled(tasks); } catch(_){ }
+      try{
+        const results = await Promise.allSettled(tasks);
+        const headerResult = results[0];
+        if (headerResult && headerResult.status === 'fulfilled') {
+          const resp = await headerResult.value;
+          if (!resp.ok) {
+            console.error('[review] Header draft save failed:', resp.status);
+            saveAllDrafts._headerFailed = true;
+          } else {
+            saveAllDrafts._headerFailed = false;
+          }
+        } else if (headerResult && headerResult.status === 'rejected') {
+          console.error('[review] Header draft save rejected:', headerResult.reason);
+          saveAllDrafts._headerFailed = true;
+        }
+      } catch(_){ }
     }
+    saveAllDrafts._headerFailed = false;
 
     // autosave on change (inputs and selects)
     document.querySelectorAll('.line input').forEach(inp => {
@@ -2438,6 +2454,10 @@
 
       // Force-flush any pending draft changes to the server before computing ids/extras
       try { await saveAllDrafts(); } catch(_){ }
+      if (saveAllDrafts._headerFailed) {
+        body.innerHTML = '<div class="err"><strong>Failed to save header changes.</strong> Your property/vendor edits did not save to the server. Please try again.</div>';
+        return;
+      }
 
       // Validate required header fields (Bill Date, Service Period Start/End)
       const requiredHeaderErrors = [];

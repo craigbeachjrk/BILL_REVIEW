@@ -1801,7 +1801,7 @@ def put_status(id_: str, status: str, user: str):
 
 def get_draft(pdf_id: str, line_id: str, user: str) -> Dict[str, Any] | None:
     pk = f"draft#{pdf_id}#{line_id}#{user}"
-    resp = ddb.get_item(TableName=DRAFTS_TABLE, Key={"pk": {"S": pk}})
+    resp = ddb.get_item(TableName=DRAFTS_TABLE, Key={"pk": {"S": pk}}, ConsistentRead=True)
     item = resp.get("Item")
     if not item:
         return None
@@ -27421,7 +27421,7 @@ def api_submit(date: str = Form(...), ids: str = Form(...), extras: str = Form("
                         keep.append(ch if (ch.isalnum() or ch in " -_()&,+.#") else "-")
                     return "".join(keep).strip()
 
-                prop_name = _safe(str(header_fields.get("EnrichedPropertyName") or first.get("EnrichedPropertyName", "") or first.get("Property Name", "")))
+                prop_name = _safe(str(header_fields.get("EnrichedPropertyName") or "").strip() or str(first.get("EnrichedPropertyName", "") or first.get("Property Name", "")))
                 vendor_name = _safe(str(header_fields.get("EnrichedVendorName") or first.get("EnrichedVendorName", "") or first.get("Vendor Name", "") or first.get("Vendor", "") or first.get("Utility Type", "")))
                 account_name = _safe(str(header_fields.get("Account Number") or first.get("Account Number", "") or first.get("Account", "")))
                 svc_start = _safe(str(header_fields.get("Bill Period Start") or first.get("Bill Period Start", "")))
