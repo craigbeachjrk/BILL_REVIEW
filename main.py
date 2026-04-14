@@ -1225,6 +1225,44 @@ def _vendor_pair_refresh_loop():
             print(f"[VENDOR PAIRS BG] Refresh error (will retry next cycle): {e}")
 
 
+def _retrigger_uppercase_pdfs():
+    """Scan Stage 1 for uppercase .PDF files and copy them to lowercase .pdf
+    so the S3 event trigger fires the router Lambda. Scanners often upload
+    with uppercase extension which bypasses the trigger filter."""
+    try:
+        paginator = s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=INPUT_PREFIX):
+            for obj in page.get("Contents", []) or []:
+                key = obj.get("Key", "")
+                fname = key.split("/")[-1] if "/" in key else key
+                # Only target uppercase .PDF that would be missed by the trigger
+                if not fname.endswith(".PDF"):
+                    continue
+                # Build a new key with lowercase extension
+                new_key = key[:-4] + ".pdf"
+                try:
+                    s3.copy_object(
+                        Bucket=BUCKET,
+                        CopySource={"Bucket": BUCKET, "Key": key},
+                        Key=new_key,
+                    )
+                    s3.delete_object(Bucket=BUCKET, Key=key)
+                    print(f"[UPPERCASE-PDF] Re-triggered {key} -> {new_key}")
+                except Exception as copy_err:
+                    print(f"[UPPERCASE-PDF] Failed to re-trigger {key}: {copy_err}")
+    except Exception as e:
+        print(f"[UPPERCASE-PDF] Scan error: {e}")
+
+
+def _uppercase_pdf_retrigger_loop():
+    """Periodically re-trigger uppercase .PDF files stuck in Stage 1."""
+    # Run once at startup after a short delay, then every 10 minutes
+    time.sleep(30)
+    while True:
+        _retrigger_uppercase_pdfs()
+        time.sleep(600)  # 10 minutes
+
+
 @app.on_event("startup")
 async def startup_prewarm_caches():
     """Pre-warm caches on startup so first request is fast."""
@@ -1361,6 +1399,9 @@ async def startup_prewarm_caches():
 
     # Workflow completion tracker — keep cache permanently warm
     threading.Thread(target=_workflow_tracker_refresh_loop, daemon=True, name="workflow-tracker-refresh").start()
+
+    # Uppercase PDF re-trigger: scanners upload .PDF (uppercase) which bypasses the S3 event trigger
+    threading.Thread(target=_uppercase_pdf_retrigger_loop, daemon=True, name="uppercase-pdf-retrigger").start()
 
 # -------- VACANT GL DESC Helpers --------
 # GL codes that trigger the special VACANT description format
@@ -3851,6 +3892,37 @@ def api_upload_input(file: UploadFile = File(...), user: str = Depends(require_u
     except Exception as e:
         import traceback
         return JSONResponse({"error": _sanitize_error(e, "API request")}, status_code=500)
+
+
+@app.post("/api/retrigger_pending_pdfs")
+def api_retrigger_pending_pdfs(user: str = Depends(require_user)):
+    """Re-trigger uppercase .PDF files stuck in Stage 1 that the S3 event filter missed.
+    Scanners often upload files with uppercase .PDF extension which bypasses the
+    router Lambda trigger (which only matches lowercase .pdf).
+    This copies each stuck file to a lowercase .pdf key and deletes the original."""
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    try:
+        retriggered = []
+        paginator = s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=INPUT_PREFIX):
+            for obj in page.get("Contents", []) or []:
+                key = obj.get("Key", "")
+                fname = key.split("/")[-1] if "/" in key else key
+                if not fname.endswith(".PDF"):
+                    continue
+                new_key = key[:-4] + ".pdf"
+                s3.copy_object(
+                    Bucket=BUCKET,
+                    CopySource={"Bucket": BUCKET, "Key": key},
+                    Key=new_key,
+                )
+                s3.delete_object(Bucket=BUCKET, Key=key)
+                print(f"[RETRIGGER] {user} re-triggered {key} -> {new_key}")
+                retriggered.append({"original": key, "new_key": new_key})
+        return {"ok": True, "retriggered": retriggered, "count": len(retriggered)}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "retrigger")}, status_code=500)
 
 
 # -------- Scraper Import APIs --------
@@ -16497,7 +16569,7 @@ def api_metrics_job_log(limit: int = 100, stage: str = "", user: str = Depends(r
                                 continue
                             if k.endswith('.json'):  # Skip metadata
                                 continue
-                            if not (k.endswith('.pdf') or k.endswith('.jsonl')):
+                            if not (k.lower().endswith('.pdf') or k.endswith('.jsonl')):
                                 continue
 
                             filename = k.split("/")[-1] if "/" in k else k
