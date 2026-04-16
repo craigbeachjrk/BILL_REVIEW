@@ -348,21 +348,118 @@ Top 3 to prioritize if fixing auth module first:
 
 **[Q-1]** **Role-based ACL intent:** Was the `ROLES` + `can_access_page` framework intended to be used for page-level access control? If yes, we should wire it up. If no (and admin-only is the real model), we should delete the dead code. Which is it?
 
+**✅ ANSWERED (2026-04-16):** Yes — we WILL filter pages by role. Strategic direction: **migrate auth to SSO** (user has a template). Build a role-to-capability mapping that's easy to configure: which role sees which tiles, which role can perform which operations. Treat this as a strategic architectural update, not a patch.
+
+**Implications:**
+- `ISSUE-018` (page-level ACL not wired) is **P0 / strategic** — not a tactical fix; part of the SSO migration
+- `ISSUE-002` (dead `has_permission`/`can_access_page`) — **do NOT delete**; these become the foundation of the role-capability layer
+- Need a **capability registry** (tiles + operations) that roles map to, not a hardcoded page list. The current `ROLES["X"]["pages"]` list is too brittle for 349 endpoints.
+- Landing page (`/`, `templates/landing.html`) must hide tiles the current role can't access
+- Navigation/menus throughout templates must be role-aware
+- API endpoints must gate on capabilities, not just `ADMIN_USERS` hardcode
+- The SSO template will supply `user_role` and likely `email`; we need to map SSO identity → our role system (or migrate entirely to SSO role claims)
+
 **[Q-2]** **Hardcoded ADMIN_USERS vs System_Admins role:** Is there a reason the hardcoded set exists separately from the role system? (E.g., "these are the only 3 people who can break glass"?) Or is it historical from before the role system was added?
+
+**✅ ANSWERED (2026-04-16):** No reason for the split — historical drift. Don't like hardcoded lists. Keep exactly ONE break-glass admin (not the current 3). Unify into role-based system; the break-glass single user is the escape hatch.
+
+**Implications:**
+- Delete `ADMIN_USERS` set from `main.py:177`
+- Replace ~30 `if user not in ADMIN_USERS` checks with `require_capability("admin:X")` or a role check against `auth.get_user().role == "System_Admins"`
+- Break-glass: introduce a single env-var-based user (e.g., `BREAK_GLASS_ADMIN`) that bypasses SSO but still logs to audit
+- Break-glass user credential must be rotated/stored in AWS Secrets Manager, not in source
+- Part of the SSO migration work (see `project_sso_migration.md` memory)
+- `ISSUE-001` updated: fix is to UNIFY by removing the hardcode, not to propagate the role check
 
 **[Q-3]** **HR_Admins role:** Is this actually used? If not, can we delete it?
 
+**✅ ANSWERED (2026-04-16):** HR was moved to employeereportingservices.com. **DO NOT delete anything yet.** 5 users in DDB currently have `HR_Admins` role; we need to check with employeereportingservices.com team first to understand how THEIR auth works before removing accounts or role definitions here — could break a working flow.
+
+**Queried DDB 2026-04-16:**
+| User | Name | Last Login | Status |
+|---|---|---|---|
+| vnavarrete@jrk.com | Verenice Navarrete | never | enabled |
+| msalazar@jrk.com | Melody Martin Salazar | never | enabled |
+| alemoine@jrk.com | Aaron LeMoine | 2026-03-17 once | enabled |
+| jburtch@jrk.com | Jane Burtch | never | enabled |
+| drico@jrk.com | Diego Rico | never | enabled |
+
+**🚨 Shared password_hash across all 5 users** — all were provisioned 2026-03-05 with the same default temp password, none have changed it. Anyone who learns that one password can log in as any of the 5. Flagged separately as ISSUE-019.
+
+**Tabled action items:**
+- `[TODO-AUTH-001]` Contact employeereportingservices.com team; document how their auth is wired
+- `[TODO-AUTH-002]` Determine whether these 5 users still need Bill Review access OR if the accounts here are vestigial
+- `[TODO-AUTH-003]` Decide fate of `HR_Admins` role definition based on findings (keep as marker / delete / repurpose)
+- `[TODO-AUTH-004]` Fix shared-password situation once decision above is made (force password reset on all 5, OR disable, OR delete)
+
+Decision deferred pending coordination with employeereportingservices.com team.
+
 **[Q-4]** **2FA:** Is 2FA a requirement? Compliance obligation? User preference? Or out of scope for now?
+
+**✅ ANSWERED (2026-04-16):** MFA is not needed. Out of scope.
+
+**Implications:**
+- `ISSUE-008` (no 2FA) → **downgraded to wontfix**
+- If SSO IdP eventually enforces MFA, that's fine, but we're not building it here
 
 **[Q-5]** **Self-service password reset:** Would email-based reset fit the JRK workflow? (Would need SES integration and reset-token handling.)
 
+**✅ ANSWERED (2026-04-16):** Handle via SSO. No stopgap needed.
+
+**Implications:**
+- `ISSUE-009` → **deferred to SSO migration**, no interim fix
+- Admin-mediated reset stays as-is until SSO ships
+
 **[Q-6]** **Session duration:** 7 days is long for a financial app. Should we add idle timeout? What would break workflows you care about?
+
+**✅ ANSWERED (2026-04-16):** Users should log in every day.
+
+**Implications:**
+- `ISSUE-007` → actionable fix: reduce `SESSION_MAX_AGE_SECONDS` from `7 * 24 * 3600` (604800) to `24 * 3600` (86400)
+- Location: `main.py:106`
+- Rolling 24h from login (simpler) unless user specifies "end of day" behavior
+- Low-risk change, can land independently of SSO migration
 
 **[Q-7]** **Break-glass pattern:** What's the intended use of `DISABLE_AUTH=1`? If it's "cbeach needs to recover access when locked out", there are better patterns (per-user IAM-level reset via AWS CLI). Can we delete?
 
+**✅ ANSWERED (2026-04-16):** Delete entirely.
+
+**Fix plan (queued for batch at end of Module 1):**
+- Remove `main.py:1570-1581` (the `DISABLE_AUTH` env-var bypass block inside `get_current_user`)
+- Verify no tests exercise this bypass; if they do, remove those test cases
+- Grep for `DISABLE_AUTH` across repo and remove any references (env docs, setup scripts, etc.)
+- Break-glass replacement (per Q-2 answer): introduce a single env-backed `BREAK_GLASS_ADMIN` user rotated via AWS Secrets Manager. Lands with SSO migration.
+
 **[Q-8]** **Admin action audit log:** Any compliance obligation? Monthly review by IT?
 
+**✅ ANSWERED (2026-04-16):** No hard compliance obligation, but design principle says yes — immutable append-only audit log is the right pattern.
+
+**Design approved:**
+- New DDB table `jrk-bill-audit-log` (append-only; no updates/deletes from app code)
+- Fields: `timestamp` (ISO8601 UTC), `admin_user`, `action` (enum: create_user / disable_user / enable_user / reset_password / change_role / ...), `target_user`, `details` (JSON)
+- Keep forever (or very long TTL — a financial app's audit log should be years, not days)
+- Write from every `/api/users/*` endpoint + future state-change endpoints
+
+**Infrastructure caveat (CLAUDE.md rule):** Creating the DDB table is an infra change — needs explicit "go" approval before the create happens. Memory flagged: `CRITICAL: Infrastructure Rules`.
+
+**Follow-up left open:** Should audit extend to system-wide actions (e.g., "user X posted invoice Y to Entrata")? That's a bigger scope discussion — tabled for synthesis phase. Scope of MVP audit log is just admin user-management actions.
+
 **[Q-9]** **Service accounts:** `claude-qa@jrk.com` is the smoke-test user. Should automated callers (Lambda, scheduled tasks) have distinct service-account credentials, or continue impersonating a human?
+
+**✅ ANSWERED (2026-04-16):** Option 2 — build distinct service-account concept. Bearer-token auth, scoped per endpoint/capability, no human-lifecycle attributes.
+
+**Context:** SSO is imminent but has significant scoping ahead ("today or tomorrow — after we scope what it's going to hit"). User specifically concerned about SSO migration impact on:
+- **METRICS** module (per-user attribution, user_timing, submitter_stats, activity_detail, logins analytics)
+- **PARSE queue / scanning endpoints** that track per-user pull-through — need to preserve user identity across the SSO transition
+
+**Implications:**
+- Build service-account auth BEFORE SSO lands — service accounts bypass SSO, so this unblocks SSO without exporting the "every caller is a human" assumption into more code
+- Retrofit `tests/smoke_test_production.py` to use a service-account bearer token
+- New fields/model: `service_account_id`, `scopes` (capabilities), `token_hash`, `rotated_at`
+- Store tokens in AWS Secrets Manager, not source or env var plaintext
+- Every `/api/...` endpoint must accept EITHER session cookie OR service-account bearer token (FastAPI `Depends` that tries both)
+- Audit log (from Q-8) includes `caller_type: human | service_account` field
+- Per-user attribution work (METRICS, PARSE) will need careful handling — flag for Module 10 (Metrics) and Module 2 (Parse) reviews
 
 ---
 

@@ -269,33 +269,5 @@ class TestSanitizeError:
         assert "Error during" in result
 
 
-class TestAuthBypassSecurity:
-    """Tests for authentication bypass security measures."""
-
-    def test_disable_auth_requires_secret(self):
-        """DISABLE_AUTH should require confirmation secret to work."""
-        from unittest.mock import patch
-        import importlib
-
-        # Test that DISABLE_AUTH alone doesn't bypass auth
-        with patch.dict(os.environ, {"DISABLE_AUTH": "1", "DISABLE_AUTH_SECRET": "wrong-secret"}):
-            # Re-import to pick up env changes would be complex,
-            # so we test the logic directly
-            disable_auth = os.getenv("DISABLE_AUTH", "0") == "1"
-            confirm_secret = os.getenv("DISABLE_AUTH_SECRET", "")
-
-            # Even if DISABLE_AUTH is set, wrong secret shouldn't work
-            assert disable_auth is True
-            assert confirm_secret != "I-UNDERSTAND-THIS-IS-INSECURE"
-
-    def test_disable_auth_correct_secret(self):
-        """DISABLE_AUTH with correct secret should be acknowledged."""
-        with patch.dict(os.environ, {
-            "DISABLE_AUTH": "1",
-            "DISABLE_AUTH_SECRET": "I-UNDERSTAND-THIS-IS-INSECURE"
-        }):
-            disable_auth = os.getenv("DISABLE_AUTH", "0") == "1"
-            confirm_secret = os.getenv("DISABLE_AUTH_SECRET", "")
-
-            assert disable_auth is True
-            assert confirm_secret == "I-UNDERSTAND-THIS-IS-INSECURE"
+# TestAuthBypassSecurity class removed 2026-04-16: DISABLE_AUTH bypass deleted
+# from main.py per Module 1 review (ISSUE-010). No code path exists to test.

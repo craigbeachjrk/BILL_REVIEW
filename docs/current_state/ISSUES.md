@@ -87,32 +87,33 @@ Issues in this log are tagged with a **Scope** field:
 - **Location:** auth.py:155 (`authenticate`)
 - **Problem:** Brute-force risk; unlimited password attempts
 
-#### [ISSUE-007] No idle session timeout
+#### [ISSUE-007] Session duration too long
 - **Severity:** P2
 - **Scope:** SECURITY
-- **Status:** flagged
-- **Location:** main.py:106 (`SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600`)
-- **Problem:** 7-day absolute; no idle revocation
+- **Status:** **fixed** 2026-04-16 (main.py:106 now `24 * 3600`)
+- **Location:** main.py:106
+- **Fix landed:** Reduced from `7 * 24 * 3600` to `24 * 3600` — rolling 24h from login
 
 #### [ISSUE-008] No 2FA for financial application
-- **Severity:** P1
+- **Severity:** ~~P1~~ → closed
 - **Scope:** SECURITY
-- **Status:** flagged
+- **Status:** **wontfix** (user decided 2026-04-16 — MFA not needed; if SSO IdP enforces MFA that's fine)
 - **Problem:** AP users can post invoices (move money) with single-factor auth
 
 #### [ISSUE-009] No self-service forgot-password
 - **Severity:** P2
 - **Scope:** JTBD
-- **Status:** flagged
+- **Status:** **deferred-to-sso** (user decided 2026-04-16)
 - **User job affected:** "I forgot my password on a weekend" — must wait for admin
+- **Resolution:** Will be handled by SSO IdP post-migration; no interim fix
 
 #### [ISSUE-010] Auth bypass env-var backdoor
 - **Severity:** P1
 - **Scope:** SECURITY
-- **Status:** flagged
-- **Location:** main.py:1570-1581
-- **Problem:** `DISABLE_AUTH=1` + `DISABLE_AUTH_SECRET="I-UNDERSTAND-THIS-IS-INSECURE"` bypasses all auth. Secret is in source code.
-- **Proposed fix:** Remove; replace with IAM-level credential rotation for break-glass
+- **Status:** **fixed** 2026-04-16 (bypass block deleted from main.py; apprunner env var removed; tests removed)
+- **Location:** main.py (was 1570-1581), apprunner_config.json, tests/unit/test_security.py
+- **Problem:** `DISABLE_AUTH=1` + `DISABLE_AUTH_SECRET="I-UNDERSTAND-THIS-IS-INSECURE"` bypassed all auth. Secret was in source code.
+- **Fix landed:** Removed all three. Break-glass replacement will come with SSO migration.
 
 #### [ISSUE-011] change-password updates last_login_utc
 - **Severity:** P4
@@ -130,9 +131,9 @@ Issues in this log are tagged with a **Scope** field:
 #### [ISSUE-013] /api/users/{id}/role only accepts 3 of 4 roles
 - **Severity:** P3
 - **Scope:** BUG
-- **Status:** flagged
+- **Status:** **fixed** 2026-04-16 (main.py:3400 now uses `auth.ROLES.keys()`)
 - **Location:** main.py:3400
-- **Proposed fix:** Read from `auth.ROLES` keys as source of truth
+- **Fix landed:** `valid_roles = set(auth.ROLES.keys())` — single source of truth
 
 #### [ISSUE-014] list_users uses DDB Scan by default
 - **Severity:** P3
@@ -157,8 +158,11 @@ Issues in this log are tagged with a **Scope** field:
 #### [ISSUE-017] No audit log of admin actions
 - **Severity:** P2
 - **Scope:** COMPLIANCE / SECURITY
-- **Status:** flagged
+- **Status:** **confirmed — build immutable audit log** (user decided 2026-04-16, no compliance obligation but design principle)
 - **Problem:** Only `print()` to CloudWatch logs; no immutable audit trail
+- **Fix plan:** New DDB table `jrk-bill-audit-log` (append-only). Fields: timestamp / admin_user / action / target_user / details. Written from every admin endpoint.
+- **Blocked on:** Infra approval (CLAUDE.md rule — DDB table create needs explicit go)
+- **Follow-up open:** Broader system audit (e.g., "user X posted invoice Y") tabled for synthesis phase.
 
 #### [ISSUE-018] Pages have no role-based access control
 - **Severity:** P1
@@ -166,7 +170,23 @@ Issues in this log are tagged with a **Scope** field:
 - **Status:** flagged
 - **User job affected:** "Restrict UBI team from seeing payroll-adjacent data" — currently all authenticated users see all pages
 - **Problem:** `can_access_page()` exists but nothing calls it; pages are not role-gated
-- **Proposed fix:** Middleware that maps request path → role check via `auth.can_access_page(user_role, request.url.path)`
+- **Proposed fix:** Part of SSO migration (see `project_sso_migration.md`). Build role-to-capability registry; wire via middleware.
+
+#### [ISSUE-019] 5 HR_Admins users share identical password_hash
+- **Severity:** P1
+- **Scope:** SECURITY
+- **Status:** flagged (action TABLED pending coordination)
+- **Module:** 01_auth
+- **Users affected:** vnavarrete@jrk.com, msalazar@jrk.com, alemoine@jrk.com (has logged in once), jburtch@jrk.com, drico@jrk.com
+- **Problem:** All 5 provisioned 2026-03-05 with same default temp password. None have changed. Same hash means whoever knows that password can log in as any of the 5.
+- **Why tabled:** HR moved to employeereportingservices.com. Need to check how THAT app handles auth before disabling/deleting these accounts (could break a working flow). User instruction 2026-04-16.
+- **Tabled items:** TODO-AUTH-001..004 in `modules/01_auth.md` (contact other team, audit dependency, then fix)
+
+### 🕰 Tabled / Pending Coordination
+
+- **TODO-AUTH-001..004** (HR_Admins) — coordinate with employeereportingservices.com team before removing accounts/role. See ISSUE-019 + modules/01_auth.md Q-3.
+- **TODO-AUTH-005** (SSO scoping) — per-module inventory of SSO touchpoints (METRICS, PARSE per-user attribution, etc.) must be complete before SSO migration lands. Each module review must include a "SSO migration concerns" section.
+- **TODO-AUTH-006** (Service accounts before SSO) — design + build service-account auth (Option 2 from Q-9) BEFORE SSO migration. First customer: `tests/smoke_test_production.py`.
 
 Template for new entries:
 

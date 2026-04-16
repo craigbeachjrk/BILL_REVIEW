@@ -98,3 +98,5 @@ See `C:\Users\cbeach\.claude\...\memory\feedback_jtbd_review_lens.md` for the fu
 10. **Issues Flagged** — list with IDs linking to ISSUES.md
 11. **Open Questions for User** — for collaborative answer
 12. **Dead / Unused Code** — within this module
+13. **SSO migration concerns** — list every place this module reads `user` identity from session, every per-user attribution (audit/metrics/timing), every hardcoded ADMIN_USERS reference, every assumed role check. Feeds `project_sso_migration.md` scoping inventory.
+14. **Service-account concerns** — what automated callers exist or will exist that touch this module; scope of capabilities they need; whether the module assumes "session cookie auth".

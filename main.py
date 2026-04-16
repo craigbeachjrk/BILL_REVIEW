@@ -103,7 +103,7 @@ APP_SECRET = os.getenv("APP_SECRET", "dev-secret-change-me")
 if APP_SECRET == "dev-secret-change-me" and os.getenv("AWS_EXECUTION_ENV"):
     print("[SECURITY WARNING] APP_SECRET is using default value in a deployed environment! Set APP_SECRET env var.")
 SESSION_COOKIE = "br_sess"
-SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600
+SESSION_MAX_AGE_SECONDS = 24 * 3600  # 24h — users log in daily
 SECURE_COOKIES = os.getenv("SECURE_COOKIES", "1") == "1"
 DRAFTS_TABLE = os.getenv("DRAFTS_TABLE", "jrk-bill-drafts")
 PRE_ENTRATA_PREFIX = os.getenv("PRE_ENTRATA_PREFIX", "Bill_Parser_6_PreEntrata_Submission/")
@@ -1567,18 +1567,6 @@ def set_session(resp: Response, username: str):
     resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_MAX_AGE_SECONDS, httponly=True, secure=SECURE_COOKIES, samesite="lax")
 
 def get_current_user(request: Request) -> str | None:
-    # Emergency auth bypass - ONLY works when BOTH conditions are met:
-    # 1. DISABLE_AUTH=1
-    # 2. DISABLE_AUTH_SECRET matches a confirmation phrase (prevents accidental enable)
-    # This should NEVER be used in production - only for emergency recovery
-    if os.getenv("DISABLE_AUTH", "0") == "1":
-        # Require explicit confirmation secret to prevent accidental bypass
-        confirm_secret = os.getenv("DISABLE_AUTH_SECRET", "")
-        if confirm_secret == "I-UNDERSTAND-THIS-IS-INSECURE":
-            print(f"[SECURITY WARNING] Auth bypass active - request from {request.client.host if request.client else 'unknown'}")
-            return os.getenv("ADMIN_USER", "admin")
-        # If DISABLE_AUTH=1 but secret doesn't match, log and continue with normal auth
-        print("[SECURITY] DISABLE_AUTH=1 but DISABLE_AUTH_SECRET not set correctly - auth bypass NOT active")
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
@@ -3396,10 +3384,10 @@ async def api_change_role(user_id: str, request: Request, admin_user: str = Depe
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-    # Validate role
-    valid_roles = {"System_Admins", "UBI_Admins", "Utility_APs"}
+    # Validate role against auth.ROLES (single source of truth)
+    valid_roles = set(auth.ROLES.keys())
     if new_role not in valid_roles:
-        return JSONResponse({"error": f"Invalid role. Must be one of: {', '.join(valid_roles)}"}, status_code=400)
+        return JSONResponse({"error": f"Invalid role. Must be one of: {', '.join(sorted(valid_roles))}"}, status_code=400)
 
     try:
         ddb.update_item(
