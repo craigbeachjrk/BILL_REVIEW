@@ -16,14 +16,31 @@ Bill Review App - A FastAPI web application for reviewing and processing utility
 
 ### Data Pipeline (S3 Stages)
 ```
-Stage 1: Bill_Parser_1_Pending_Parsing/    - Raw PDFs for parsing
-Stage 2: Bill_Parser_2_Parsed_Inputs/      - Parsed data + original PDFs
-Stage 4: Bill_Parser_4_Enriched_Outputs/   - Enriched with vendor/property
-Stage 6: Bill_Parser_6_PreEntrata/         - Ready for Entrata posting
-Stage 7: Bill_Parser_7_PostEntrata/        - Posted (BILLBACK unassigned)
-Stage 8: Bill_Parser_8_UBI_Assigned/       - UBI period assigned
-Stage 9: Bill_Parser_9_Flagged_Review/     - Flagged for QC
+Stage 1:  Bill_Parser_1_Pending_Parsing/       - Raw PDFs for parsing (ingest target)
+Stage 1a: Bill_Parser_1_Standard/              - Router output: PDFs <=10 pages, <=10MB
+Stage 1b: Bill_Parser_1_LargeFile/             - Router output: larger PDFs (go to large-parser)
+Stage 1c: Bill_Parser_1_LargeFile_Chunks/      - Large-parser splits pages; chunks land here
+Stage 1d: Bill_Parser_1_LargeFile_Results/     - Aggregator reassembles chunk results
+Stage 2:  Bill_Parser_2_Parsed_Inputs/         - PDF + metadata copy (archive of parser input). See Q-2 TODO.
+Stage 3:  Bill_Parser_3_Parsed_Outputs/        - Parser JSONL output (pre-enrichment). Enricher consumes this.
+Stage 4:  Bill_Parser_4_Enriched_Outputs/      - Enriched with vendor/property/GL
+Stage 5:  Bill_Parser_5_Overrides/             - User overrides (property, vendor, GL code changes)
+Stage 6:  Bill_Parser_6_PreEntrata_Submission/ - Merged, validated; ready for Entrata posting
+Stage 7:  Bill_Parser_7_PostEntrata_Submission/ - Posted to Entrata; awaits UBI assignment
+Stage 8:  Bill_Parser_8_UBI_Assigned/          - UBI period assigned; feeds billback + master bills
+Stage 9:  Bill_Parser_9_Flagged_Review/        - Flagged for manual QC
+Stage 99: Bill_Parser_99_Historical Archive/   - Long-term archive (end of lifecycle)
+
+Other prefixes:
+- Bill_Parser_Rework_Input/     - PDFs needing re-parse (user-initiated rework)
+- Bill_Parser_Failed_Jobs/      - Parser failures
+- Bill_Parser_Meter_Data/       - Meter readings
+- Bill_Parser_Config/           - JSON config files (mappings, caches)
+- Bill_Parser_Deleted_Archive/  - Tombstones for deleted invoices
+- Bill_Parser_Rework_Archive/   - Archive of reworked PDFs
 ```
+
+**TODO (Module 2 review 2026-04-16):** Clarify relationship between S2 `Parsed_Inputs` and S1_Standard/S1_LargeFile. The parser Lambda writes to BOTH S2 and S3. Is S2 a PDF-copy archive (redundant with S1_Standard after routing) or a separate pipeline step? User doesn't know; needs investigation.
 
 ### Key Architecture Concepts
 - **pdf_id**: SHA1 hash of S3 key, used to identify invoices across stages

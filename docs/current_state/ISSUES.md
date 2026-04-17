@@ -188,6 +188,128 @@ Issues in this log are tagged with a **Scope** field:
 - **TODO-AUTH-005** (SSO scoping) — per-module inventory of SSO touchpoints (METRICS, PARSE per-user attribution, etc.) must be complete before SSO migration lands. Each module review must include a "SSO migration concerns" section.
 - **TODO-AUTH-006** (Service accounts before SSO) — design + build service-account auth (Option 2 from Q-9) BEFORE SSO migration. First customer: `tests/smoke_test_production.py`.
 
+### Module 2 — Parse & Input (reviewed 2026-04-16, awaiting user confirmation)
+
+#### [ISSUE-020] Uppercase .PDF handling has 3 overlapping fixes + 10-min lag
+- **Severity:** P2
+- **Scope:** JTBD / INTEGRATION
+- **Status:** **attempted & reverted** 2026-04-16 (needs retry with better plan)
+- **Location:** main.py:1239-1274 (auto-loop), main.py:3881-3883 (upload normalize), main.py:3896-3924 (admin button)
+- **Problem:** S3 event filter case-sensitive; 3 code paths mitigate; up to 10 min lag between upload and pipeline resume for non-web-upload sources
+- **Attempt 1 (2026-04-16):**
+  1. Added S3 event rule `BillRouterTrigger_UppercasePDF` (Suffix=.PDF, same Lambda). ✓
+  2. Attempted to update router Lambda to normalize extension on copy. ✗
+  3. Zip packaging broke the deployment — `No module named 'botocore.vendored'` import error. Production router was DOWN for ~3 minutes (22:14:22–22:17:17 UTC).
+  4. Reverted router to original deployment zip. Production restored.
+  5. 9 production PDFs stuck during outage window — recovered via direct Lambda invocation with synthetic S3 events.
+  6. Reverted the S3 event rule addition to return to pre-session state. Rationale: the S3 rule alone (without router Lambda extension-normalization) risks `.PDF` files getting stuck in Standard/LargeFile (downstream triggers don't match `.PDF`).
+- **Lessons for retry:**
+  - Zip must preserve boto3's vendored structure. My `os.walk + zipfile.ZIP_DEFLATED` may have mangled pkg layout. Investigate before retry.
+  - Test in a staging Lambda first, not production.
+  - Simpler approach: add 4 twin `_UppercasePDF` rules for the 4 `.pdf`-filtered triggers (router, standard-parser, large-parser, chunk-processor, rework) — no Lambda code change needed. But adds rule sprawl.
+  - Even simpler: change all 4 rules to NO suffix filter, and have each Lambda validate extension at entry. More Lambda invocations but no case-sensitivity issue.
+- **Proposed retry plan:** Do the Lambda deploy in a staging environment first OR take the "no suffix filter + validate in code" approach.
+
+#### [ISSUE-021] Router intermediate stages undocumented
+- **Severity:** P2
+- **Scope:** DATA / DRIFT
+- **Problem:** `Bill_Parser_1_Standard/`, `Bill_Parser_1_LargeFile/`, `Bill_Parser_3_Parsed_Outputs/` exist as routing destinations but not in CLAUDE.md or 04_data_architecture.md
+- **Location:** `aws_lambdas/us-east-1/jrk-bill-router/code/lambda_bill_router.py:44-46`, parser Lambda:56
+- **Fix:** Document or confirm dead + delete
+
+#### [ISSUE-022] `/parse` renders `index.html` not `parse.html`
+- **Severity:** P4
+- **Scope:** UX / TECH-DEBT
+- **Location:** main.py:3487
+
+#### [ISSUE-023] No user attribution on uploaded bills
+- **Severity:** P1
+- **Scope:** JTBD / INTEGRATION
+- **Status:** **planned-fix** (user approved 2026-04-16 — build now, coordinate with SSO)
+- **Location:** main.py:3867-3893 (api_upload_input), api_scraper_import, email-ingest Lambda, router Lambda, parser Lambda, enricher Lambda
+- **Problem:** Uploads don't record who uploaded. Breaks SSO scoping goal "know who did what"; blocks per-user metrics; blocks audit log.
+- **Fix:** S3 object metadata `uploader={email}` + `source={web|scraper|email}`. Propagate through router/parser/enricher chain. See modules/02_parse.md Q-13 for 8-point plan.
+- **Prereq for:** Audit log (ISSUE-017), per-user metrics (METRICS module), SSO identity migration
+
+#### [ISSUE-024] Search 500-result cap silent; no pagination
+- **Severity:** P2
+- **Scope:** UX
+- **Status:** **planned-fix** (user decided 2026-04-16 — cursor pagination + infinite scroll + sort param)
+- **Location:** main.py:3803, 3827, `templates/search.html`
+- **Fix:** Cursor-based pagination (`{last_date, last_pdf_id}`), IntersectionObserver for scroll-to-load, server-side sort param. ~4-6 hours.
+
+#### [ISSUE-025] Search is naive substring match
+- **Severity:** P3
+- **Scope:** UX
+- **Status:** **planned-fix** (user decided 2026-04-16 — make more robust; bundle with ISSUE-024 search overhaul)
+- **Location:** main.py:3812-3817
+- **Fix:** Add `_normalize_for_search` helper (strip non-alphanumeric, lowercase, handle leading zeros on account numbers). Store normalized `_n` fields at index time. ~2 hours bundled with pagination work.
+
+#### [ISSUE-026] Scraper CSV fallback silently serves stale data
+- **Severity:** P3
+- **Scope:** TECH-DEBT / DATA
+- **Status:** **planned-fix** (user decided Option 1 2026-04-16 — hard-fail with banner)
+- **Location:** main.py:3978-4004 + two CSVs in source tree
+- **Fix:** Delete CSVs + fallback code. Return 503 + error banner on UI when scraper API down. ~1 hour.
+
+#### [ISSUE-027] Pipeline tracker errors silently swallowed
+- **Severity:** P2
+- **Scope:** OBSERVABILITY
+- **Location:** router Lambda:39, parser Lambda:49, email-ingest Lambda:35
+- **Fix:** Emit CloudWatch metric on tracker write failure
+
+#### [ISSUE-028] Router doesn't validate PDF integrity
+- **Severity:** P2
+- **Scope:** DATA
+- **Location:** router Lambda:54-62, 129-131
+- **Problem:** Corrupt PDFs routed to standard parser, fail downstream; could reject at router
+
+#### [ISSUE-029] `list_dates()` scans entire enrich prefix
+- **Severity:** P3
+- **Scope:** PERF
+- **Location:** main.py:1606-1631
+- **Problem:** Linear with data growth; first request after cache expiry slow
+
+#### [ISSUE-030] `load_day()` fires 50 concurrent S3 GETs
+- **Severity:** P3
+- **Scope:** PERF
+- **Location:** main.py:1690
+
+#### [ISSUE-031] Search rebuild without S3 cache is hours
+- **Severity:** P2
+- **Scope:** PERF / STARTUP
+- **Location:** main.py:3375-3395 (`_search_index_backfill`)
+
+#### [ISSUE-032] Failed parses hidden from /parse dashboard
+- **Severity:** P1
+- **Scope:** JTBD / OBSERVABILITY
+- **Status:** **planned-fix** (user decided Option 1 2026-04-16)
+- **Problem:** Failed bills disappear silently; user has to know about /failed module
+- **Fix:** Add FAILED as 4th column on /parse day cards. Extend `day_status_counts()` to count Failed_Jobs; update template; add retry action.
+
+#### [ISSUE-033] Rework gap: search invisibility between rework and next rebuild
+- **Severity:** P2
+- **Scope:** DATA INTEGRITY
+- **Location:** main.py:3638-3656 (`_search_index_remove`)
+- **Fix:** Scheduled incremental rebuild loop (not just at startup)
+
+#### [ISSUE-034] Scraper "unlinked" sentinel is fragile
+- **Severity:** P4
+- **Scope:** TECH-DEBT
+- **Location:** main.py:4006
+
+#### [ISSUE-035] Scraper import is sequential; AppRunner timeout risk
+- **Severity:** P2
+- **Scope:** PERF / UX
+- **Location:** main.py /api/scraper/import
+
+#### [ISSUE-036] `jrk-presigned-upload` Lambda exists but unused
+- **Severity:** P3 → upgraded to P2 (now load-bearing for large-file upload path)
+- **Scope:** TECH-DEBT → UX / JTBD
+- **Status:** **planned-fix** (user decided 2026-04-16 — wire into /input)
+- **Location:** aws_lambdas/us-east-1/jrk-presigned-upload/ + `templates/input.html`
+- **Fix:** Browser PUTs directly to S3 via presigned URL (metadata for Q-13 attribution); poll via job-queue (Q-14). Removes the ~30MB upload ceiling.
+
 Template for new entries:
 
 ```
@@ -221,3 +343,6 @@ These are issues already recorded in existing docs that should be verified/updat
 - **[PRE-08] UBI assignment has 3 separate deletion paths with slightly different semantics** — per main.py analysis. Consolidation candidate.
 - **[PRE-09] 10+ abandoned iteration scripts in `GEMINI_PDF_PARSER/`** — superseded by production Lambdas. Safe to archive or delete.
 - **[PRE-10] S3 migration flow is not atomic** — each stage transition is copy-then-delete. No rollback on partial failure.
+- **[PRE-11] Billback: comments added don't show up** — user-reported 2026-04-16. Adding a comment in BILLBACK module does not surface the comment after save/refresh. Flag for Module 6 review.
+- **[PRE-12] Billback: "Add to Tracker" appears to work but reverts on refresh** — user-reported 2026-04-16. Click succeeds in UI, but on page refresh the account is no longer in tracker. Classic "save endpoint returned 200 but state didn't persist" or "client state out of sync with server state". Flag for Module 6 / Module 9 review.
+- **[PRE-13] Lambda code in aws_lambdas/*/code/ is behind the deployed version** — found during Module 2 router fix 2026-04-16. Deployed router has `_pipeline_track` helper + sidecar file copy logic that isn't in the repo copy. Suggests direct `aws lambda update-function-code` was used without git commit. Drift risk: future refactors based on repo code would overwrite production-only changes. Need policy: all Lambda changes go through git.

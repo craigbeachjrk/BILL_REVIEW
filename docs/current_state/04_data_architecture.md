@@ -32,6 +32,53 @@ Inventory of all DynamoDB tables and S3 prefixes referenced in the codebase, plu
 - `jrk-bill-ubi-assignments` and `jrk-bill-ubi-archived` are large enough that scans are slow (per memory: "DynamoDB scans on large tables are slow — always cache").
 - Several tables' exact keys/sort-keys are inferred from usage; to be verified during module review.
 
+### Addendum (Module 2 review 2026-04-16)
+
+**Additional DDB table found:**
+
+| Table | Purpose | Primary Key | Sort Key | Notes |
+|-------|---------|-------------|----------|-------|
+| `jrk-bill-router-log` | Router decisions log (page count, file size, route, reason) | `pk` = `ROUTE#{filename}` | `timestamp` | Written by `jrk-bill-router` Lambda for every routing decision |
+
+**Corrected S3 Stage Map** (per confirmed Q-11 2026-04-16):
+
+The original 9-stage simplification was incomplete. Stage 3 was missing entirely; there are sub-stages within Stage 1 for the routing/chunking path. Updated map:
+
+| Stage | Prefix | Role | Trigger into next |
+|---|---|---|---|
+| 1 | `Bill_Parser_1_Pending_Parsing/` | Ingest (web upload, email, scraper) | S3 event → router |
+| 1a | `Bill_Parser_1_Standard/` | Router output: PDFs ≤10 pages, ≤10MB | S3 event → parser |
+| 1b | `Bill_Parser_1_LargeFile/` | Router output: larger PDFs | S3 event → large-parser |
+| 1c | `Bill_Parser_1_LargeFile_Chunks/` | Large-parser splits pages; chunks here | S3 event → chunk-processor |
+| 1d | `Bill_Parser_1_LargeFile_Results/` | Aggregator reassembles chunk results | S3 event (.json) → aggregator |
+| 2 | `Bill_Parser_2_Parsed_Inputs/` | PDF + metadata copy (archive of parser input). **Role unclear vs. 1a/1b — TODO** | No trigger (archive only?) |
+| 3 | `Bill_Parser_3_Parsed_Outputs/` | Parser JSONL output (pre-enrichment) | S3 event (.jsonl) → enricher |
+| 4 | `Bill_Parser_4_Enriched_Outputs/` | Enriched (vendor/property/GL) | Manual review in app |
+| 5 | `Bill_Parser_5_Overrides/` | User overrides (property/vendor/GL) | Manual via /post |
+| 6 | `Bill_Parser_6_PreEntrata_Submission/` | Merged for Entrata POST | Manual via /api/post_to_entrata |
+| 7 | `Bill_Parser_7_PostEntrata_Submission/` | Posted to Entrata | Manual via /ubi or /billback |
+| 8 | `Bill_Parser_8_UBI_Assigned/` | UBI-assigned | Manual via /billback submit |
+| 9 | `Bill_Parser_9_Flagged_Review/` | Flagged for manual QC | Manual unflag |
+| 99 | `Bill_Parser_99_Historical Archive/` | End-of-lifecycle archive | — |
+
+**Parallel/off-main prefixes:** `Bill_Parser_Rework_Input/`, `Bill_Parser_Failed_Jobs/`, `Bill_Parser_Meter_Data/`, `Bill_Parser_Config/`, `Bill_Parser_Deleted_Archive/`, `Bill_Parser_Rework_Archive/`
+
+**S3 Event Triggers (7 rules):**
+
+| Rule Id | Source Prefix | Suffix | Target Lambda |
+|---|---|---|---|
+| BillRouterTrigger | Bill_Parser_1_Pending_Parsing/ | .pdf | jrk-bill-router |
+| BillParserStandardTrigger | Bill_Parser_1_Standard/ | .pdf | jrk-bill-parser |
+| BillParserLargeFileTrigger | Bill_Parser_1_LargeFile/ | .pdf | jrk-bill-large-parser |
+| ChunkProcessorTrigger | Bill_Parser_1_LargeFile_Chunks/ | .pdf | jrk-bill-chunk-processor |
+| AggregatorTrigger | Bill_Parser_1_LargeFile_Results/ | .json | jrk-bill-aggregator |
+| InvokeBillEnricherOnStage3 | Bill_Parser_3_Parsed_Outputs/ | .jsonl | jrk-bill-enricher |
+| ReworkPdfCreate | Bill_Parser_Rework_Input/ | .pdf | jrk-bill-parser-rework |
+
+All suffix filters are case-sensitive (lowercase only). See ISSUE-020 for uppercase `.PDF` handling.
+
+**Open question:** What exactly is the role of `Bill_Parser_2_Parsed_Inputs/`? Parser Lambda writes to BOTH S2 and S3. S2 may be redundant with S1_Standard/S1_LargeFile. Needs investigation in future session.
+
 ## S3 Prefixes (in `jrk-analytics-billing` bucket)
 
 | Prefix | Purpose | Stage | Read/Write |
