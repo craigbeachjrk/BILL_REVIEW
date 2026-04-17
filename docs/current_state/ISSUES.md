@@ -420,6 +420,67 @@ See `modules/03_post_entrata.md` for full context on each issue.
   5. Delete hardcoded local test paths (DEFAULT_TEST_JSONL, DEFAULT_VENDOR_CACHE — Craig's machine paths)
   6. Audit: who has repo access; any other credentials that should be preemptively rotated
 
+### Module 4 — UBI (reviewed 2026-04-17, awaiting user confirmation)
+
+See `modules/04_ubi.md` for full context.
+
+#### [ISSUE-056] 🎯 PRE-11 root cause: client comment save lookup asymmetric with server
+- **Severity:** P1 — Scope: BUG / JTBD — **user-reported pain point**
+- **Status:** **core fix landed 2026-04-17** (account-only fallback added in billback.html:3094-3108); polish deferred
+- **Location:** `templates/billback.html:3094-3108` (saveAccountComment)
+- **Problem:** Server's `/api/config/account-comment` has account-only fallback (commit 686fae9) when vendor name mismatches. Client's local lookup required exact vendor match. When vendor name differed between config and display, client lookup failed silently → local `accountsToTrack` never updated → comment appeared unsaved to user.
+- **Fix landed:** Client mirrors server's account-only fallback. Console warning if still unmatched.
+- **Polish deferred:** (a) replace fragile CSS selector `.bill-header div div:nth-child(2)` with data-attr lookup; (b) have server return `matched_vendor` so client can sync `currentCommentVendor` for subsequent saves.
+
+#### [ISSUE-057] PRE-12 root cause TBD (Add to Tracker reverts on refresh)
+- **Severity:** P1 — Scope: BUG / JTBD — **user-reported pain point**
+- **Status:** **flagged** — needs Module 11 review to trace
+- **Location:** `main.py:19018` (api_config_add_to_tracker), `main.py:19199` (api_ubi_add_to_tracker — duplicate!)
+- **Hypothesis:** Duplicate endpoints, cache invalidation gap, or wrong-shape write
+
+#### [ISSUE-058] 5-8 UBI removal paths (consolidation overdue)
+- **Severity:** P2 — Scope: TECH-DEBT
+- **Location:** main.py:6556, 6737, 6924, 7012, 7146, 7291, 19423, 19470
+- **Fix:** Consolidate into `_ubi_release_assignments()` helper
+
+#### [ISSUE-059] Fallback S3-key search reveals files-get-rewritten leakage
+- **Severity:** P2 — Scope: TECH-DEBT / DATA
+- **Location:** main.py:5589-5627
+- **Fix:** Treat line_hash as primary; add `line_hash → current_s3_key` index
+
+#### [ISSUE-060] Two DDB assignment-ID formats; migration incomplete
+- **Severity:** P3 — Scope: MIGRATION DEBT
+- **Location:** main.py:6676-6714
+- **Fix:** One-shot migration Lambda/script, then remove scan fallback
+
+#### [ISSUE-061] Mixed delimiters in UBI form data
+- **Severity:** P3 — Scope: UX / TECH-DEBT
+- **Fix:** Replace form-based with JSON body
+
+#### [ISSUE-062] Multi-period UBI suggestion not implemented
+- **Severity:** P2 — Scope: JTBD — noted in CLAUDE.md
+- **Status:** known; fix plan exists in `docs/MULTI_PERIOD_SUGGESTION_FIX.md` (existence unverified)
+
+#### [ISSUE-063] Full S3 file read/rewrite on every assign
+- **Severity:** P3 — Scope: PERF
+
+#### [ISSUE-064] UBI notes not searchable/indexed
+- **Severity:** P3 — Scope: JTBD
+
+#### [ISSUE-065] `/api/billback/save` misnamed
+- **Severity:** P3 — Scope: TECH-DEBT
+- **Problem:** Conflates billback-master save with UBI line-item assignments
+
+#### [ISSUE-066] `jrk-bill-billback-master` DDB table missing from inventory
+- **Severity:** P3 — Scope: DRIFT
+- **Fix:** Add to `04_data_architecture.md`
+
+#### [ISSUE-067] `_calculate_ubi_suggestion` cross-module dependency
+- **Severity:** P3 — Scope: TECH-DEBT
+
+#### [ISSUE-068] `_get_accounts_to_track` cache invalidation on comment save unclear
+- **Severity:** P2 — Scope: DATA / CONSISTENCY — related to ISSUE-056
+
 #### [ISSUE-054] No recovery path for "Entrata posted but response didn't arrive"
 - **Severity:** **P1** — Scope: DATA INTEGRITY
 - **Status:** **planned-fix** (user approved disambiguation flow 2026-04-17)

@@ -3085,14 +3085,27 @@
           return;
         }
 
-        // Update local cache
-        const acct = accountsToTrack.find(a => {
+        // Update local cache — match by (account, vendor) first; fall back to
+        // account-only match to mirror server's 686fae9 behavior. Vendor names
+        // can differ between accountsToTrack config (user-entered) and the
+        // displayed bill data (enriched); without this fallback, the local
+        // state silently fails to update and the comment appears to "not show up"
+        // after save. See ISSUE-056 / PRE-11.
+        let acct = accountsToTrack.find(a => {
           const configAcct = String(a.accountNumber || a.account_number || '').trim();
           const configVendor = String(a.vendorName || a.vendor_name || '').trim();
           return configAcct === currentCommentAccount && configVendor === currentCommentVendor;
         });
+        if (!acct) {
+          acct = accountsToTrack.find(a => {
+            const configAcct = String(a.accountNumber || a.account_number || '').trim();
+            return configAcct === currentCommentAccount;
+          });
+        }
         if (acct) {
           acct.comment = comment;
+        } else {
+          console.warn('[comment] Saved server-side but no local account record found for ' + currentCommentAccount + '; UI may need a refresh');
         }
 
         showToast(comment ? 'Comment saved' : 'Comment removed', 'ok');
