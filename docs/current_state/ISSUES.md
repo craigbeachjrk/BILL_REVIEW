@@ -310,6 +310,122 @@ Issues in this log are tagged with a **Scope** field:
 - **Location:** aws_lambdas/us-east-1/jrk-presigned-upload/ + `templates/input.html`
 - **Fix:** Browser PUTs directly to S3 via presigned URL (metadata for Q-13 attribution); poll via job-queue (Q-14). Removes the ~30MB upload ceiling.
 
+### Module 3 — Post & Entrata (reviewed 2026-04-16, awaiting user confirmation)
+
+See `modules/03_post_entrata.md` for full context on each issue.
+
+#### [ISSUE-037] Post lock fail-open during DDB outage → duplicate-post risk
+- **Severity:** **P0** — Scope: DATA / SAFETY
+- **Status:** **planned-fix** (user decided 2026-04-17 — fail-closed)
+- **Location:** main.py:2221-2223 (`_acquire_post_lock` exception branch)
+- **Problem:** Returns True on DDB error, allowing uncoordinated posts across instances. Duplicate submission risk during transient DDB outages.
+- **Fix:** Return False on exception; add CloudWatch metric for tracking; update user error message. Surgical change.
+
+#### [ISSUE-038] 30-second stale-lock timeout too short for real Entrata calls
+- **Severity:** P1 — Scope: DATA / SAFETY
+- **Status:** **planned-fix** (user decided heartbeat — Option B, 2026-04-17)
+- **Location:** main.py:2185, 2204
+- **Problem:** Entrata calls often take 30-60s; lock can be stolen mid-call.
+- **Fix:** Heartbeat thread pings DDB every 20s during post; stale timeout 60s; holder verified via existing nonce. ~30-50 LOC.
+
+#### [ISSUE-039] Same-user retry allows concurrent posts
+- **Severity:** P1 — Scope: DATA / SAFETY
+- **Status:** **planned-fix** (user chose Option C — request-id idempotency, 2026-04-17)
+- **Location:** main.py:2205
+- **Problem:** Two fast clicks by same user → both acquire lock → double-post.
+- **Fix:** Client-generated `request_id` (UUID); DDB stores it; same id can retry, different id rejected. Industry-standard idempotency key pattern. Bundled with ISSUE-037 + ISSUE-038 as lock mechanism refactor.
+
+#### [ISSUE-040] `_POST_LOCK_NONCES` process-local
+- **Severity:** P2 — Scope: DATA / CONSISTENCY
+- **Location:** main.py:2167
+- **Problem:** In-memory dict; 2 AppRunner instances each have their own; instance death loses nonce.
+- **Proposed fix:** Read nonce from DDB every time, drop in-memory cache.
+
+#### [ISSUE-041] `/api/clear_post_locks` has no admin check
+- **Severity:** P1 — Scope: SECURITY / INTEGRITY
+- **Status:** **planned-fix** (user agreed 2026-04-17 — admin-only)
+- **Location:** main.py:2347
+- **Problem:** Any authenticated user can force-clear any post lock.
+- **Fix:** Add admin gate; log to audit table (depends on ISSUE-017); require free-text `reason`; hide button in UI for non-admins.
+
+#### [ISSUE-042] S3 move is copy-then-delete; not atomic
+- **Severity:** P2 — Scope: DATA INTEGRITY
+- **Location:** main.py:2944-2952 post-success path
+- **Problem:** Delete-after-copy; partial failures leave bill in both S6 and S7.
+- **Proposed fix:** Tombstone source before copy; use object versioning.
+
+#### [ISSUE-043] PDF archive errors silently swallowed
+- **Severity:** P3 — Scope: AUDIT
+- **Status:** **planned-fix** (user chose Option B — post then queue retry, 2026-04-17)
+- **Location:** main.py:2932-2933
+- **Fix:** On failure, queue to DDB `ARCHIVE_RETRY_QUEUE`; background worker retries every 5 min with backoff; alert admin after 10 failures; UI badge + admin dashboard.
+
+#### [ISSUE-044] Entrata response parsing is string-heuristic
+- **Severity:** P1 — Scope: TRUST / SAFETY
+- **Status:** **planned-fix** (user approved canary 2026-04-17; blocked on Entrata sandbox spike)
+- **Location:** main.py:1-52 (`_entrata_post_succeeded`)
+- **Problem:** Defensive but fragile to Entrata API changes; silent classification errors.
+- **Fix:** Daily canary Lambda posts test invoice, asserts classification + response schema, alerts on drift. Baseline schema stored in DDB for evolution. Prereq: sandbox/test env availability.
+
+#### [ISSUE-045] No post-hoc verification that Entrata has the invoice (line-item level)
+- **Severity:** P2 → **P1** (upgraded per user clarification — line-level verification catches GL-swap-class bugs)
+- **Scope:** TRUST / DATA INTEGRITY
+- **Status:** **planned-fix** (user chose Option A + line-level verification, 2026-04-17)
+- **Problem:** After successful post, we trust Entrata response without verification. Silent line-level drift (e.g., GL swap — electric line posted to water GL) can leave invoice totals correct but downstream billback and master-bills wrong. Manual sync verify catches totals only, not line assignments.
+- **Fix:** New `jrk-entrata-post-verifier` Lambda runs every 10 min, queries Entrata for recent posts, compares LINE-BY-LINE (count, amount, GL, service period). Writes `verified_at`+`verified_status`+per-line diff back to S7. P0 SNS alert on GL drift / mismatch. Requires infra approval + Entrata API spike for line-item read.
+
+#### [ISSUE-046] Bulk post sequential; AppRunner timeout = partial failures
+- **Severity:** P2 → **P1** (upgraded — this is the critical money path)
+- **Scope:** PERF / UX / DATA
+- **Status:** **planned-fix** (user approved 2026-04-17)
+- **Location:** main.py:2684 for-loop
+- **Fix:** Canonical async job-queue subsystem: 202 + job_id + DDB-backed status + background worker + polling + cancel + reaper. 1-2 days focused work. Biggest Module 3 change.
+
+#### [ISSUE-047] Validation warnings don't block; no informational-vs-blocking split
+- **Severity:** P2 — Scope: PROCESS
+- **Status:** **planned-fix** (user decided 3-tier with rework=supervisor, 2026-04-17)
+- **Location:** main.py:2076-2163
+- **Fix:** 3-tier warning levels (blocking / informational / supervisor-required). Only rework reposts need supervisor approval. Server re-validates on post to prevent bypass.
+
+#### [ISSUE-048] S6→S7 move duplicated between post and advance
+- **Severity:** P3 — Scope: TECH-DEBT
+
+#### [ISSUE-049] `_entrata_post_succeeded` defined before imports
+- **Severity:** P4 — Scope: TECH-DEBT
+- **Location:** main.py:1
+
+#### [ISSUE-050] Heavy in-place mutation of `rows` during post flow
+- **Severity:** P3 — Scope: TECH-DEBT
+
+#### [ISSUE-051] Error hints don't deep-link to Entrata
+- **Severity:** P3 — Scope: UX
+
+#### [ISSUE-052] `locked_at` string comparison is fragile
+- **Severity:** P4 — Scope: BUG
+- **Proposed fix:** Use epoch seconds (`ttl_epoch` already stored).
+
+#### [ISSUE-053] Posted metadata DDB write is best-effort
+- **Severity:** P3 — Scope: JTBD
+
+#### [ISSUE-055] 🚨 Entrata Core API key hardcoded in source (production)
+- **Severity:** **P0** — Scope: SECURITY
+- **Status:** **open — rotation required**
+- **Location:** `entrata_send_invoices_prototype.py:23` (also duplicated at `bill_review_app/entrata_send_invoices_prototype.py:23`)
+- **Problem:** Entrata sendInvoices API key is a hardcoded UUID in source; file is deployed to production per `deploy_app.ps1:24`. Anyone with git read access can post invoices as JRK. Key is in git history forever — even rotating now leaves old key visible in all historical commits. Commit `9071511` "Remove hardcoded API keys" missed this file.
+- **Fix:**
+  1. **Immediate: rotate key at Entrata** (invalidate current, obtain new)
+  2. Store new key in Secrets Manager (extend `jrk/entrata_core` or add `jrk/entrata_send_invoices`)
+  3. Replace hardcoded constant with `_get_api_key()` reading from Secrets Manager
+  4. Remove hardcoded `ENTRATA_BASE_URL` / `ENTRATA_ORG` too — move to secret or env
+  5. Delete hardcoded local test paths (DEFAULT_TEST_JSONL, DEFAULT_VENDOR_CACHE — Craig's machine paths)
+  6. Audit: who has repo access; any other credentials that should be preemptively rotated
+
+#### [ISSUE-054] No recovery path for "Entrata posted but response didn't arrive"
+- **Severity:** **P1** — Scope: DATA INTEGRITY
+- **Status:** **planned-fix** (user approved disambiguation flow 2026-04-17)
+- **Problem:** Network drop after Entrata creates invoice → local state shows FAILED → user retries → Entrata says "duplicate" → confusing repost flow. Conflated with genuine duplicates.
+- **Fix:** On duplicate response, query Entrata for (account, bill_date). Classify as `same_attempt_succeeded` (mark POSTED), `genuine_duplicate` (enhanced modal with comparison + reason), or `entrata_inconsistent` (admin alert). Shares `_entrata_fetch_invoice` helper with ISSUE-045 verifier Lambda.
+
 Template for new entries:
 
 ```
@@ -333,7 +449,7 @@ Template for new entries:
 
 These are issues already recorded in existing docs that should be verified/updated during review (not new discoveries):
 
-- **[PRE-01] Hardcoded API keys** — `CODE_AUDIT_2026_04_14.md` flagged; commit `9071511` claims fix. Verify during review.
+- **[PRE-01] Hardcoded API keys** — `CODE_AUDIT_2026_04_14.md` flagged; commit `9071511` claims fix. **VERIFIED INCOMPLETE 2026-04-17: Entrata Core API key still hardcoded in `entrata_send_invoices_prototype.py:23` (see ISSUE-055).**
 - **[PRE-02] 5 endpoints return 500s in production** — per `HEALTH_AUDIT_2026_04_10.md` (IAM gaps for `jrk-bill-ai-suggestions`, `jrk-bill-billback-master` tables; missing `import pytz`). Status unknown — check during review.
 - **[PRE-03] 8 endpoints time out** — per `HEALTH_AUDIT_2026_04_10.md`. Should be addressed via caching per memory guidance.
 - **[PRE-04] Master bills data quality** — `MASTER_BILLS_DATA_QUALITY.md`: 5 charge code/utility type mismatches in 756 bills (ENVF vs ENVFE, GASIN on water, etc.).
