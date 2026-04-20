@@ -10304,7 +10304,10 @@ def _compute_workflow_data() -> dict:
             if last_bill_period_start and last_bill_period_end:
                 service_period_days = (last_bill_period_end - last_bill_period_start).days
                 if service_period_days > 0 and last_bill_date:
-                    next_expected = last_bill_date + dt.timedelta(days=service_period_days)
+                    # Clamp to at least days_config to prevent very short or erroneous service
+                    # periods from causing false VERY_LATE status (mirrors completion tracker logic)
+                    _effective_period = max(service_period_days, days_config)
+                    next_expected = last_bill_date + dt.timedelta(days=_effective_period)
                     calculation_method = "actual"
 
             # Fallback to daysBetweenBills if service period calc failed
@@ -10313,9 +10316,12 @@ def _compute_workflow_data() -> dict:
                 service_period_days = days_config
                 calculation_method = "fallback"
 
-        # If no bill found at all, assume overdue (next_expected = today - days_config)
+        # If no bill found at all, treat as due today rather than already overdue.
+        # Previously used today - days_config which falsely showed accounts as VERY_LATE
+        # (e.g., a 30-day account would show "Next Expected: March 22" and 30 days overdue)
+        # when in fact we simply have no billing history to know when the next bill is due.
         if not next_expected:
-            next_expected = today - dt.timedelta(days=days_config) if days_config > 0 else today
+            next_expected = today
             service_period_days = days_config
             calculation_method = "no_history"
 
