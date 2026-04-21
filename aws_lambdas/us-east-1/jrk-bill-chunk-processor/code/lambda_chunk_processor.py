@@ -88,7 +88,7 @@ You are an expert utility-bill parser. Output ONLY a JSON array of objects. Each
 2. Extract EVERY dollar amount as a separate line item - charges, taxes, fees, credits, adjustments
 3. The "description" field MUST be text describing the charge (e.g., "Distribution Charge"), NOT a date or number
 4. The "charge" field MUST be a number (the dollar amount)
-5. For Southern California Edison and similar multi-page bills, extract ALL line items from EVERY service address
+5. For DTE Energy, Southern California Edison, and similar multi-page bills with multiple service addresses: extract ALL line items from EVERY page — including detail pages that expand on summary charges shown on earlier pages. Never skip a page because its charges were summarized elsewhere.
 6. DO NOT return only "Total Due" - extract the breakdown of charges
 
 **WHAT TO EXTRACT:**
@@ -470,16 +470,23 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
             context_service_state = state_zip_match.group(1).strip()
             context_service_zip = state_zip_match.group(2).strip()
 
+        fallback_addr = context_service_address or "(use address visible on this page)"
         context_note = f"""IMPORTANT: This is chunk {chunk_num} of {total_chunks}. Previous chunks contained:
 {previous_context}
 
-**CRITICAL SERVICE ADDRESS REQUIREMENT**:
-- The service address from chunk 1 is: {context_service_address}
-- You MUST include this EXACT service address on EVERY row you output from this chunk
-- NEVER return an empty service_address field - always use the address from chunk 1
-- If this chunk shows a different service address, use that one; otherwise use: {context_service_address}
+**SERVICE ADDRESS FOR THIS CHUNK**:
+- This bill may serve MULTIPLE service addresses across different pages (e.g., DTE Energy multi-unit accounts).
+- Look at THIS page to determine the correct service address for the charges shown here.
+- If this page shows its own service address or unit number, use that address on every row from this chunk.
+- If no service address is visible on this page, fall back to: {fallback_addr}
+- NEVER leave service_address empty — always fill it with whatever you can identify.
 
-Use the vendor, account number, bill dates, and service address from the previous context and include them on EVERY row you output from this chunk. Continue extracting line items from this chunk, maintaining consistency with previous data."""
+**CRITICAL — ALWAYS extract ALL line items from THIS page**, even if:
+- A previous chunk captured summary totals for this service address
+- This looks like a detail or continuation page for charges already summarized earlier
+- The service address here differs from previous chunks
+
+Use the vendor, account number, and bill dates from the previous context on EVERY row you output from this chunk."""
     else:
         context_note = f"This is chunk {chunk_num} of {total_chunks} from a multi-page invoice. Extract header information (vendor, account, dates, addresses) and include them on EVERY row."
 
@@ -501,6 +508,7 @@ Use the vendor, account number, bill dates, and service address from the previou
     # Retry loop with key rotation and exponential backoff
     last_error = None
     prev_content_errors = []  # Track validation errors for retry feedback
+    empty_retries = 0  # Track retries for empty (0-row) responses
 
     for attempt in range(MAX_ATTEMPTS):
         # --- Time-budget guard: bail if we don't have enough time for another attempt ---
@@ -540,7 +548,7 @@ Use the vendor, account number, bill dates, and service address from the previou
                 "has_prev_errors": len(prev_content_errors) > 0
             }))
 
-            reply_text = call_gemini_api(api_key, pdf_bytes, current_prompt, timeout=90)
+            reply_text = call_gemini_api(api_key, pdf_bytes, current_prompt, timeout=120)
 
             # Success! Parse the response
             if reply_text.upper() == "EMPTY":
@@ -647,8 +655,29 @@ Use the vendor, account number, bill dates, and service address from the previou
                 else:
                     rows.append(row)
 
-            # Check if we need to retry due to too many validation failures
+            # Check if we need to retry due to completely empty response (0 rows, no validation errors)
+            # This handles cases where Gemini returns [] for pages that clearly have content
+            # (e.g., DTE multi-address detail pages where the model incorrectly skips the page)
             total_rows = len(rows) + len(invalid_rows)
+            if total_rows == 0 and empty_retries < 3 and attempt < MAX_ATTEMPTS - 1:
+                empty_retries += 1
+                print(json.dumps({
+                    "warning": "empty_response_retrying",
+                    "chunk": chunk_num,
+                    "attempt": attempt + 1,
+                    "empty_retry": empty_retries,
+                }))
+                prev_content_errors = [
+                    "Your previous response returned 0 line items (empty array). "
+                    "This page DOES contain billing charges. Look carefully at all dollar amounts, "
+                    "fees, taxes, and service charges on this page and extract each as a separate row. "
+                    "Do NOT return an empty array — if this is a detail page for a service address, "
+                    "extract every charge shown even if a summary appeared on a previous page."
+                ]
+                time.sleep(BASE_BACKOFF_SECONDS)
+                continue  # Retry with stronger instructions
+
+            # Check if we need to retry due to too many validation failures
             if len(invalid_rows) > MAX_DROPPED_ROWS_BEFORE_RETRY and attempt < MAX_ATTEMPTS - 1:
                 print(json.dumps({
                     "warning": "too_many_validation_failures_retrying",
