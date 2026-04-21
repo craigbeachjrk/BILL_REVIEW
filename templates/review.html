@@ -277,6 +277,21 @@
       <div class="resizer" id="resizer" title="Drag to resize"></div>
       <div class="card">
         <h1>Invoice Review</h1>
+        {% if missing_chunk_pages %}
+        <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px">
+          <span style="font-size:18px;flex-shrink:0">&#9888;</span>
+          <div>
+            <div style="font-weight:600;color:#dc2626;font-size:13px">Missing Page Data — Parser Failed</div>
+            <div style="font-size:12px;color:#7f1d1d;margin-top:3px">
+              Page{% if missing_chunk_pages|length > 1 %}s{% endif %}
+              <strong>{{ missing_chunk_pages | join(', ') }}</strong>
+              could not be parsed (API timeout after 10 retries).
+              Sending for rework will re-attempt but may time out again.
+              If this keeps failing, the PDF page may be too complex — try splitting the PDF or contact support.
+            </div>
+          </div>
+        </div>
+        {% endif %}
         <div class="toolbar">
           <button class="btn secondary" type="button" onclick="sendRework()">Send Back to Parser</button>
           <button class="btn" type="button" id="saveHeaderBtn" onclick="manualSaveHeader()">Save Header</button>
