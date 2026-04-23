@@ -2410,7 +2410,7 @@ function openNoteModal(accountKey, propName, vendorName, acctNum) {
   const existing = allData.find(r => r.accountKey === accountKey);
   const note = existing && existing.note;
   document.getElementById('noteReasonCode').value = (note && note.reasonCode) || '';
-  document.getElementById('noteText').value = (note && note.notes) || '';
+  document.getElementById('noteText').value = (note && note.customNote) || '';
   document.getElementById('noteModal').style.display = 'flex';
 }
 
@@ -2418,7 +2418,7 @@ async function saveNote() {
   const fd = new FormData();
   fd.append('accountKey', currentNoteKey);
   fd.append('reasonCode', document.getElementById('noteReasonCode').value);
-  fd.append('notes', document.getElementById('noteText').value);
+  fd.append('customNote', document.getElementById('noteText').value);
   try {
     const resp = await fetch('/api/workflow/notes', {method:'POST', body:fd});
     const data = await resp.json();
@@ -2427,7 +2427,7 @@ async function saveNote() {
       document.getElementById('noteModal').style.display = 'none';
       const row = allData.find(r => r.accountKey === currentNoteKey);
       if (row) {
-        row.note = {reasonCode: document.getElementById('noteReasonCode').value, notes: document.getElementById('noteText').value};
+        row.note = {reasonCode: document.getElementById('noteReasonCode').value, customNote: document.getElementById('noteText').value};
         row.hasNote = true;
       }
       applyTableFilters();
