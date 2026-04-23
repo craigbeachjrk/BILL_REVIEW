@@ -25844,6 +25844,19 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
     # Extract submitter email from row data for "Email Poster" button
     submitter = str(rows[0].get("Submitter", "") or rows[0].get("PostedBy", "") or rows[0].get("SubmittedBy", "")).strip()
 
+    # Detect missing chunks for LARGEFILE bills (chunk numbers that have no parsed rows)
+    # If chunk 1 and 3 are present but chunk 2 is absent, page 2 failed to parse
+    present_chunks: set[int] = set()
+    for r in rows:
+        c = r.get("source_chunk") or 0
+        if isinstance(c, (int, float)) and c > 0:
+            present_chunks.add(int(c))
+    missing_chunk_pages: list[int] = []
+    if present_chunks:
+        for c in range(1, max(present_chunks) + 1):
+            if c not in present_chunks:
+                missing_chunk_pages.append(c)
+
     return templates.TemplateResponse(
         "review.html",
         {
@@ -25855,6 +25868,7 @@ def review_view(request: Request, date: str, pdf_id: str, user: str = Depends(re
             "lines": lines,
             "user": user,
             "submitter": submitter,
+            "missing_chunk_pages": missing_chunk_pages,
         },
     )
 
