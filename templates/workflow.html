@@ -117,6 +117,10 @@
 
     /* Generated timestamp */
     .meta-info{color:rgba(255,255,255,.6);font-size:11px}
+    /* Tracker View Buttons */
+    .tracker-view-btn{padding:10px 24px;background:transparent;border:none;border-radius:9px;cursor:pointer;font-weight:600;font-size:13px;color:rgba(255,255,255,.7);transition:all 0.15s;text-align:center;min-width:140px}
+    .tracker-view-btn:hover{background:rgba(255,255,255,.15);color:#fff}
+    .tracker-view-btn.active{background:var(--glass);color:#0f172a}
 
     /* ===== Weekly Targets Row ===== */
     .weekly-targets{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
@@ -396,37 +400,27 @@
     <!-- COMPLETION TRACKER TAB -->
     <div class="tab-content" id="trackerTab">
 
-      <!-- Row 1: Status Summary Cards + Progress -->
-      <div class="summary-cards" id="statusCards">
-        <div class="summary-card very-late" data-status="VERY_LATE">
-          <span class="count" id="ctVeryLate">-</span>
-          <span class="label">Very Late (15+)</span>
+      <!-- Row 1: View Tabs + Progress -->
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="display:flex;gap:4px;background:rgba(0,0,0,.15);border-radius:12px;padding:4px">
+          <button class="tracker-view-btn active" id="ctViewPastDue" onclick="setTrackerView('past_due')">
+            <span style="font-size:18px;font-weight:700;display:block" id="ctPastDueCount">-</span>
+            <span style="font-size:11px">Needs Attention</span>
+          </button>
+          <button class="tracker-view-btn" id="ctViewOnTrack" onclick="setTrackerView('on_track')">
+            <span style="font-size:18px;font-weight:700;display:block" id="ctOnTrackCount">-</span>
+            <span style="font-size:11px">On Track / Complete</span>
+          </button>
         </div>
-        <div class="summary-card late" data-status="LATE">
-          <span class="count" id="ctLate">-</span>
-          <span class="label">Late (8-14)</span>
-        </div>
-        <div class="summary-card slightly-late" data-status="SLIGHTLY_LATE">
-          <span class="count" id="ctSlightlyLate">-</span>
-          <span class="label">Slightly Late (1-7)</span>
-        </div>
-        <div class="summary-card due-soon" data-status="DUE_SOON">
-          <span class="count" id="ctDueSoon">-</span>
-          <span class="label">Due Soon</span>
-        </div>
-        <div class="summary-card on-track" data-status="ON_TRACK">
-          <span class="count" id="ctOnTrack">-</span>
-          <span class="label">On Track</span>
-        </div>
-        <div class="summary-card complete" data-status="COMPLETE">
-          <span class="count" id="ctComplete">-</span>
-          <span class="label">Complete</span>
-        </div>
-        <div class="summary-card all-card" data-status="ALL">
-          <span class="count" id="ctAll">-</span>
-          <span class="label">All</span>
-        </div>
-        <div class="overall-progress">
+        <!-- Hidden elements to keep updateStatusCards() working -->
+        <span id="ctVeryLate" style="display:none">0</span>
+        <span id="ctLate" style="display:none">0</span>
+        <span id="ctSlightlyLate" style="display:none">0</span>
+        <span id="ctDueSoon" style="display:none">0</span>
+        <span id="ctOnTrack" style="display:none">0</span>
+        <span id="ctComplete" style="display:none">0</span>
+        <span id="ctAll" style="display:none">0</span>
+        <div class="overall-progress" style="margin-left:auto">
           <div class="bar-wrap"><div class="bar-fill green" id="overallBar" style="width:0%"></div></div>
           <span class="pct" id="overallPct">0%</span>
           <button class="btn small" id="recalcBtn" title="Recalculate from S3">Recalculate</button>
@@ -686,7 +680,8 @@
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 const CURRENT_USER = '{{ user }}';
 let trackerData = null;
-let activeStatus = null;
+let activeStatus = null;  // kept for legacy compat but no longer used in tracker UI
+let trackerView = 'past_due';  // 'past_due' | 'on_track'
 let activeAp = null;
 let searchText = '';
 
@@ -759,23 +754,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // Preserve expanded cards and scroll position before re-render
         const container = document.getElementById('trackerContent');
         const scrollTop = container ? container.scrollTop : 0;
-        const expanded = new Set();
-        if (container) {
-          container.querySelectorAll('.property-card.expanded').forEach(el => {
-            const title = el.querySelector('.property-header')?.textContent?.trim();
-            if (title) expanded.add(title);
-          });
-        }
+        const expanded = getExpandedCards();
         trackerData = fresh;
         updateStatusCards();
         renderTracker();
-        // Restore expanded state
-        if (container && expanded.size > 0) {
-          container.querySelectorAll('.property-card').forEach(el => {
-            const title = el.querySelector('.property-header')?.textContent?.trim();
-            if (title && expanded.has(title)) el.classList.add('expanded');
-          });
-        }
+        restoreExpandedCards(expanded);
         // Restore scroll
         if (container) container.scrollTop = scrollTop;
       }
@@ -1758,19 +1741,14 @@ function dir_hideLoading() { document.getElementById('dir_loadingOverlay').class
    COMPLETION TRACKER
    ============================================================ */
 
+function setTrackerView(view) {
+  trackerView = view;
+  document.getElementById('ctViewPastDue').classList.toggle('active', view === 'past_due');
+  document.getElementById('ctViewOnTrack').classList.toggle('active', view === 'on_track');
+  renderTracker();
+}
+
 function initTrackerEvents() {
-  document.querySelectorAll('#statusCards .summary-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const status = card.dataset.status;
-      if (activeStatus === status) { activeStatus = null; card.classList.remove('active'); }
-      else {
-        document.querySelectorAll('#statusCards .summary-card').forEach(c => c.classList.remove('active'));
-        activeStatus = status;
-        card.classList.add('active');
-      }
-      renderTracker();
-    });
-  });
   document.getElementById('trackerSearch').addEventListener('input', e => { searchText = e.target.value.toLowerCase(); renderTracker(); });
   document.getElementById('recalcBtn').addEventListener('click', () => { loadTrackerData(true); });
   document.getElementById('refreshBtn').addEventListener('click', () => { loadTrackerData(); });
@@ -1860,6 +1838,7 @@ async function loadTrackerData(forceRefresh, _retryCount) {
 function updateStatusCards() {
   if (!trackerData) return;
   const s = trackerData.summary.by_status;
+  // Hidden elements (kept for legacy compat)
   document.getElementById('ctVeryLate').textContent = s.VERY_LATE || 0;
   document.getElementById('ctLate').textContent = s.LATE || 0;
   document.getElementById('ctSlightlyLate').textContent = s.SLIGHTLY_LATE || 0;
@@ -1867,6 +1846,11 @@ function updateStatusCards() {
   document.getElementById('ctOnTrack').textContent = s.ON_TRACK || 0;
   document.getElementById('ctComplete').textContent = s.COMPLETE || 0;
   document.getElementById('ctAll').textContent = trackerData.summary.total_account_months || 0;
+  // Update 2-tab counts
+  const pastDueCount = (s.VERY_LATE || 0) + (s.LATE || 0) + (s.SLIGHTLY_LATE || 0);
+  const onTrackCount = (s.DUE_SOON || 0) + (s.ON_TRACK || 0) + (s.COMPLETE || 0);
+  document.getElementById('ctPastDueCount').textContent = pastDueCount;
+  document.getElementById('ctOnTrackCount').textContent = onTrackCount;
   const pct = trackerData.summary.percentage || 0;
   const bar = document.getElementById('overallBar');
   bar.style.width = pct + '%';
@@ -1898,6 +1882,28 @@ function toggleApFilter(apName) {
   renderTracker();
 }
 
+function getExpandedCards() {
+  const expanded = new Set();
+  const container = document.getElementById('trackerContent');
+  if (container) {
+    container.querySelectorAll('.property-card.expanded').forEach(el => {
+      const title = el.querySelector('.property-name')?.textContent?.trim();
+      if (title) expanded.add(title);
+    });
+  }
+  return expanded;
+}
+
+function restoreExpandedCards(expanded) {
+  if (!expanded || !expanded.size) return;
+  const container = document.getElementById('trackerContent');
+  if (!container) return;
+  container.querySelectorAll('.property-card').forEach(el => {
+    const title = el.querySelector('.property-name')?.textContent?.trim();
+    if (title && expanded.has(title)) el.classList.add('expanded');
+  });
+}
+
 function renderTracker() {
   if (!trackerData) return;
   const container = document.getElementById('trackerContent');
@@ -1924,9 +1930,12 @@ function renderTracker() {
     });
   }
 
+  const PAST_DUE_STATUSES = new Set(['VERY_LATE', 'LATE', 'SLIGHTLY_LATE']);
+  const ON_TRACK_STATUSES = new Set(['DUE_SOON', 'ON_TRACK', 'COMPLETE']);
   let filteredProps = properties.map(p => {
     let items = p.items || [];
-    if (activeStatus && activeStatus !== 'ALL') items = items.filter(it => it.status_label === activeStatus);
+    if (trackerView === 'past_due') items = items.filter(it => PAST_DUE_STATUSES.has(it.status_label));
+    else if (trackerView === 'on_track') items = items.filter(it => ON_TRACK_STATUSES.has(it.status_label));
     if (searchText) {
       items = items.filter(it =>
         (it.vendor_name || '').toLowerCase().includes(searchText) ||
@@ -2129,7 +2138,9 @@ async function ct_confirmSkip() {
           }
         }
       }
+      const expanded = getExpandedCards();
       renderTracker();
+      restoreExpandedCards(expanded);
     }
   } catch (e) {
     showToast('Error: ' + e.message, 'err');
