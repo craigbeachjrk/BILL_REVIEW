@@ -527,6 +527,7 @@
     let ubiUnassignedBills = [];
     let ubiAssignedData = [];
     let ubiPeriods = [];
+    let assignableUbiPeriods = [];
     let ubiMapping = [];
     let accountsToTrack = [];
     let chargeCodes = [];
@@ -1913,7 +1914,24 @@
       return periods;
     }
 
+    // Narrow window for ASSIGN / REASSIGN inputs: 6 months back through 12 months
+    // forward of today. Prevents typos like assigning a 2026 bill to 04/2025.
+    // (The filter dropdown still uses the full ubiPeriods range so old wrong
+    // assignments are reachable for cleanup.)
+    function generateAssignableUbiPeriods() {
+      const periods = [];
+      const today = new Date();
+      for (let offset = -6; offset <= 12; offset++) {
+        const date = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        periods.push(`${month}/${year}`);
+      }
+      return periods;
+    }
+
     ubiPeriods = generateUbiPeriods();
+    assignableUbiPeriods = generateAssignableUbiPeriods();
 
     // Selected periods for multi-select
     let selectedPeriods = [];
@@ -1926,14 +1944,16 @@
       assignedFilter.innerHTML = '<option value="">-- Select Period --</option>';
       periodCheckboxList.innerHTML = '';
 
+      // Filter dropdown gets ALL historical periods (so users can find/clean up
+      // old wrong assignments). Assignment checkboxes only get the narrow window.
       ubiPeriods.forEach(period => {
-        // Assigned filter dropdown
         const opt2 = document.createElement('option');
         opt2.value = period;
         opt2.textContent = period;
         assignedFilter.appendChild(opt2);
+      });
 
-        // Period checkbox
+      assignableUbiPeriods.forEach(period => {
         const label = document.createElement('label');
         label.style.display = 'block';
         label.style.padding = '6px 8px';
@@ -3348,6 +3368,15 @@
       // Generate the periods starting from suggested period
       const periods = generateMultiMonthPeriods(suggestedPeriod, months);
 
+      // Block out-of-window suggestions (stale wrong assignments cascade through
+      // the suggestion logic — don't let one bad period seed more bad periods).
+      const oob = periods.filter(p => !assignableUbiPeriods.includes(p));
+      if (oob.length > 0) {
+        const range = `${assignableUbiPeriods[0]} - ${assignableUbiPeriods[assignableUbiPeriods.length - 1]}`;
+        showToast(`Suggested period ${oob[0]} is outside the assignable range (${range}). Open the period picker and choose manually.`, 'err');
+        return;
+      }
+
       try {
         const fd = new FormData();
         fd.append('ubi_periods', periods.join(','));
@@ -3703,8 +3732,7 @@
       const currentPeriodFilter = document.getElementById('assignedPeriodFilter').value;
       periodSelect.innerHTML = '<option value="">-- Select Period --</option>';
 
-      ubiPeriods.forEach(period => {
-        // Show all periods except the current filter (if any)
+      assignableUbiPeriods.forEach(period => {
         const opt = document.createElement('option');
         opt.value = period;
         opt.textContent = period;
