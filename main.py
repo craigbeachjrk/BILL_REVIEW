@@ -3931,6 +3931,8 @@ _scraper_account_map: dict[str, dict] = {}  # account_uuid -> {account_id, provi
 _scraper_api_integrations: list[dict] = []  # Full integration metadata from API
 _scraper_api_ts: float = 0  # Timestamp of last API fetch
 _SCRAPER_API_TTL = 300  # 5 minutes
+_scraper_integration_snapshot: frozenset = frozenset()  # integration UUIDs when account map was last built
+_SCRAPER_MAP_LOCK = threading.Lock()  # Prevents concurrent account map rebuilds
 
 def _fetch_scraper_integrations() -> list[dict]:
     """Fetch integration metadata from scraper API, with caching."""
@@ -3956,52 +3958,70 @@ def _fetch_scraper_integrations() -> list[dict]:
         return _scraper_api_integrations or []
 
 def _load_scraper_mappings():
-    """Load scraper UUID-to-provider mappings from scraper API (with CSV fallback)."""
-    global _scraper_integration_map, _scraper_account_map
+    """Load scraper UUID-to-provider mappings, refreshing when API integrations change.
 
-    if _scraper_integration_map:
-        return  # Already loaded
+    _fetch_scraper_integrations() caches API results for 5 minutes. When that cache
+    refreshes and the set of integrations has changed (added or removed), this function
+    rebuilds _scraper_integration_map and _scraper_account_map so that SCR badges
+    reflect the current scraper state rather than a stale snapshot.
+    """
+    global _scraper_integration_map, _scraper_account_map, _scraper_integration_snapshot
 
-    # Try API first
+    # Fetch current integrations (TTL-cached at 5-min intervals)
     integrations = _fetch_scraper_integrations()
+
     if integrations:
+        # Build a fresh integration map from current API data
+        new_map: dict[str, str] = {}
         for integ in integrations:
             uuid = integ.get("id", "").strip()
             provider = integ.get("provider", "").strip()
             if uuid and provider:
-                _scraper_integration_map[uuid] = provider
-        print(f"[SCRAPER] Loaded {len(_scraper_integration_map)} integration mappings from API")
-        # Build account map by scanning S3 folder names (accounts are real numbers now)
-        _build_account_map_from_s3()
-        return
+                new_map[uuid] = provider
 
-    # Fallback: CSV files (legacy)
-    import csv
-    import os as _os
-    base_dir = _os.path.dirname(_os.path.abspath(__file__))
+        if new_map:
+            new_snapshot = frozenset(new_map.keys())
+            # Rebuild account map only when integrations have changed or map is empty
+            if new_snapshot != _scraper_integration_snapshot or not _scraper_account_map:
+                with _SCRAPER_MAP_LOCK:
+                    # Double-check after acquiring lock to avoid duplicate rebuilds
+                    if frozenset(new_map.keys()) != _scraper_integration_snapshot or not _scraper_account_map:
+                        _scraper_integration_map.clear()
+                        _scraper_integration_map.update(new_map)
+                        _scraper_account_map.clear()
+                        _build_account_map_from_s3()
+                        _scraper_integration_snapshot = frozenset(new_map.keys())
+                        print(f"[SCRAPER] Refreshed: {len(_scraper_integration_map)} integrations, {len(_scraper_account_map)} accounts")
+            return
 
-    integration_csv = _os.path.join(base_dir, "integration_uuid_provider_map.csv")
-    if _os.path.exists(integration_csv):
-        with open(integration_csv, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                uuid = row.get('integration_uuid', '').strip()
-                provider = row.get('provider', '').strip()
-                if uuid and provider:
-                    _scraper_integration_map[uuid] = provider
-        print(f"[SCRAPER] Loaded {len(_scraper_integration_map)} integration mappings from CSV")
+    # API returned nothing — fall back to CSV if nothing is loaded yet
+    if not _scraper_integration_map:
+        import csv
+        import os as _os
+        base_dir = _os.path.dirname(_os.path.abspath(__file__))
 
-    account_csv = _os.path.join(base_dir, "account_uuid_provider_map.csv")
-    if _os.path.exists(account_csv):
-        with open(account_csv, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                uuid = row.get('account_uuid', '').strip()
-                account_id = row.get('account_id', '').strip()
-                provider = row.get('provider', '').strip()
-                if uuid and account_id:
-                    _scraper_account_map[uuid] = {'account_id': account_id, 'provider': provider}
-        print(f"[SCRAPER] Loaded {len(_scraper_account_map)} account mappings from CSV")
+        integration_csv = _os.path.join(base_dir, "integration_uuid_provider_map.csv")
+        if _os.path.exists(integration_csv):
+            with open(integration_csv, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    uuid = row.get('integration_uuid', '').strip()
+                    provider = row.get('provider', '').strip()
+                    if uuid and provider:
+                        _scraper_integration_map[uuid] = provider
+            print(f"[SCRAPER] Loaded {len(_scraper_integration_map)} integration mappings from CSV")
+
+        account_csv = _os.path.join(base_dir, "account_uuid_provider_map.csv")
+        if _os.path.exists(account_csv):
+            with open(account_csv, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    uuid = row.get('account_uuid', '').strip()
+                    account_id = row.get('account_id', '').strip()
+                    provider = row.get('provider', '').strip()
+                    if uuid and account_id:
+                        _scraper_account_map[uuid] = {'account_id': account_id, 'provider': provider}
+            print(f"[SCRAPER] Loaded {len(_scraper_account_map)} account mappings from CSV")
 
 _UNLINKED_SENTINEL = "__unlinked__"
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
