@@ -10200,16 +10200,20 @@ def _compute_workflow_data() -> dict:
     stage4_keys = list(_iter_stage_objects_by_month(STAGE4_PREFIX, months, suffix_filter=".jsonl"))
     stage6_keys = list(_iter_stage_objects_by_month(STAGE6_PREFIX, months, suffix_filter=".jsonl"))
     stage7_keys = list(_iter_stage_objects_by_month(POST_ENTRATA_PREFIX, months, suffix_filter=".jsonl"))
+    stage8_keys = list(_iter_stage_objects_by_month(UBI_ASSIGNED_PREFIX, months, suffix_filter=".jsonl"))
+    stage9_keys = list(_iter_stage_objects_by_month(FLAGGED_REVIEW_PREFIX, months, suffix_filter=".jsonl"))
     archive_keys = list(_iter_stage_objects_by_month(HIST_ARCHIVE_PREFIX, months, suffix_filter=".jsonl"))
 
-    print(f"[_compute_workflow_data] Found keys: S4={len(stage4_keys)}, S6={len(stage6_keys)}, S7={len(stage7_keys)}, Archive={len(archive_keys)}")
+    print(f"[_compute_workflow_data] Found keys: S4={len(stage4_keys)}, S6={len(stage6_keys)}, S7={len(stage7_keys)}, S8={len(stage8_keys)}, S9={len(stage9_keys)}, Archive={len(archive_keys)}")
 
     # Only read FIRST record from each file (we just need header info: bill date, property, vendor, account)
     stage4 = _read_first_record_from_s3(stage4_keys)
     stage6 = _read_first_record_from_s3(stage6_keys)
     stage7 = _read_first_record_from_s3(stage7_keys)
+    stage8 = _read_first_record_from_s3(stage8_keys)
+    stage9 = _read_first_record_from_s3(stage9_keys)
     archive = _read_first_record_from_s3(archive_keys)
-    print(f"[_compute_workflow_data] Read first records: S4={len(stage4)}, S6={len(stage6)}, S7={len(stage7)}, Archive={len(archive)}")
+    print(f"[_compute_workflow_data] Read first records: S4={len(stage4)}, S6={len(stage6)}, S7={len(stage7)}, S8={len(stage8)}, S9={len(stage9)}, Archive={len(archive)}")
 
     # Index bills by (propertyId, vendorId, accountNumber)
     def norm_rec(rec: dict) -> dict:
@@ -10244,6 +10248,8 @@ def _compute_workflow_data() -> dict:
     # Build index of latest bill per account key
     latest_bills: dict[tuple, dict] = {}
     all_records = [
+        (stage8, "UBI_ASSIGNED"),
+        (stage9, "FLAGGED"),
         (stage7, "POSTED"),
         (archive, "ARCHIVED"),
         (stage6, "PENDING"),
@@ -10348,15 +10354,15 @@ def _compute_workflow_data() -> dict:
         # Calculate days overdue and status
         days_overdue = (today - next_expected).days
 
-        if days_overdue >= 15:
+        if days_overdue >= 45:
             status = "VERY_LATE"
             urgency_score = 4
             summary["veryLate"] += 1
-        elif days_overdue >= 8:
+        elif days_overdue >= 21:
             status = "LATE"
             urgency_score = 3
             summary["late"] += 1
-        elif days_overdue >= 1:
+        elif days_overdue >= 7:
             status = "SLIGHTLY_LATE"
             urgency_score = 2
             summary["slightlyLate"] += 1
@@ -10802,11 +10808,11 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                 days_overdue = 0
             else:
                 days_overdue = (today - expected_by).days
-                if days_overdue >= 15:
+                if days_overdue >= 45:
                     status_label = "VERY_LATE"
-                elif days_overdue >= 8:
+                elif days_overdue >= 21:
                     status_label = "LATE"
-                elif days_overdue >= 1:
+                elif days_overdue >= 7:
                     status_label = "SLIGHTLY_LATE"
                 elif days_overdue >= -7:
                     status_label = "DUE_SOON"
