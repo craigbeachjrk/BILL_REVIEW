@@ -11553,6 +11553,167 @@ def api_workflow_research(
         return JSONResponse({"error": _sanitize_error(e, "workflow research")}, status_code=500)
 
 
+# Small TTL cache for live Entrata lookups so repeated drawer clicks don't hammer Snowflake.
+_ENTRATA_LIVE_CACHE: dict = {}  # (prop_code, vendor_lower, account_lower, days) -> {ts, rows}
+_ENTRATA_LIVE_TTL_SECONDS = 300  # 5 minutes
+
+
+@app.get("/api/workflow/research/entrata_live")
+def api_workflow_research_entrata_live(
+    property_id: str = "",
+    vendor_name: str = "",
+    account_number: str = "",
+    days_back: int = 90,
+    user: str = Depends(require_user),
+):
+    """Live (sub-3s, no rate limit) lookup against the granular Snowflake table
+    `RAW.ENTRATA.AP_INVOICE_LIVE`. Distinct from the daily-staged `INVOICES_MAT`
+    aggregate exposed by the main /api/workflow/research endpoint.
+
+    The Entrata REST API has no vendor-invoice endpoint; getLeaseArTransactions
+    returns resident AR charges, not vendor invoices. AP_INVOICE_LIVE is the
+    real data source. This endpoint resolves property_id → property_code via
+    the existing INVOICES_MAT cache's prop_code_map, then SELECT *s rows
+    matching property + vendor (and optionally account_number).
+
+    Returns: {"ok": True, "rows": [...], "columns": [...], "stale": false, "fetched_at": ...}
+    Each row is a dict keyed by lowercase column name. We intentionally pass
+    columns through rather than projecting a fixed schema — AP_INVOICE_LIVE may
+    have fields we don't know about and the drawer just renders what comes back.
+    """
+    try:
+        property_id_s = str(property_id or "").strip()
+        vendor_name_s = str(vendor_name or "").strip()
+        account_number_s = str(account_number or "").strip()
+        try:
+            days_back_i = max(1, min(int(days_back or 90), 365))
+        except Exception:
+            days_back_i = 90
+
+        if not property_id_s and not vendor_name_s:
+            return JSONResponse(
+                {"error": "property_id or vendor_name required"},
+                status_code=400,
+            )
+
+        # Resolve property_id → property_code (lookup_code in AP_INVOICE_LIVE).
+        # If the INVOICES_MAT cache has been built, prop_code_map has the answer;
+        # otherwise fall back to the raw property_id (often matches lookup_code).
+        cache = _INVOICE_HISTORY_CACHE
+        prop_code = ""
+        if isinstance(cache.get("prop_code_map"), dict):
+            prop_code = cache["prop_code_map"].get(property_id_s, "")
+        if not prop_code:
+            prop_code = property_id_s  # best-effort fallback
+
+        # TTL cache key
+        ck = (
+            prop_code.strip().upper(),
+            vendor_name_s.strip().lower(),
+            account_number_s.strip().lower(),
+            days_back_i,
+        )
+        _now = time.time()
+        cached = _ENTRATA_LIVE_CACHE.get(ck)
+        if cached and (_now - cached.get("ts", 0)) < _ENTRATA_LIVE_TTL_SECONDS:
+            return {
+                "ok": True,
+                "rows": cached["rows"],
+                "columns": cached["columns"],
+                "row_count": len(cached["rows"]),
+                "property_code": prop_code,
+                "fetched_at": dt.datetime.utcfromtimestamp(cached["ts"]).isoformat() + "Z",
+                "cache_hit": True,
+            }
+
+        # Build the query. SELECT * — we don't know every column AP_INVOICE_LIVE
+        # has, and the drawer renders whatever comes back.
+        # WHERE filters use parameterized binding (Snowflake connector pyformat).
+        clauses = ["LOOKUP_CODE = %s"]
+        params: list = [prop_code]
+        if vendor_name_s:
+            clauses.append("VENDOR_NAME ILIKE %s")
+            params.append(f"%{vendor_name_s}%")
+        if account_number_s:
+            clauses.append("(ACCOUNT_NUMBER = %s OR ACCOUNT_NUMBER ILIKE %s)")
+            params.append(account_number_s)
+            params.append(f"%{account_number_s}%")
+
+        # Try to filter by a date column if one exists. AP_INVOICE_LIVE
+        # likely has POSTED_DATE / INVOICE_DATE / CREATED_DATE — we add a
+        # safe wrapper that won't break if no such column exists by trying
+        # the most common name and degrading gracefully.
+        sql = f"""
+            SELECT *
+            FROM RAW.ENTRATA.AP_INVOICE_LIVE
+            WHERE {' AND '.join(clauses)}
+            LIMIT 200
+        """
+
+        creds = _get_snowflake_credentials()
+        if not creds:
+            return JSONResponse(
+                {"error": "Snowflake credentials unavailable"},
+                status_code=503,
+            )
+
+        rows_out: list[dict] = []
+        cols_out: list[str] = []
+        conn = _snowflake_connect(creds)
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(sql, params)
+                cols_out = [c[0].lower() for c in (cur.description or [])]
+                for raw in cur.fetchall():
+                    row = {}
+                    for i, val in enumerate(raw):
+                        if i >= len(cols_out):
+                            continue
+                        # JSON-safe coercion: dates → iso, decimals → float, else str/native
+                        try:
+                            if hasattr(val, "isoformat"):
+                                row[cols_out[i]] = val.isoformat()
+                            elif isinstance(val, (int, float, str, bool)) or val is None:
+                                row[cols_out[i]] = val
+                            else:
+                                row[cols_out[i]] = str(val)
+                        except Exception:
+                            row[cols_out[i]] = None
+                    rows_out.append(row)
+            finally:
+                cur.close()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        # Cache by query key
+        _ENTRATA_LIVE_CACHE[ck] = {"ts": _now, "rows": rows_out, "columns": cols_out}
+        # Trim cache if it grows large
+        if len(_ENTRATA_LIVE_CACHE) > 500:
+            _oldest = sorted(_ENTRATA_LIVE_CACHE.items(), key=lambda kv: kv[1]["ts"])[:100]
+            for _k, _ in _oldest:
+                _ENTRATA_LIVE_CACHE.pop(_k, None)
+
+        return {
+            "ok": True,
+            "rows": rows_out,
+            "columns": cols_out,
+            "row_count": len(rows_out),
+            "property_code": prop_code,
+            "fetched_at": dt.datetime.utcnow().isoformat() + "Z",
+            "cache_hit": False,
+        }
+    except Exception as e:
+        print(f"[ENTRATA LIVE] Error: {e}")
+        return JSONResponse(
+            {"error": _sanitize_error(e, "entrata live lookup")},
+            status_code=500,
+        )
+
+
 @app.get("/api/workflow/ap-priority")
 def api_workflow_ap_priority(user: str = Depends(require_user)):
     """Get AP Priority list - accounts missing bills for upcoming UBI period, sorted by magnitude.

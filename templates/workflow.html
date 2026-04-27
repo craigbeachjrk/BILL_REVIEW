@@ -2331,13 +2331,84 @@ function _rd_render(data) {
     ));
   }
 
+  // Live Entrata lookup section (lazy — populated only when user clicks the button)
+  parts.push(`
+    <div style="margin-bottom:14px;border-top:1px solid #e5e7eb;padding-top:10px;margin-top:10px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#475569;letter-spacing:.05em;margin-bottom:6px">Live in Entrata Core</div>
+      <div style="font-size:11px;color:#64748b;margin-bottom:6px">INVOICES_MAT above is a daily snapshot. Hit Entrata's AP_INVOICE_LIVE table directly to see what's actually there right now (1-3s).</div>
+      <button class="btn small" onclick="_rd_loadEntrataLive()" id="rd_entrataBtn" style="background:#0ea5e9;color:#fff">Look up live in Entrata Core →</button>
+      <div id="rd_entrataResult" style="margin-top:8px"></div>
+    </div>
+  `);
+
   // Search index readiness footnote
   if (!data.search_index_ready) {
     parts.push(`<div style="margin-top:8px;font-size:11px;color:#a16207;background:#fef3c7;padding:6px 8px;border-radius:6px">Pipeline index is still warming up — pipeline / fuzzy / amount-match results may be incomplete. Refresh in ~30 seconds.</div>`);
   }
 
+  // Stash context on the drawer for the live-lookup button to read
+  document.getElementById('researchDrawer').dataset.propertyId = ctx.property_id || '';
+  document.getElementById('researchDrawer').dataset.vendorName = ctx.vendor_name || '';
+  document.getElementById('researchDrawer').dataset.accountNumber = ctx.account_number || '';
+
   document.getElementById('rd_body').innerHTML = parts.join('') ||
     `<div style="color:#64748b;font-size:12px">No research signal found yet for this row.</div>`;
+}
+
+async function _rd_loadEntrataLive() {
+  const btn = document.getElementById('rd_entrataBtn');
+  const out = document.getElementById('rd_entrataResult');
+  const drawer = document.getElementById('researchDrawer');
+  if (!btn || !out || !drawer) return;
+  btn.disabled = true;
+  btn.textContent = 'Querying Snowflake…';
+  out.innerHTML = '<div style="color:#64748b;font-size:12px">Loading from RAW.ENTRATA.AP_INVOICE_LIVE…</div>';
+  const qs = new URLSearchParams({
+    property_id: drawer.dataset.propertyId || '',
+    vendor_name: drawer.dataset.vendorName || '',
+    account_number: drawer.dataset.accountNumber || '',
+  }).toString();
+  try {
+    const resp = await fetch('/api/workflow/research/entrata_live?' + qs);
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      out.innerHTML = `<div style="color:#b91c1c;font-size:12px">${escapeHtml(data.error || 'Query failed')}</div>`;
+      btn.disabled = false;
+      btn.textContent = 'Try again →';
+      return;
+    }
+    const rows = data.rows || [];
+    if (!rows.length) {
+      out.innerHTML = `<div style="color:#64748b;font-size:12px">No rows in AP_INVOICE_LIVE matching property_code <code>${escapeHtml(data.property_code || '')}</code> + vendor.</div>`;
+    } else {
+      // Surface the most useful columns first if they exist, then everything else.
+      const preferred = ['posted_date','post_date','invoice_date','invoice_number','vendor_name','account_number','amount','status','batch_id','gl_account','gl_account_name'];
+      const cols = data.columns || [];
+      const ordered = [...preferred.filter(c => cols.includes(c)), ...cols.filter(c => !preferred.includes(c))];
+      const head = ordered.map(c => `<th style="text-align:left;padding:3px 5px;font-size:10px;font-weight:600;background:#f1f5f9;border-bottom:1px solid #cbd5e1">${escapeHtml(c)}</th>`).join('');
+      const body = rows.slice(0, 50).map(r => {
+        const cells = ordered.map(c => {
+          const v = r[c];
+          const s = (v == null) ? '' : (typeof v === 'number' ? Number(v).toLocaleString() : String(v));
+          return `<td style="padding:3px 5px;font-size:11px;border-bottom:1px solid #f1f5f9;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(s)}">${escapeHtml(s)}</td>`;
+        }).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('');
+      const cacheNote = data.cache_hit
+        ? `<span style="color:#64748b;font-size:10px">(cached &lt; 5min ago)</span>`
+        : `<span style="color:#059669;font-size:10px">live</span>`;
+      out.innerHTML = `
+        <div style="font-size:11px;color:#0369a1;margin-bottom:4px">${rows.length} row${rows.length === 1 ? '' : 's'} · ${cacheNote} · ${escapeHtml(data.fetched_at || '')}</div>
+        <div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:6px"><table style="border-collapse:collapse;width:100%"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+        ${rows.length > 50 ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">Showing first 50 of ${rows.length}.</div>` : ''}`;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Refresh →';
+  } catch (e) {
+    out.innerHTML = `<div style="color:#b91c1c;font-size:12px">Error: ${escapeHtml(e.message || String(e))}</div>`;
+    btn.disabled = false;
+    btn.textContent = 'Try again →';
+  }
 }
 
 async function ct_removeAccount(account, vendor, property, el) {
