@@ -464,6 +464,21 @@
       <div id="trackerContent">
         <div class="loading">Loading completion tracker...</div>
       </div>
+      <!-- Research Drawer -->
+      <div id="researchDrawer" style="display:none;position:fixed;top:0;right:0;bottom:0;width:560px;max-width:100vw;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);z-index:300;overflow-y:auto;font-family:Inter,system-ui,sans-serif">
+        <div style="position:sticky;top:0;background:#fff;border-bottom:1px solid #e5e7eb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;z-index:1">
+          <div>
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Research</div>
+            <div id="rd_header" style="font-weight:700;font-size:14px;margin-top:2px">…</div>
+          </div>
+          <button class="btn small secondary" onclick="closeResearchDrawer()">Close</button>
+        </div>
+        <div id="rd_body" style="padding:14px 16px;color:#0f172a">
+          <div style="color:#64748b;font-size:12px">Loading…</div>
+        </div>
+      </div>
+      <div id="researchBackdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:299" onclick="closeResearchDrawer()"></div>
+
       <!-- Tracker Skip Reason Modal -->
       <div id="ct_skipModal" class="modal-overlay dir-skip-modal" style="display:none;z-index:200">
         <div class="modal-box">
@@ -472,6 +487,15 @@
           <select id="ct_skipReason" style="width:100%;padding:8px;margin:8px 0;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit">
             <option value="">Select reason...</option>
           </select>
+          <label style="display:block;font-size:11px;color:#64748b;margin-top:4px;margin-bottom:2px">Auto-clear after</label>
+          <select id="ct_skipDuration" style="width:100%;padding:8px;margin:0 0 8px 0;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit">
+            <option value="">Permanent (until manually cleared)</option>
+            <option value="3">3 days (e.g. portal down)</option>
+            <option value="7">7 days (e.g. vendor escalated)</option>
+            <option value="14">14 days</option>
+            <option value="30">30 days</option>
+          </select>
+          <div style="font-size:10px;color:#94a3b8;margin-bottom:6px">A skip auto-clears when its date passes <em>or</em> a bill arrives in the pipeline for that month — whichever comes first.</div>
           <textarea id="ct_skipNotes" placeholder="Optional notes..." style="width:100%;padding:8px;margin:8px 0;min-height:60px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
             <button class="btn secondary" onclick="ct_closeSkipModal()">Cancel</button>
@@ -2007,7 +2031,7 @@ function renderTracker() {
       const commentTag = skipDisplay ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fef3c7;color:#92400e;font-weight:600;margin-left:4px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${escapeHtml(skipDisplay)}">${escapeHtml(skipBadgeText)}</span>` : '';
 
       const dblClick = IS_ADMIN ? ` ondblclick="event.stopPropagation();ct_removeAccount('${escapeJs(item.account_number)}','${escapeJs(item.vendor_name)}','${escapeJs(prop.property_name || '')}',this)"` : '';
-      const singleClick = ` onclick="window.open('/search?account=' + encodeURIComponent('${escapeJs(item.account_number)}'), '_blank')"`;
+      const singleClick = ` onclick="openResearchDrawer('${escapeJs(prop.property_id || '')}','${escapeJs(prop.property_name || '')}','${escapeJs(item.vendor_name || '')}','${escapeJs(item.account_number)}','${escapeJs(item.month)}')"`;
       html += `<div class="account-item" title="${escapeHtml(fullLabel)}" style="cursor:pointer"${singleClick}${dblClick}>
         <div class="acct-info"><div class="acct-label">${fullLabel}${scraperTag}${commentTag}</div></div>
         <span class="month-badge ${item.status_label}" title="Expected bill period">${monthDisplay}</span>
@@ -2087,6 +2111,9 @@ function ct_openSkipModal(account, vendor, property, rawMonth, displayMonth) {
     }
   }
   document.getElementById('ct_skipNotes').value = existingNotes;
+  // Reset duration picker — each skip's expiry is set independently
+  const durSel = document.getElementById('ct_skipDuration');
+  if (durSel) durSel.value = '';
   document.getElementById('ct_skipModal').style.display = 'flex';
 }
 
@@ -2101,6 +2128,7 @@ function ct_closeSkipModal() {
 async function ct_confirmSkip() {
   const reason = document.getElementById('ct_skipReason').value;
   const notes = document.getElementById('ct_skipNotes').value.trim();
+  const expiresDays = document.getElementById('ct_skipDuration').value;
   if (!reason) { showToast('Please select a reason', 'err'); return; }
 
   // Build comment: [Reason Label] notes — user@email (MM/DD/YY)
@@ -2120,6 +2148,7 @@ async function ct_confirmSkip() {
     fd.append('vendor_name', vendor);
     fd.append('month', month);
     fd.append('reason', comment);
+    if (expiresDays) fd.append('expires_days', expiresDays);
     const resp = await fetch('/api/config/account-skip-reason', { method: 'POST', body: fd });
     if (!resp.ok) {
       const err = await resp.json();
@@ -2145,6 +2174,170 @@ async function ct_confirmSkip() {
   } catch (e) {
     showToast('Error: ' + e.message, 'err');
   }
+}
+
+/* ---- Research Drawer ----
+ * Side panel triggered by clicking a tracker account row. Pulls everything
+ * we already know about (property, vendor, account, month) so an AP rep can
+ * answer "is this really missing, or is it sitting somewhere I can't see?"
+ * without context-switching out of the tracker. Backed by /api/workflow/research.
+ */
+let _rd_lastReqId = 0;
+
+function openResearchDrawer(propertyId, propertyName, vendorName, accountNumber, month) {
+  const reqId = ++_rd_lastReqId;
+  document.getElementById('researchDrawer').style.display = 'block';
+  document.getElementById('researchBackdrop').style.display = 'block';
+  document.getElementById('rd_header').textContent =
+    `${propertyName || '?'} — ${vendorName || '?'} — ${accountNumber}` +
+    (month ? ` (${formatMonth(month)})` : '');
+  document.getElementById('rd_body').innerHTML =
+    '<div style="color:#64748b;font-size:12px">Loading…</div>';
+
+  const qs = new URLSearchParams({
+    property_id: propertyId || '',
+    property_name: propertyName || '',
+    vendor_name: vendorName || '',
+    account_number: accountNumber || '',
+    month: month || '',
+  }).toString();
+
+  fetch('/api/workflow/research?' + qs)
+    .then(r => r.json())
+    .then(data => {
+      // Stale-response guard
+      if (reqId !== _rd_lastReqId) return;
+      if (!data || data.error) {
+        document.getElementById('rd_body').innerHTML =
+          `<div style="color:#b91c1c;font-size:12px">${escapeHtml((data && data.error) || 'Failed to load research')}</div>`;
+        return;
+      }
+      _rd_render(data);
+    })
+    .catch(err => {
+      if (reqId !== _rd_lastReqId) return;
+      document.getElementById('rd_body').innerHTML =
+        `<div style="color:#b91c1c;font-size:12px">Error: ${escapeHtml(err.message || String(err))}</div>`;
+    });
+}
+
+function closeResearchDrawer() {
+  document.getElementById('researchDrawer').style.display = 'none';
+  document.getElementById('researchBackdrop').style.display = 'none';
+}
+
+function _rd_section(title, count, body) {
+  return `
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#475569;letter-spacing:.05em;margin-bottom:6px">${escapeHtml(title)}${count != null ? ` <span style="color:#94a3b8">(${count})</span>` : ''}</div>
+      ${body}
+    </div>`;
+}
+
+function _rd_billRow(b, extra) {
+  const amt = (b.amount != null) ? `$${Number(b.amount).toFixed(2)}` : '';
+  const date = b.date ? escapeHtml(b.date) : '';
+  const acct = b.account ? escapeHtml(b.account) : '';
+  const vendor = b.vendor ? escapeHtml(b.vendor) : '';
+  const pid = b.pdf_id ? escapeHtml(b.pdf_id) : '';
+  const link = pid ? `<a href="/bill/timeline?pdf_id=${encodeURIComponent(pid)}" target="_blank" style="font-size:10px;color:#0369a1">view bill →</a>` : '';
+  return `
+    <div style="border:1px solid #e5e7eb;border-radius:6px;padding:6px 8px;margin-bottom:4px;font-size:12px;line-height:1.35;background:#fff">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <strong style="font-weight:600">${vendor || 'Unknown vendor'}</strong>
+        <span style="color:#475569">${amt}</span>
+      </div>
+      <div style="color:#64748b">${date}${acct ? ' · acct ' + acct : ''}${extra ? ' · ' + extra : ''}</div>
+      ${link ? `<div style="margin-top:2px">${link}</div>` : ''}
+    </div>`;
+}
+
+function _rd_render(data) {
+  const ctx = data.context || {};
+  const parts = [];
+
+  // Skip history (most actionable for the rep — shows what they already did)
+  const sh = data.skip_history || [];
+  if (sh.length) {
+    const rows = sh.slice(0, 8).map(s => {
+      const expCls = s.expired ? 'color:#94a3b8;text-decoration:line-through' : 'color:#0f172a';
+      const expSuffix = s.expires_at ? ` · ${s.expired ? 'expired' : 'expires'} ${escapeHtml(s.expires_at)}` : '';
+      return `<div style="font-size:12px;padding:4px 6px;border-bottom:1px dashed #e5e7eb;${expCls}"><strong>${escapeHtml(s.month)}</strong> — ${escapeHtml(s.label || s.reason || '')}${expSuffix}</div>`;
+    }).join('');
+    parts.push(_rd_section('Active / past skips', sh.length, rows));
+  }
+
+  // Pipeline bills (exact account)
+  const pb = data.pipeline_bills || [];
+  if (pb.length) {
+    parts.push(_rd_section(
+      'In our pipeline (exact account)', pb.length,
+      pb.slice(0, 12).map(b => _rd_billRow(b)).join('')
+    ));
+  } else {
+    parts.push(_rd_section(
+      'In our pipeline (exact account)', 0,
+      `<div style="font-size:12px;color:#64748b;padding:4px 0">No bills found in S3 stages with this exact account number.</div>`
+    ));
+  }
+
+  // Fuzzy account variants
+  const fa = data.fuzzy_account_matches || [];
+  if (fa.length) {
+    parts.push(_rd_section(
+      'Possible match by account variant', fa.length,
+      fa.slice(0, 12).map(b => _rd_billRow(b, `tried <em>${escapeHtml(b.tried_variant)}</em> (${escapeHtml(b.variant_label || '')})`)).join('')
+    ));
+  }
+
+  // Amount-match candidates (cross-vendor at property)
+  const am = data.amount_match_candidates || [];
+  if (am.length) {
+    parts.push(_rd_section(
+      'Recent bills at this property (cross-vendor, 90d)', am.length,
+      `<div style="font-size:11px;color:#64748b;margin-bottom:4px">Scan for an amount that matches what you expect — sometimes a bill was posted under a different vendor or a different account on the same property.</div>` +
+      am.slice(0, 25).map(b => _rd_billRow(b)).join('')
+    ));
+  }
+
+  // Entrata historical (already paid)
+  const eh = data.entrata_history || [];
+  if (eh.length) {
+    const matched = data.entrata_match_info || {};
+    const matchedTxt = matched.matched_vendor
+      ? `<div style="font-size:11px;color:#64748b;margin-bottom:4px">Matched in INVOICES_MAT: <strong>${escapeHtml(matched.matched_vendor)}</strong> (${escapeHtml(matched.match_type || '')}, conf ${(matched.confidence || 0).toFixed(2)})</div>`
+      : '';
+    const rows = eh.slice(-12).map(h =>
+      `<tr><td style="padding:2px 6px;font-size:12px">${escapeHtml(h.period || '')}</td><td style="padding:2px 6px;font-size:12px;text-align:right">$${Number(h.amount || 0).toFixed(2)}</td></tr>`
+    ).join('');
+    parts.push(_rd_section(
+      'Already paid in Entrata (INVOICES_MAT)', eh.length,
+      matchedTxt +
+      `<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden"><thead><tr style="background:#f1f5f9"><th style="padding:4px 6px;text-align:left;font-size:11px;font-weight:600">Period</th><th style="padding:4px 6px;text-align:right;font-size:11px;font-weight:600">Amount</th></tr></thead><tbody>${rows}</tbody></table>`
+    ));
+  } else {
+    parts.push(_rd_section(
+      'Already paid in Entrata (INVOICES_MAT)', 0,
+      `<div style="font-size:12px;color:#64748b;padding:4px 0">No Snowflake-synced records found for this account/vendor at this property.</div>`
+    ));
+  }
+
+  // Scraper portal info
+  const sc = data.scraper || {};
+  if (sc.in_scraper) {
+    parts.push(_rd_section(
+      'Vendor portal (scraper)', null,
+      `<div style="font-size:12px">Provider: <strong>${escapeHtml(sc.provider || '')}</strong> · UUID: <code style="font-size:11px">${escapeHtml(sc.account_uuid || '')}</code></div>`
+    ));
+  }
+
+  // Search index readiness footnote
+  if (!data.search_index_ready) {
+    parts.push(`<div style="margin-top:8px;font-size:11px;color:#a16207;background:#fef3c7;padding:6px 8px;border-radius:6px">Pipeline index is still warming up — pipeline / fuzzy / amount-match results may be incomplete. Refresh in ~30 seconds.</div>`);
+  }
+
+  document.getElementById('rd_body').innerHTML = parts.join('') ||
+    `<div style="color:#64748b;font-size:12px">No research signal found yet for this row.</div>`;
 }
 
 async function ct_removeAccount(account, vendor, property, el) {

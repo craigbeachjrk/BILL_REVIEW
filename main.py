@@ -1217,6 +1217,81 @@ def _remove_bill_from_ubi_cache(s3_key: str):
         else:
             print(f"[UBI CACHE] Bill not found in cache: {s3_key.split('/')[-1]} (tracked for future reloads)")
 
+
+def _add_bill_to_ubi_cache(s3_key: str, rows: list, posted_at: str = "", submitter: str = ""):
+    """Append a synthesized bill record to the in-memory UBI cache so a freshly-advanced
+    Stage 7 bill shows up in BILLBACK within seconds rather than waiting for the next
+    Lambda rebuild. The next Lambda rebuild produces the canonical record (with
+    suggestions, duplicate warnings, last_assigned_period); this synthesized one is
+    overwritten then.
+
+    Mirrors the bill_info shape from lambda_ubi_cache_builder.py:671-694.
+    Suggestion / duplicate / last_assigned fields are left None — they will populate
+    on next Lambda build. is_ubi_account is set optimistically; if the account isn't
+    actually a UBI account, the BILLBACK UI's filter logic will hide it once the
+    Lambda rebuild lands the canonical record.
+    """
+    global _UBI_REMOVED_KEYS
+    if not rows:
+        return
+    try:
+        first = rows[0] if isinstance(rows[0], dict) else {}
+        pdf_id = hashlib.sha1(s3_key.encode()).hexdigest()
+        unassigned_lines = []
+        total_amount = 0.0
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                line_hash = _compute_stable_line_hash(r)
+            except Exception:
+                continue
+            try:
+                charge = float(str(r.get("Line Item Charge", r.get("Current Amount", 0)) or 0).replace("$", "").replace(",", ""))
+            except Exception:
+                charge = 0.0
+            unassigned_lines.append({"line_hash": line_hash, "line_data": r, "charge": charge})
+            total_amount += charge
+        if not unassigned_lines:
+            return
+
+        property_id = first.get("EnrichedPropertyID", "") or first.get("propertyId", "")
+        vendor_id = first.get("EnrichedVendorID", "") or first.get("vendorId", "")
+        account_number = str(first.get("Account Number", "") or "").strip()
+        account_key = f"{property_id}|{vendor_id}|{account_number}"
+
+        bill_record = {
+            "s3_key": s3_key,
+            "vendor": first.get("EnrichedVendorName", "") or first.get("Vendor Name", ""),
+            "account": first.get("Account Number", ""),
+            "account_key": account_key,
+            "property_name": first.get("EnrichedPropertyName", "") or first.get("Property Name", ""),
+            "pdf_id": pdf_id,
+            "review_date": "",
+            "invoice_no": first.get("Invoice Number", ""),
+            "total_amount": round(total_amount, 2),
+            "line_count": len(unassigned_lines),
+            "unassigned_lines": unassigned_lines,
+            "last_modified": posted_at,
+            "last_modified_ts": time.time(),
+            "submitter": submitter or first.get("PostedBy", ""),
+            "suggested_period": None,
+            "last_assigned_period": None,
+            "last_assigned_service": None,
+            "is_ubi_account": True,
+            "duplicate_warning": None,
+            "prior_period_suggestion": None,
+        }
+
+        if _UBI_UNASSIGNED_CACHE.get("data") is not None:
+            existing_keys = {b.get("s3_key") for b in _UBI_UNASSIGNED_CACHE["data"]}
+            if s3_key not in existing_keys:
+                _UBI_UNASSIGNED_CACHE["data"].append(bill_record)
+                _UBI_REMOVED_KEYS.discard(s3_key)
+                print(f"[UBI CACHE] Appended new S7 bill {s3_key.split('/')[-1]} ({len(unassigned_lines)} lines, ${total_amount:.2f})")
+    except Exception as e:
+        print(f"[UBI CACHE] Failed to append bill to cache: {e}")
+
 def _vendor_pair_refresh_loop():
     """Background loop that keeps the vendor pair cache permanently warm.
     Refreshes every 50 minutes so the 60-minute TTL never expires mid-request."""
@@ -3023,6 +3098,12 @@ def api_advance_to_post_stage(keys: str = Form(...), user: str = Depends(require
                     _write_posted_invoice_metadata(_pid, new_key, rows)
                 except Exception:
                     pass  # Non-fatal — CHECK REVIEW falls back to S3
+                # Surface the freshly-advanced bill in the BILLBACK queue immediately,
+                # without waiting up to ~1-2h for the jrk-ubi-cache-builder Lambda to rebuild.
+                try:
+                    _add_bill_to_ubi_cache(new_key, rows, posted_at=posted_at, submitter=user)
+                except Exception:
+                    pass  # Non-fatal — Lambda rebuild will catch it
                 results.append({"key": key, "moved": True, "newKey": new_key})
                 _pipeline_track(key, "ADVANCED_TO_POST", f"app:advance:{user}", "S6", {"new_key": new_key})
             except Exception as e:
@@ -8636,8 +8717,60 @@ def workflow_manage_view(request: Request, user: str = Depends(require_user)):
 
 _SKIP_REASON_RE = re.compile(r'^\[(.+?)\]\s*(.*?)\s*—\s*(\S+)\s*\((\d{2}/\d{2}/\d{2})\)$')
 
-def _parse_skip_reason(raw: str) -> dict:
-    """Parse '[Reason] notes — user (MM/DD/YY)' into components."""
+
+def _extract_skip_reason_text(value) -> str:
+    """Return the human-readable reason string from either legacy (string) or
+    new-format (dict with expires_at) skip-reason values stored in DDB."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return str(value.get("reason") or "")
+    return ""
+
+
+def _is_skip_expired(value, today_iso: str = None) -> bool:
+    """True if a dict-form skip has an expires_at date strictly before today."""
+    if not isinstance(value, dict):
+        return False
+    exp = value.get("expires_at")
+    if not exp:
+        return False
+    if today_iso is None:
+        today_iso = dt.date.today().isoformat()
+    try:
+        return str(exp) < today_iso
+    except Exception:
+        return False
+
+
+def _active_skip_reason(value, has_bill: bool = False, today_iso: str = None) -> str:
+    """Skip reason text to display, or "" if it should be auto-resolved.
+    Auto-resolves when (a) a bill is now in the pipeline for the month, or
+    (b) the dict-form skip's expires_at has passed. Both cases mean the skip
+    is stale — the row should show its real status (red/COMPLETE) instead."""
+    if not value:
+        return ""
+    if has_bill:
+        return ""
+    if _is_skip_expired(value, today_iso):
+        return ""
+    return _extract_skip_reason_text(value)
+
+
+def _parse_skip_reason(raw) -> dict:
+    """Parse '[Reason] notes — user (MM/DD/YY)' into components.
+    Accepts either a legacy string value or the new dict form
+    {reason, expires_at, set_by, set_at}."""
+    if isinstance(raw, dict):
+        text = str(raw.get("reason") or "")
+        parsed = _parse_skip_reason(text) if text else {"label": "", "notes": "", "user": "", "date": ""}
+        parsed["expires_at"] = str(raw.get("expires_at") or "")
+        parsed["set_by"] = str(raw.get("set_by") or "")
+        parsed["set_at"] = str(raw.get("set_at") or "")
+        return parsed
+    raw = str(raw or "")
     m = _SKIP_REASON_RE.match(raw)
     if m:
         return {"label": m.group(1), "notes": m.group(2).strip(), "user": m.group(3), "date": m.group(4)}
@@ -8679,7 +8812,11 @@ def api_acctmgr_skip_reasons(user: str = Depends(require_user)):
                 "notes": parsed["notes"],
                 "skip_user": parsed["user"],
                 "skip_date": parsed["date"],
-                "raw_reason": raw,
+                "raw_reason": _extract_skip_reason_text(raw),
+                "expires_at": parsed.get("expires_at", ""),
+                "expired": _is_skip_expired(raw),
+                "set_by": parsed.get("set_by", ""),
+                "set_at": parsed.get("set_at", ""),
             })
     items.sort(key=lambda x: (x["property_name"], x["vendor_name"], x["month"]))
     accts_with_skips = len({(i["property_id"], i["vendor_id"], i["account_number"]) for i in items})
@@ -8896,7 +9033,8 @@ def api_acctmgr_closed(user: str = Depends(require_user)):
         marked_by = ""
         marked_date = ""
         for month, raw in sr.items():
-            if "Account is closed" in raw:
+            text = _extract_skip_reason_text(raw)
+            if "Account is closed" in text:
                 closed_months.append(month)
                 parsed = _parse_skip_reason(raw)
                 if parsed["user"]:
@@ -10821,14 +10959,20 @@ def _compute_workflow_tracker(months_back: int = 6) -> dict:
                     status_label = "ON_TRACK"
                     days_overdue = 0
 
-            # Look up per-month skip reason (try exact month match, and range match)
+            # Look up per-month skip reason (try exact month match, and range match).
+            # Auto-resolve: skips are hidden once (a) a bill arrives in the pipeline
+            # for that month, or (b) the dict-form skip's expires_at has passed.
+            # The DDB record is left in place — UI just stops surfacing it.
             month_skip = ""
             if skip_reasons:
-                # For single-month display, key is "MM/YYYY"
-                # For multi-month, display_month is "MM/YYYY-MM/YYYY" but skip keys are individual months
+                _today_iso = today.isoformat()
                 for cm in cycle_months:
-                    if cm[0] in skip_reasons:
-                        month_skip = skip_reasons[cm[0]]
+                    raw_skip = skip_reasons.get(cm[0])
+                    if not raw_skip:
+                        continue
+                    text = _active_skip_reason(raw_skip, has_bill=has_bill, today_iso=_today_iso)
+                    if text:
+                        month_skip = text
                         break
 
             # Extract service period from bill info for hover display
@@ -11199,6 +11343,214 @@ def _get_ubi_account_amounts_from_stage8() -> dict:
     except Exception as e:
         print(f"[UBI AMOUNTS] Error scanning Stage 8: {e}")
         return {}
+
+
+@app.get("/api/workflow/research")
+def api_workflow_research(
+    property_id: str = "",
+    property_name: str = "",
+    account_number: str = "",
+    vendor_name: str = "",
+    month: str = "",
+    user: str = Depends(require_user),
+):
+    """Research panel for a single tracker row. Surfaces everything we already
+    know about this (property, vendor, account, month) so an AP rep doesn't
+    have to context-switch to find a bill that may already exist.
+
+    Returns:
+      - pipeline_bills: matches in our S3 pipeline keyed by exact account
+      - fuzzy_account_matches: same property/vendor with normalized account variants
+        (handles "exact match fails because of dashes/leading zeros/suffix")
+      - amount_match_candidates: recent bills at the same property across ALL
+        vendors, ranked by amount-similarity to this account's last historical
+        amount (catches "matched a different vendor by total")
+      - entrata_history: per-month historical totals from INVOICES_MAT
+        (i.e. what's already been paid in Entrata)
+      - scraper: portal info if this account has a scraper integration
+      - skip_history: any active or past skip_reasons on this account
+    """
+    try:
+        # Normalize inputs
+        property_id_s = str(property_id or "").strip()
+        property_name_s = str(property_name or "").strip()
+        account_number_s = str(account_number or "").strip()
+        vendor_name_s = str(vendor_name or "").strip()
+        month_s = str(month or "").strip()
+
+        if not account_number_s and not vendor_name_s:
+            return JSONResponse(
+                {"error": "account_number or vendor_name required"},
+                status_code=400,
+            )
+
+        norm_acct = _normalize_account_number(account_number_s)
+        prop_lower = property_name_s.lower()
+        vendor_lower = vendor_name_s.lower()
+        acct_lower = account_number_s.lower().strip()
+
+        # ------- Pipeline bills via _SEARCH_INDEX (exact account match) -------
+        search_entries = _SEARCH_INDEX.get("entries", []) if _SEARCH_INDEX.get("ready") else []
+        pipeline_bills = []
+        seen_pdf_ids = set()
+
+        def _entry_to_dict(e):
+            return {
+                "pdf_id": e.get("pdf_id", ""),
+                "date": e.get("date", ""),
+                "vendor": e.get("vendor", ""),
+                "property": e.get("property", ""),
+                "account": e.get("account", ""),
+                "amount": e.get("amount", 0),
+                "s3_key": e.get("s3_key", ""),
+            }
+
+        if search_entries and acct_lower:
+            for e in search_entries:
+                if e.get("account_l", "") == acct_lower:
+                    pid = e.get("pdf_id", "")
+                    if pid in seen_pdf_ids:
+                        continue
+                    seen_pdf_ids.add(pid)
+                    pipeline_bills.append(_entry_to_dict(e))
+
+        # ------- Fuzzy account variants (handles "ID doesn't match exactly") -------
+        # Try common normalization variants and look each one up. Show the rep
+        # WHICH variant matched so they can spot data-entry issues at the source.
+        fuzzy_account_matches = []
+        if search_entries and account_number_s:
+            tried = set()
+
+            def _variant(label, value):
+                v = str(value or "").strip()
+                if not v or v.lower() == acct_lower or v in tried:
+                    return
+                tried.add(v)
+                vlow = v.lower()
+                # Look up by exact lowercase match in account_l
+                for e in search_entries:
+                    if e.get("account_l", "") == vlow:
+                        # Filter to same property if known (otherwise risk noise)
+                        if prop_lower and prop_lower not in e.get("property_l", ""):
+                            continue
+                        fuzzy_account_matches.append({
+                            "tried_variant": v,
+                            "variant_label": label,
+                            **_entry_to_dict(e),
+                        })
+
+            import re as _re
+            _v_strip_special = _re.sub(r'[^A-Za-z0-9]', '', account_number_s)
+            _v_no_lead_zero = _v_strip_special.lstrip('0') or '0'
+            _v_only_digits = _re.sub(r'\D', '', account_number_s)
+            _v_no_suffix = account_number_s.split('-')[0] if '-' in account_number_s else account_number_s
+
+            _variant("strip non-alphanumeric", _v_strip_special)
+            _variant("strip leading zeros", _v_no_lead_zero)
+            _variant("digits only", _v_only_digits)
+            _variant("before first dash", _v_no_suffix)
+            # Normalize-form (matches what bill index keys on)
+            _variant("normalized", norm_acct)
+
+        # ------- Amount-match across vendors at this property -------
+        # Pull recent (90d) bills at this property regardless of vendor.
+        # The rep can scan for an amount that matches what they expect to see.
+        amount_match_candidates = []
+        if search_entries and prop_lower:
+            cutoff = (dt.date.today() - dt.timedelta(days=90)).isoformat()
+            for e in search_entries:
+                if prop_lower not in e.get("property_l", ""):
+                    continue
+                # Skip exact account matches (already in pipeline_bills)
+                if acct_lower and e.get("account_l", "") == acct_lower:
+                    continue
+                d = str(e.get("date", ""))
+                if d and d < cutoff:
+                    continue
+                amount_match_candidates.append(_entry_to_dict(e))
+            # Sort by date desc, cap to 50 most recent
+            amount_match_candidates.sort(key=lambda x: x.get("date", ""), reverse=True)
+            amount_match_candidates = amount_match_candidates[:50]
+
+        # ------- Entrata historical (already-paid) via INVOICES_MAT -------
+        entrata_history = []
+        entrata_match_info = None
+        try:
+            entrata_history, entrata_match_info = _read_historical_from_invoices_mat(
+                property_id_s, account_number_s, vendor_name_s
+            )
+        except Exception as _e:
+            print(f"[RESEARCH] INVOICES_MAT lookup failed: {_e}")
+
+        # ------- Scraper portal info -------
+        scraper_info = {"in_scraper": False}
+        try:
+            import re as _re
+            _clean_acct = _re.sub(r'[^A-Za-z0-9]', '', account_number_s).lower()
+            for _uuid, _entry in (_scraper_account_map or {}).items():
+                _eid = _re.sub(r'[^A-Za-z0-9]', '', str(_entry.get("account_id", ""))).lower()
+                if _eid and _eid == _clean_acct:
+                    scraper_info = {
+                        "in_scraper": True,
+                        "provider": _entry.get("provider", ""),
+                        "account_uuid": _uuid,
+                    }
+                    break
+        except Exception as _e:
+            print(f"[RESEARCH] scraper lookup failed: {_e}")
+
+        # ------- Skip history for this account -------
+        skip_history = []
+        try:
+            arr = _get_accounts_to_track()
+            for a in arr:
+                acct = str(a.get("accountNumber") or a.get("account_number") or "").strip()
+                pid = str(a.get("propertyId") or a.get("property_id") or "").strip()
+                if acct != account_number_s:
+                    continue
+                if property_id_s and pid and pid != property_id_s:
+                    continue
+                sr = a.get("skip_reasons") or {}
+                if not isinstance(sr, dict):
+                    continue
+                _today_iso = dt.date.today().isoformat()
+                for m, raw in sr.items():
+                    parsed = _parse_skip_reason(raw)
+                    skip_history.append({
+                        "month": m,
+                        "reason": _extract_skip_reason_text(raw),
+                        "label": parsed.get("label", ""),
+                        "notes": parsed.get("notes", ""),
+                        "expires_at": parsed.get("expires_at", ""),
+                        "expired": _is_skip_expired(raw, _today_iso),
+                        "set_by": parsed.get("set_by", "") or parsed.get("user", ""),
+                    })
+            skip_history.sort(key=lambda x: x.get("month", ""), reverse=True)
+        except Exception as _e:
+            print(f"[RESEARCH] skip history lookup failed: {_e}")
+
+        return {
+            "ok": True,
+            "context": {
+                "property_id": property_id_s,
+                "property_name": property_name_s,
+                "vendor_name": vendor_name_s,
+                "account_number": account_number_s,
+                "month": month_s,
+            },
+            "pipeline_bills": pipeline_bills,
+            "fuzzy_account_matches": fuzzy_account_matches,
+            "amount_match_candidates": amount_match_candidates,
+            "entrata_history": entrata_history,
+            "entrata_match_info": entrata_match_info,
+            "scraper": scraper_info,
+            "skip_history": skip_history,
+            "search_index_ready": bool(_SEARCH_INDEX.get("ready")),
+            "computed_at": dt.datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as e:
+        print(f"[RESEARCH] Error: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "workflow research")}, status_code=500)
 
 
 @app.get("/api/workflow/ap-priority")
@@ -18892,16 +19244,33 @@ async def api_update_account_comment(request: Request, user: str = Depends(requi
 
 @app.post("/api/config/account-skip-reason")
 async def api_update_account_skip_reason(request: Request, user: str = Depends(require_user)):
-    """Save a per-month skip reason for a tracked account."""
+    """Save a per-month skip reason for a tracked account.
+
+    Optional `expires_days` form field: integer number of days until the skip
+    auto-clears. Useful for transient blockers like 'portal unavailable for 3
+    days'. Omitted / 0 / blank means permanent (until manually cleared).
+    Permanent skips are stored as a plain string for backward compat; expiring
+    skips store {reason, expires_at, set_by, set_at}.
+    """
     try:
         form = await request.form()
         account_number = form.get("account_number", "").strip()
         vendor_name = form.get("vendor_name", "").strip()
         month = form.get("month", "").strip()  # MM/YYYY format
         reason = form.get("reason", "").strip()
+        expires_days_raw = form.get("expires_days", "").strip()
 
         if not account_number or not vendor_name or not month:
             return JSONResponse({"error": "account_number, vendor_name, and month are required"}, status_code=400)
+
+        expires_at = None
+        if expires_days_raw:
+            try:
+                _days = int(expires_days_raw)
+                if _days > 0:
+                    expires_at = (dt.date.today() + dt.timedelta(days=_days)).isoformat()
+            except Exception:
+                expires_at = None
 
         arr = _get_accounts_to_track()
 
@@ -18928,11 +19297,19 @@ async def api_update_account_skip_reason(request: Request, user: str = Depends(r
         if not isinstance(skip_reasons, dict):
             skip_reasons = {}
         if reason:
-            skip_reasons[month] = reason
+            if expires_at:
+                skip_reasons[month] = {
+                    "reason": reason,
+                    "expires_at": expires_at,
+                    "set_by": user,
+                    "set_at": dt.datetime.utcnow().isoformat() + "Z",
+                }
+            else:
+                skip_reasons[month] = reason
         else:
             skip_reasons.pop(month, None)
         target_item["skip_reasons"] = skip_reasons
-        print(f"[ACCOUNT SKIP] {account_number} ({vendor_name}) month={month}: {reason[:50]}...")
+        print(f"[ACCOUNT SKIP] {account_number} ({vendor_name}) month={month} expires={expires_at or 'never'}: {reason[:50]}...")
 
         # Snapshot the tracker cache data before _put_accounts_to_track clears it
         _wt = _CACHE.get(("workflow_tracker",))
