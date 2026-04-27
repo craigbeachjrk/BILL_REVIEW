@@ -20258,11 +20258,14 @@ async def api_remove_from_tracker(request: Request, user: str = Depends(require_
         if not _put_accounts_to_track(arr):
             return JSONResponse({"error": "save_failed"}, status_code=500)
 
-        # Clear caches
+        # Clear caches — both layers
         cache_key = ("accounts_to_track",)
         _CACHE.pop(cache_key, None)
-        # Also clear completion tracker cache so refresh picks up the change
         _CACHE.pop(("workflow_tracker",), None)
+        # The master-bills completion tracker uses _METRICS_CACHE (S3-persisted, 60min TTL).
+        # Without busting both in-memory + S3, this delete wouldn't be visible until the
+        # next TTL expiry — that's the "I deleted it but it's still here" complaint.
+        _bust_completion_tracker_caches()
 
         return {"ok": True}
 
@@ -22142,10 +22145,19 @@ def api_delete_manual_batch(batch_id: str, user: str = Depends(require_admin)):
 
 
 @app.get("/api/master-bills/completion-tracker")
-def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
+def api_completion_tracker(
+    period: str = "",
+    refresh: int = 0,
+    user: str = Depends(require_user),
+):
     """
     Get UBI completion tracker data showing which accounts have bills for a given period.
     Returns rollup by property, charge code, and account.
+
+    Pass refresh=1 to force a fresh recompute (bypass both in-memory and S3 caches).
+    The JS calls this after a write that affects tracker state (note edit, account
+    delete) so the user reliably sees their change even if they hit a different
+    AppRunner instance than the one that handled the write.
     """
     try:
         # Cache key includes period since the computation is deeply period-dependent
@@ -22759,8 +22771,10 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
 
             return result
 
-        # Serve from S3-persisted cache; rebuild in background when stale
-        return _metrics_serve(_cache_name, _compute, async_cold=False)
+        # Serve from S3-persisted cache; rebuild in background when stale.
+        # When refresh=1 the call bypasses both layers and recomputes synchronously —
+        # used after writes (note save, tracker delete) so the user sees their change.
+        return _metrics_serve(_cache_name, _compute, force_refresh=bool(refresh), async_cold=False)
 
     except Exception as e:
         print(f"[COMPLETION TRACKER] Error: {e}")
@@ -23687,6 +23701,36 @@ def api_get_property_notes(user: str = Depends(require_user)):
     return {"items": out}
 
 
+def _bust_completion_tracker_caches():
+    """Invalidate completion-tracker caches across both layers AppRunner uses:
+    in-memory `_METRICS_CACHE` and the gzipped S3 file each entry persists to.
+    Without removing the S3 file, an instance whose in-memory cache we just
+    cleared would just re-load the old data on the next request. We also bust
+    the regular `_CACHE` and `billback_summary` for completeness since both
+    are downstream of property-notes / accounts-to-track changes."""
+    busted = []
+    keys_to_bust = [k for k in list(_METRICS_CACHE.keys()) if k.startswith("completion_tracker__")]
+    for k in keys_to_bust:
+        _METRICS_CACHE.pop(k, None)
+        busted.append(k)
+    # Always include the default 'all' even if not currently in memory
+    s3_keys = {f"{CONFIG_PREFIX}metrics_cache_completion_tracker__all.json.gz"}
+    for k in keys_to_bust:
+        s3_keys.add(f"{CONFIG_PREFIX}metrics_cache_{k}.json.gz")
+    for sk in s3_keys:
+        try:
+            s3.delete_object(Bucket=CONFIG_BUCKET, Key=sk)
+        except Exception:
+            pass
+    # Bust _CACHE entries too
+    for k in list(_CACHE.keys()):
+        if isinstance(k, tuple) and k and isinstance(k[0], str):
+            if "completion_tracker" in k[0] or "billback_summary" in k[0]:
+                _CACHE.pop(k, None)
+    if busted:
+        print(f"[CACHE BUST] Invalidated completion_tracker caches: {busted}")
+
+
 @app.post("/api/config/property-notes")
 async def api_save_property_note(request: Request, user: str = Depends(require_user)):
     """Set/update/delete a single property's note. Empty string clears it.
@@ -23698,8 +23742,8 @@ async def api_save_property_note(request: Request, user: str = Depends(require_u
         if not property_id:
             return JSONResponse({"error": "property_id is required"}, status_code=400)
 
-        # Cap to 500 chars — these are one-liners
-        note = note[:500]
+        # Cap at 2000 chars — multi-line allowed but not essays
+        note = note[:2000]
 
         arr = _ddb_get_config("property-notes") or []
         if not isinstance(arr, list):
@@ -23733,12 +23777,9 @@ async def api_save_property_note(request: Request, user: str = Depends(require_u
         if not _ddb_put_config("property-notes", arr):
             return JSONResponse({"error": "save_failed"}, status_code=500)
 
-        # Invalidate caches that pull property notes
-        for k in list(_CACHE.keys()):
-            if isinstance(k, tuple) and k and isinstance(k[0], str) and "completion_tracker" in k[0]:
-                _CACHE.pop(k, None)
-            if isinstance(k, tuple) and k and isinstance(k[0], str) and "billback_summary" in k[0]:
-                _CACHE.pop(k, None)
+        # Invalidate caches across in-memory + S3 so the next /api/master-bills/completion-tracker
+        # GET recomputes with the new note instead of serving the 60-min-stale snapshot.
+        _bust_completion_tracker_caches()
 
         return {"ok": True, "property_id": property_id, "note": note}
     except Exception as e:
