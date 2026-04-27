@@ -5357,21 +5357,123 @@ async def api_billback_submit(request: Request, user: str = Depends(require_user
 
 
 @app.get("/api/billback/summary")
-def api_billback_summary(user: str = Depends(require_user), group_by: str = "month"):
-    """Get billback summary grouped by property, vendor, charge_code, or month."""
-    if group_by not in ["property", "vendor", "charge_code", "month"]:
+def api_billback_summary(
+    user: str = Depends(require_user),
+    group_by: str = "am",
+    period: str = "",
+):
+    """Billback summary report. Default groups by Asset Manager so AMs can
+    jump to their properties. Supports group_by=am | property | vendor |
+    charge_code | month for backwards compat with the old report.
+
+    For each line item we attach:
+      - asset_manager: from ap-mapping config (propertyId → AM name)
+      - property_note: from property-notes config (one-liner per property)
+      - pdf_url: best-effort lookup against _SEARCH_INDEX matching
+        (property+vendor+account+line_charge); links to the source bill PDF
+        through /pdf?k=<s3_key>
+
+    Optional ?period=MM/YYYY filter to scope the report to a single billback
+    period (huge tables otherwise — saves the AM scrolling).
+
+    AM-grouped response shape:
+      {
+        "group_by": "am",
+        "summary": [
+          {
+            "group_key": "Darwin Mendoza",
+            "total_amount": 12345.67,
+            "count": 42,
+            "properties": [
+              {"property_id": "...", "property_name": "...",
+               "property_note": "...", "total_amount": ..., "count": ...,
+               "items": [{...with pdf_url, asset_manager, etc.}, ...]}
+            ]
+          }
+        ]
+      }
+    """
+    if group_by not in ["am", "property", "vendor", "charge_code", "month"]:
         return JSONResponse({"error": "Invalid group_by parameter"}, status_code=400)
 
     try:
         # Check cache first (5-minute TTL)
-        cache_key = ("billback_summary", group_by)
+        cache_key = ("billback_summary", group_by, period)
         cached = _CACHE.get(cache_key)
         if cached and (time.time() - cached.get("ts", 0) < 300):
             return cached["data"]
 
-        # Scan the billback master table (paginated to handle large tables)
+        # ---- Lookups: ap-mapping (AM names), property-notes, search-index PDFs ----
+        ap_mapping_raw = _ddb_get_config("ap-mapping") or []
+        am_by_pid: dict[str, str] = {}
+        for ap in ap_mapping_raw:
+            if isinstance(ap, dict):
+                pid = str(ap.get("propertyId") or "").strip()
+                name = str(ap.get("name") or "").strip()
+                if pid and name:
+                    am_by_pid[pid] = name
+
+        property_notes_raw = _ddb_get_config("property-notes") or []
+        notes_by_pid: dict[str, str] = {}
+        for n in property_notes_raw:
+            if isinstance(n, dict):
+                pid = str(n.get("propertyId") or "").strip()
+                nt = str(n.get("note") or "").strip()
+                if pid and nt:
+                    notes_by_pid[pid] = nt
+
+        # PDF lookup index: keyed by (property_lower, account_lower, amount_to_2dp)
+        # because (property, account, amount) is usually unique enough to find the
+        # right source bill. Falls back to (property, account) if no amount match.
+        from collections import defaultdict
+        pdf_by_pa_amount: dict[tuple, list] = defaultdict(list)
+        pdf_by_pa: dict[tuple, list] = defaultdict(list)
+        if _SEARCH_INDEX.get("ready"):
+            for e in _SEARCH_INDEX.get("entries", []):
+                prop_l = (e.get("property_l") or "").strip()
+                acct_l = (e.get("account_l") or "").strip()
+                if not prop_l or not acct_l:
+                    continue
+                amt = e.get("amount") or 0
+                pdf_by_pa[(prop_l, acct_l)].append(e)
+                if amt:
+                    pdf_by_pa_amount[(prop_l, acct_l, round(float(amt), 2))].append(e)
+
+        def _resolve_pdf(prop_name: str, acct: str, line_charge: float) -> tuple[str, str]:
+            """Return (s3_key, pdf_url) best-effort from _SEARCH_INDEX. Both empty if no match."""
+            prop_l = (prop_name or "").strip().lower()
+            acct_l = (acct or "").strip().lower()
+            if not prop_l or not acct_l:
+                return "", ""
+            try:
+                amt = round(float(line_charge or 0), 2)
+            except Exception:
+                amt = 0
+            # Try (property + account + amount) first
+            matches = pdf_by_pa_amount.get((prop_l, acct_l, amt)) if amt else None
+            # Fall back to (property + account)
+            if not matches:
+                matches = pdf_by_pa.get((prop_l, acct_l)) or []
+            if not matches:
+                return "", ""
+            # Pick most recent
+            matches_sorted = sorted(
+                matches,
+                key=lambda x: str(x.get("date") or ""),
+                reverse=True,
+            )
+            s3_key = matches_sorted[0].get("s3_key") or ""
+            if not s3_key:
+                return "", ""
+            from urllib.parse import quote as _q
+            return s3_key, f"/pdf?k={_q(s3_key, safe='')}"
+
+        # ---- Scan the billback master table (paginated, optionally filtered) ----
         items = []
         scan_kwargs = {"TableName": "jrk-bill-billback-master"}
+        if period:
+            scan_kwargs["FilterExpression"] = "billback_period = :p"
+            scan_kwargs["ExpressionAttributeValues"] = {":p": {"S": period}}
         while True:
             response = ddb.scan(**scan_kwargs)
             items.extend(response.get("Items", []))
@@ -5379,55 +5481,144 @@ def api_billback_summary(user: str = Depends(require_user), group_by: str = "mon
                 break
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
-        print(f"[BILLBACK SUMMARY] Found {len(items)} items in table, grouping by {group_by}")
+        print(f"[BILLBACK SUMMARY] {len(items)} rows, group_by={group_by}, period={period or 'all'}")
 
-        # Process and group items
-        from collections import defaultdict
-        summary = defaultdict(lambda: {"total_amount": 0, "count": 0, "items": []})
-
-        for item in items:
+        # ---- Enrich + flatten into a uniform record list ----
+        records = []
+        for it in items:
             try:
-                key = ""
-                if group_by == "property":
-                    key = item.get("property_name", {}).get("S", "Unknown")
-                elif group_by == "vendor":
-                    key = item.get("vendor_name", {}).get("S", "Unknown")
-                elif group_by == "charge_code":
-                    key = item.get("charge_code", {}).get("S", "Unknown")
-                elif group_by == "month":
-                    key = item.get("billback_period", {}).get("S", "Unknown")
+                pid = it.get("property_id", {}).get("S", "")
+                pname = it.get("property_name", {}).get("S", "")
+                vname = it.get("vendor_name", {}).get("S", "")
+                acct = it.get("account_number", {}).get("S", "")
+                charge_code = it.get("charge_code", {}).get("S", "")
+                bperiod = it.get("billback_period", {}).get("S", "")
+                billback_amount = float(it.get("billback_amount", {}).get("N", "0"))
+                line_charge = float(it.get("line_charge", {}).get("N", "0") or 0)
+                line_item_id = it.get("line_item_id", {}).get("S", "")
+                notes = it.get("notes", {}).get("S", "")
+                bill_period_start = it.get("bill_period_start", {}).get("S", "")
+                bill_period_end = it.get("bill_period_end", {}).get("S", "")
+                utility_type = it.get("utility_type", {}).get("S", "")
+                # If the row already has s3_key (forward-compat for new saves), use it.
+                stored_s3_key = it.get("s3_key", {}).get("S", "")
+                if stored_s3_key:
+                    from urllib.parse import quote as _q
+                    s3_key, pdf_url = stored_s3_key, f"/pdf?k={_q(stored_s3_key, safe='')}"
+                else:
+                    s3_key, pdf_url = _resolve_pdf(pname, acct, line_charge)
 
-                amount = float(item.get("billback_amount", {}).get("N", "0"))
-                summary[key]["total_amount"] += amount
-                summary[key]["count"] += 1
-                summary[key]["items"].append({
-                    "line_item_id": item.get("line_item_id", {}).get("S", ""),
-                    "property_name": item.get("property_name", {}).get("S", ""),
-                    "vendor_name": item.get("vendor_name", {}).get("S", ""),
-                    "charge_code": item.get("charge_code", {}).get("S", ""),
-                    "billback_period": item.get("billback_period", {}).get("S", ""),
-                    "billback_amount": amount,
-                    "notes": item.get("notes", {}).get("S", ""),
+                records.append({
+                    "line_item_id": line_item_id,
+                    "property_id": pid,
+                    "property_name": pname,
+                    "vendor_name": vname,
+                    "account_number": acct,
+                    "utility_type": utility_type,
+                    "charge_code": charge_code,
+                    "billback_period": bperiod,
+                    "bill_period_start": bill_period_start,
+                    "bill_period_end": bill_period_end,
+                    "line_charge": line_charge,
+                    "billback_amount": billback_amount,
+                    "notes": notes,
+                    "asset_manager": am_by_pid.get(pid, ""),
+                    "property_note": notes_by_pid.get(pid, ""),
+                    "s3_key": s3_key,
+                    "pdf_url": pdf_url,
                 })
-            except Exception as item_error:
-                print(f"[BILLBACK SUMMARY] Error processing item: {item_error}")
+            except Exception as e:
+                print(f"[BILLBACK SUMMARY] Skipping malformed row: {e}")
                 continue
 
-        # Convert to list
-        result = []
-        for key, data in summary.items():
-            result.append({
-                "group_key": key,
-                "total_amount": round(data["total_amount"], 2),
-                "count": data["count"],
-                "items": data["items"]
-            })
+        # ---- Group ----
+        if group_by == "am":
+            # AM → property → items
+            am_buckets: dict[str, dict] = {}
+            for r in records:
+                am = r["asset_manager"] or "(unassigned)"
+                if am not in am_buckets:
+                    am_buckets[am] = {
+                        "group_key": am,
+                        "asset_manager": am,
+                        "total_amount": 0.0,
+                        "count": 0,
+                        "properties": {},
+                    }
+                bucket = am_buckets[am]
+                bucket["total_amount"] += r["billback_amount"]
+                bucket["count"] += 1
+                pid_key = r["property_id"] or r["property_name"] or "(unknown)"
+                if pid_key not in bucket["properties"]:
+                    bucket["properties"][pid_key] = {
+                        "property_id": r["property_id"],
+                        "property_name": r["property_name"] or pid_key,
+                        "property_note": r["property_note"],
+                        "total_amount": 0.0,
+                        "count": 0,
+                        "items": [],
+                    }
+                p = bucket["properties"][pid_key]
+                p["total_amount"] += r["billback_amount"]
+                p["count"] += 1
+                p["items"].append(r)
 
-        # Sort by total_amount descending
-        result.sort(key=lambda x: x["total_amount"], reverse=True)
+            # Convert to list, sort properties within AM by total desc
+            result = []
+            for am_name, bucket in am_buckets.items():
+                props = list(bucket["properties"].values())
+                for p in props:
+                    p["total_amount"] = round(p["total_amount"], 2)
+                    # Sort items by billback_period then vendor for stable display
+                    p["items"].sort(key=lambda x: (x.get("billback_period", ""), x.get("vendor_name", "")))
+                props.sort(key=lambda x: x["total_amount"], reverse=True)
+                result.append({
+                    "group_key": am_name,
+                    "asset_manager": am_name,
+                    "total_amount": round(bucket["total_amount"], 2),
+                    "count": bucket["count"],
+                    "property_count": len(props),
+                    "properties": props,
+                })
+            result.sort(key=lambda x: x["total_amount"], reverse=True)
+        else:
+            # Flat group_by (legacy): property | vendor | charge_code | month
+            buckets: dict[str, dict] = {}
+            for r in records:
+                if group_by == "property":
+                    key = r["property_name"] or "(unknown)"
+                elif group_by == "vendor":
+                    key = r["vendor_name"] or "(unknown)"
+                elif group_by == "charge_code":
+                    key = r["charge_code"] or "(unknown)"
+                elif group_by == "month":
+                    key = r["billback_period"] or "(unknown)"
+                else:
+                    key = "(unknown)"
+                if key not in buckets:
+                    buckets[key] = {"group_key": key, "total_amount": 0.0, "count": 0, "items": []}
+                buckets[key]["total_amount"] += r["billback_amount"]
+                buckets[key]["count"] += 1
+                buckets[key]["items"].append(r)
 
-        print(f"[BILLBACK SUMMARY] Returning {len(result)} groups")
-        response_data = {"summary": result, "group_by": group_by}
+            result = []
+            for key, data in buckets.items():
+                result.append({
+                    "group_key": key,
+                    "total_amount": round(data["total_amount"], 2),
+                    "count": data["count"],
+                    "items": data["items"],
+                })
+            result.sort(key=lambda x: x["total_amount"], reverse=True)
+
+        response_data = {
+            "summary": result,
+            "group_by": group_by,
+            "period": period or None,
+            "pdf_lookup_ready": bool(_SEARCH_INDEX.get("ready")),
+            "total_amount": round(sum(r["billback_amount"] for r in records), 2),
+            "total_items": len(records),
+        }
         _CACHE[cache_key] = {"ts": time.time(), "data": response_data}
         return response_data
     except Exception as e:
@@ -21991,6 +22182,18 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                         ap_by_property[pid] = name
             print(f"[COMPLETION TRACKER] Loaded {len(ap_by_property)} AP mappings")
 
+            # Load property-level notes (one-liners AP reps leave on properties to
+            # remember billing patterns / count expectations / context).
+            property_notes_raw = _ddb_get_config("property-notes") or []
+            property_notes_by_id = {}  # property_id -> note text
+            for n in property_notes_raw:
+                if isinstance(n, dict):
+                    pid = str(n.get("propertyId") or "").strip()
+                    nt = str(n.get("note") or "").strip()
+                    if pid and nt:
+                        property_notes_by_id[pid] = nt
+            print(f"[COMPLETION TRACKER] Loaded {len(property_notes_by_id)} property notes")
+
             # Build property name -> ID lookup for fallback when JSONL has empty Property ID
             property_name_to_id = {}
             try:
@@ -22445,6 +22648,7 @@ def api_completion_tracker(period: str = "", user: str = Depends(require_user)):
                         "property_id": property_id,
                         "property_name": property_name,
                         "ap_name": ap_by_property.get(property_id, ""),
+                        "property_note": property_notes_by_id.get(property_id, ""),
                         "accounts": [],
                         "total": 0,
                         "complete": 0,
@@ -23455,6 +23659,90 @@ async def api_save_ap_mapping(request: Request, user: str = Depends(require_user
     if not ok:
         return JSONResponse({"error": "save_failed"}, status_code=500)
     return {"ok": True, "saved": len(norm)}
+
+
+# -------- Property-level Notes --------
+# Free-form one-liners per property surfaced on Master Bills + Billback Summary.
+# AP reps use these to capture context like "should be 3 bills, water bimonthly"
+# or "billed in arrears, expect 2-month lag" so duplicates and missing-count
+# concerns are obvious on the next visit. Stored in DDB jrk-bill-config under
+# config_id="property-notes" as a list of {propertyId, note, set_by, set_at}.
+@app.get("/api/config/property-notes")
+def api_get_property_notes(user: str = Depends(require_user)):
+    arr = _ddb_get_config("property-notes") or []
+    out = []
+    for r in arr:
+        if not isinstance(r, dict):
+            continue
+        pid = str(r.get("propertyId") or "").strip()
+        note = str(r.get("note") or "").strip()
+        if not pid or not note:
+            continue
+        out.append({
+            "propertyId": pid,
+            "note": note,
+            "set_by": str(r.get("set_by") or "").strip(),
+            "set_at": str(r.get("set_at") or "").strip(),
+        })
+    return {"items": out}
+
+
+@app.post("/api/config/property-notes")
+async def api_save_property_note(request: Request, user: str = Depends(require_user)):
+    """Set/update/delete a single property's note. Empty string clears it.
+    Form fields: property_id (required), note (text, "" to clear)."""
+    try:
+        form = await request.form()
+        property_id = str(form.get("property_id", "")).strip()
+        note = str(form.get("note", "")).strip()
+        if not property_id:
+            return JSONResponse({"error": "property_id is required"}, status_code=400)
+
+        # Cap to 500 chars — these are one-liners
+        note = note[:500]
+
+        arr = _ddb_get_config("property-notes") or []
+        if not isinstance(arr, list):
+            arr = []
+
+        # Find or insert
+        now = dt.datetime.utcnow().isoformat() + "Z"
+        idx = next(
+            (i for i, r in enumerate(arr)
+             if isinstance(r, dict)
+             and str(r.get("propertyId") or "").strip() == property_id),
+            -1,
+        )
+
+        if note:
+            entry = {
+                "propertyId": property_id,
+                "note": note,
+                "set_by": user,
+                "set_at": now,
+            }
+            if idx >= 0:
+                arr[idx] = entry
+            else:
+                arr.append(entry)
+        else:
+            # Empty note → delete the entry if present
+            if idx >= 0:
+                arr.pop(idx)
+
+        if not _ddb_put_config("property-notes", arr):
+            return JSONResponse({"error": "save_failed"}, status_code=500)
+
+        # Invalidate caches that pull property notes
+        for k in list(_CACHE.keys()):
+            if isinstance(k, tuple) and k and isinstance(k[0], str) and "completion_tracker" in k[0]:
+                _CACHE.pop(k, None)
+            if isinstance(k, tuple) and k and isinstance(k[0], str) and "billback_summary" in k[0]:
+                _CACHE.pop(k, None)
+
+        return {"ok": True, "property_id": property_id, "note": note}
+    except Exception as e:
+        return JSONResponse({"error": _sanitize_error(e, "property note")}, status_code=500)
 
 
 # -------- Vendor-Property / Vendor-GL Override Config --------

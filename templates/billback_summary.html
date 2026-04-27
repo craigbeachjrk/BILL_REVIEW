@@ -117,12 +117,16 @@
       <div class="controls">
         <label>Group By:</label>
         <select id="groupBySelect" onchange="loadSummary()">
-          <option value="month">Month (Billback Period)</option>
+          <option value="am" selected>Asset Manager</option>
           <option value="property">Property</option>
           <option value="vendor">Vendor</option>
           <option value="charge_code">Charge Code</option>
+          <option value="month">Month (Billback Period)</option>
         </select>
+        <label style="margin-left:12px">Period:</label>
+        <input type="text" id="periodFilter" placeholder="MM/YYYY (optional)" style="width:120px" onkeydown="if(event.key==='Enter') loadSummary();" />
         <button class="btn" onclick="loadSummary()">Refresh</button>
+        <span id="pdfReadyHint" style="font-size:11px;color:#64748b;margin-left:8px"></span>
       </div>
 
       <div id="loading" class="loading">Loading summary...</div>
@@ -132,7 +136,7 @@
           <h3>Total Billback Amount</h3>
           <div class="value" id="totalAmount">$0.00</div>
           <div style="margin-top:8px;color:#64748b;font-size:13px">
-            <span id="totalItems">0</span> line items
+            <span id="totalItems">0</span> line items across <span id="totalGroups">0</span> <span id="totalGroupsLabel">asset managers</span>
           </div>
         </div>
 
@@ -140,6 +144,31 @@
       </div>
     </div>
   </div>
+
+  <style>
+    .am-block{background:#fff;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.08);margin-bottom:20px;overflow:hidden}
+    .am-block summary{padding:16px 20px;background:linear-gradient(135deg,#0c4a6e,#0369a1);color:#fff;cursor:pointer;font-size:16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;list-style:none}
+    .am-block summary::-webkit-details-marker{display:none}
+    .am-block summary::before{content:"▸";display:inline-block;margin-right:10px;transition:transform .15s}
+    .am-block[open] summary::before{transform:rotate(90deg)}
+    .am-block .am-meta{font-size:12px;font-weight:500;opacity:.85;margin-left:auto;display:flex;gap:14px;align-items:center}
+    .am-block .am-amount{font-size:18px;font-weight:700}
+    .prop-block{padding:14px 20px;border-bottom:1px solid #f1f5f9}
+    .prop-block:last-child{border-bottom:none}
+    .prop-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:12px}
+    .prop-name{font-size:15px;font-weight:700;color:#0f172a}
+    .prop-stats{font-size:12px;color:#64748b;margin-top:2px}
+    .prop-amount{font-size:16px;font-weight:700;color:#0c4a6e;white-space:nowrap}
+    .prop-note{margin:6px 0 10px 0;padding:6px 10px;background:#e0f2fe;border-left:3px solid #0ea5e9;border-radius:6px;font-size:12px;color:#0c4a6e;line-height:1.4}
+    .prop-note-empty{margin:6px 0 10px 0;font-size:11px;color:#94a3b8;font-style:italic}
+    .items-table{width:100%;border-collapse:collapse;background:#fafafa;border-radius:6px;overflow:hidden}
+    .items-table th{padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#475569;background:#f1f5f9;text-align:left;font-weight:600;border-bottom:1px solid #e5e7eb}
+    .items-table td{padding:6px 8px;font-size:12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+    .items-table tr:last-child td{border-bottom:none}
+    .pdf-pill{display:inline-block;padding:2px 8px;border-radius:4px;background:#dbeafe;color:#1e40af;font-size:10px;font-weight:600;text-decoration:none}
+    .pdf-pill:hover{background:#1e40af;color:#fff}
+    .pdf-missing{color:#94a3b8;font-size:10px;font-style:italic}
+  </style>
 
   <script>
     let currentSummary = null;
@@ -160,19 +189,30 @@
       setTimeout(() => t.classList.remove('show'), 2500);
     }
 
+    function escapeHtml(s){
+      if (s == null) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    function fmtMoney(n){
+      const v = Number(n || 0);
+      return '$' + v.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+
     async function loadSummary(){
       const groupBy = document.getElementById('groupBySelect').value;
+      const period = document.getElementById('periodFilter').value.trim();
 
       document.getElementById('loading').style.display = 'block';
       document.getElementById('summaryContainer').style.display = 'none';
 
       try {
-        const response = await fetch(`/api/billback/summary?group_by=${groupBy}`);
+        const qs = new URLSearchParams({group_by: groupBy});
+        if (period) qs.set('period', period);
+        const response = await fetch('/api/billback/summary?' + qs.toString());
         if (!response.ok) throw new Error('Failed to load summary');
 
         const data = await response.json();
         currentSummary = data;
-
         renderSummary(data);
 
         document.getElementById('loading').style.display = 'none';
@@ -186,83 +226,146 @@
 
     function renderSummary(data){
       const summary = data.summary || [];
-      let totalAmount = 0;
-      let totalItems = 0;
+      const groupBy = data.group_by || 'am';
 
-      summary.forEach(group => {
-        totalAmount += group.total_amount;
-        totalItems += group.count;
-      });
+      document.getElementById('totalAmount').textContent = fmtMoney(data.total_amount);
+      document.getElementById('totalItems').textContent = (data.total_items || 0).toLocaleString();
+      document.getElementById('totalGroups').textContent = summary.length.toLocaleString();
+      const labels = { am: 'asset managers', property: 'properties', vendor: 'vendors', charge_code: 'charge codes', month: 'billback periods' };
+      document.getElementById('totalGroupsLabel').textContent = labels[groupBy] || 'groups';
 
-      document.getElementById('totalAmount').textContent = '$' + totalAmount.toFixed(2);
-      document.getElementById('totalItems').textContent = totalItems;
+      const hint = document.getElementById('pdfReadyHint');
+      hint.textContent = data.pdf_lookup_ready
+        ? 'PDF lookup: live (search index ready)'
+        : 'PDF lookup: warming up (some PDFs may be missing — refresh in ~30s)';
+      hint.style.color = data.pdf_lookup_ready ? '#059669' : '#a16207';
 
-      const groupsContainer = document.getElementById('groupsContainer');
-      groupsContainer.innerHTML = '';
+      const c = document.getElementById('groupsContainer');
+      c.innerHTML = '';
 
       if (summary.length === 0) {
-        groupsContainer.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b">No billback data found. Save some line items from the billback page first.</div>';
+        c.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b">No billback data found for the selected filter.</div>';
         return;
       }
 
-      summary.forEach(group => {
-        const section = document.createElement('div');
-        section.className = 'group-section';
+      // AM-grouped layout uses nested properties; legacy group_by uses flat tables.
+      if (groupBy === 'am') {
+        summary.forEach(am => c.appendChild(renderAmBlock(am)));
+      } else {
+        summary.forEach(grp => c.appendChild(renderFlatGroup(grp)));
+      }
+    }
 
-        const header = document.createElement('div');
-        header.className = 'group-header';
+    function renderAmBlock(am) {
+      const block = document.createElement('details');
+      block.className = 'am-block';
+      block.open = true;
+      const propsHtml = (am.properties || []).map(p => {
+        const noteHtml = p.property_note
+          ? `<div class="prop-note">📝 ${escapeHtml(p.property_note)}</div>`
+          : `<div class="prop-note-empty">No property note yet — add one on Master Bills to surface context here.</div>`;
+        const itemsRows = (p.items || []).map(it => {
+          const pdfCell = it.pdf_url
+            ? `<a class="pdf-pill" href="${escapeHtml(it.pdf_url)}" target="_blank" rel="noopener">View PDF</a>`
+            : `<span class="pdf-missing">no PDF match</span>`;
+          return `
+            <tr>
+              <td>${escapeHtml(it.billback_period || '')}</td>
+              <td>${escapeHtml(it.vendor_name || '')}</td>
+              <td>${escapeHtml(it.account_number || '')}</td>
+              <td>${escapeHtml(it.charge_code || '')}</td>
+              <td>${escapeHtml(it.utility_type || '')}</td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums">${fmtMoney(it.billback_amount)}</td>
+              <td style="font-style:italic;color:#64748b">${escapeHtml(it.notes || '')}</td>
+              <td>${pdfCell}</td>
+            </tr>`;
+        }).join('');
+        return `
+          <div class="prop-block">
+            <div class="prop-head">
+              <div>
+                <div class="prop-name">${escapeHtml(p.property_name)}</div>
+                <div class="prop-stats">${p.count} item${p.count === 1 ? '' : 's'}${p.property_id ? ' · ID ' + escapeHtml(p.property_id) : ''}</div>
+              </div>
+              <div class="prop-amount">${fmtMoney(p.total_amount)}</div>
+            </div>
+            ${noteHtml}
+            <table class="items-table">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Vendor</th>
+                  <th>Account</th>
+                  <th>Charge Code</th>
+                  <th>Utility</th>
+                  <th style="text-align:right">Amount</th>
+                  <th>Notes</th>
+                  <th>PDF</th>
+                </tr>
+              </thead>
+              <tbody>${itemsRows}</tbody>
+            </table>
+          </div>`;
+      }).join('');
 
-        const title = document.createElement('div');
-        title.className = 'group-title';
-        title.textContent = group.group_key + ` (${group.count} items)`;
+      block.innerHTML = `
+        <summary>
+          <span>${escapeHtml(am.asset_manager || am.group_key || 'Unassigned')}</span>
+          <span class="am-meta">
+            <span>${am.property_count || (am.properties ? am.properties.length : 0)} propert${(am.property_count === 1 || (am.properties && am.properties.length === 1)) ? 'y' : 'ies'}</span>
+            <span>${am.count} line${am.count === 1 ? '' : 's'}</span>
+            <span class="am-amount">${fmtMoney(am.total_amount)}</span>
+          </span>
+        </summary>
+        ${propsHtml || '<div style="padding:14px 20px;color:#64748b;font-size:12px">No properties.</div>'}`;
+      return block;
+    }
 
-        const amount = document.createElement('div');
-        amount.className = 'group-amount';
-        amount.textContent = '$' + group.total_amount.toFixed(2);
-
-        header.appendChild(title);
-        header.appendChild(amount);
-        section.appendChild(header);
-
-        // Create table for items in this group
-        const table = document.createElement('table');
-        table.innerHTML = `
+    function renderFlatGroup(group) {
+      const section = document.createElement('div');
+      section.className = 'group-section';
+      const itemsRows = (group.items || []).map(item => {
+        const pdfCell = item.pdf_url
+          ? `<a class="pdf-pill" href="${escapeHtml(item.pdf_url)}" target="_blank" rel="noopener">View PDF</a>`
+          : `<span class="pdf-missing">—</span>`;
+        return `
+          <tr>
+            <td>${escapeHtml(item.property_name || 'N/A')}</td>
+            <td>${escapeHtml(item.vendor_name || 'N/A')}</td>
+            <td>${escapeHtml(item.account_number || '')}</td>
+            <td>${escapeHtml(item.charge_code || 'N/A')}</td>
+            <td>${escapeHtml(item.billback_period || 'N/A')}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${fmtMoney(item.billback_amount)}</td>
+            <td style="font-style:italic;color:#64748b">${escapeHtml(item.notes || '')}</td>
+            <td>${pdfCell}</td>
+          </tr>`;
+      }).join('');
+      section.innerHTML = `
+        <div class="group-header">
+          <div class="group-title">${escapeHtml(group.group_key)} (${group.count} items)</div>
+          <div class="group-amount">${fmtMoney(group.total_amount)}</div>
+        </div>
+        <table>
           <thead>
             <tr>
               <th>Property</th>
               <th>Vendor</th>
+              <th>Account</th>
               <th>Charge Code</th>
               <th>Billback Period</th>
               <th style="text-align:right">Amount</th>
               <th>Notes</th>
+              <th>PDF</th>
             </tr>
           </thead>
-          <tbody>
-          </tbody>
-        `;
-
-        const tbody = table.querySelector('tbody');
-
-        group.items.forEach(item => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td style="font-size:11px">${item.property_name || 'N/A'}</td>
-            <td style="font-size:11px">${item.vendor_name || 'N/A'}</td>
-            <td style="font-size:11px">${item.charge_code || 'N/A'}</td>
-            <td style="font-size:11px">${item.billback_period || 'N/A'}</td>
-            <td style="text-align:right;font-size:11px">$${item.billback_amount.toFixed(2)}</td>
-            <td style="font-size:11px;font-style:italic;color:#64748b">${item.notes || ''}</td>
-          `;
-          tbody.appendChild(tr);
-        });
-
-        section.appendChild(table);
-        groupsContainer.appendChild(section);
-      });
+          <tbody>${itemsRows}</tbody>
+        </table>`;
+      return section;
     }
 
     // Load summary on page load
-    loadSummary();  
+    loadSummary();
+
     // ===IMPROVE-JS-START===
     (function(){
       // ---------- helpers ----------

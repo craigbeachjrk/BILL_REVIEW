@@ -111,6 +111,23 @@
   </header>
   <div id="toast" class="toast"></div>
 
+  <!-- Property Note Modal -->
+  <div id="propertyNoteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center">
+    <div style="background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:520px;width:92%;padding:22px">
+      <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Property note</div>
+      <h3 id="pnModalProperty" style="margin:4px 0 12px 0;font-size:17px">…</h3>
+      <p style="font-size:12px;color:#475569;margin:0 0 8px 0">One-liner shown next to this property on Master Bills + the Billback Summary report. Use it to capture context like "should be 3 bills, water bimonthly" or "last vendor change was 02/2026 — old account closed".</p>
+      <input type="text" id="pnModalInput" maxlength="500" placeholder="e.g. Should be 3 bills/month — water on bimonthly cycle"
+             style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();savePropertyNote(false);}else if(event.key==='Escape'){closePropertyNoteModal();}" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button id="pnModalDeleteBtn" class="btn small" style="background:#fee2e2;color:#b91c1c;display:none" onclick="savePropertyNote(true)">Clear note</button>
+        <button class="btn small secondary" onclick="closePropertyNoteModal()">Cancel</button>
+        <button class="btn small" onclick="savePropertyNote(false)">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div class="wrap">
     <h1>UBI Master Bills</h1>
 
@@ -735,6 +752,17 @@
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    // Escape for embedding inside a single-quoted JS string in an HTML attribute
+    // (e.g. onclick="foo('${escapeJsAttr(x)}')"). Handles backslash, quote, newline.
+    function escapeJsAttr(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r');
     }
 
     function renderMasterBills() {
@@ -1406,10 +1434,15 @@
         const statusClass = prop.percentage >= 100 ? 'complete' : prop.percentage > 0 ? 'partial' : 'missing';
         const statusIcon = prop.percentage >= 100 ? '&#10003;' : prop.percentage > 0 ? '&#9679;' : '&#10007;';
 
+        const _noteText = prop.property_note || '';
+        const _noteHtml = _noteText
+          ? `<div class="property-note" style="font-size:11px;color:#0c4a6e;margin-bottom:6px;padding:5px 8px;background:#e0f2fe;border-radius:6px;border-left:3px solid #0ea5e9;cursor:pointer;line-height:1.35;display:flex;justify-content:space-between;gap:6px;align-items:flex-start" onclick="event.stopPropagation();editPropertyNote('${escapeJsAttr(prop.property_id)}','${escapeJsAttr(prop.property_name || '')}','${escapeJsAttr(_noteText)}')" title="Click to edit"><span style="flex:1">📝 ${escapeHtml(_noteText)}</span><span style="color:#64748b;font-size:9px;flex-shrink:0">edit</span></div>`
+          : `<div class="property-note-empty" style="font-size:10px;color:#94a3b8;margin-bottom:6px;cursor:pointer;padding:3px 6px;border:1px dashed #cbd5e1;border-radius:6px;text-align:center" onclick="event.stopPropagation();editPropertyNote('${escapeJsAttr(prop.property_id)}','${escapeJsAttr(prop.property_name || '')}','')" title="Add property note">+ add property note</div>`;
         html += `
           <div class="property-card ${statusClass}" ondblclick="togglePropertyAccounts('${prop.property_id}')" title="Double-click to expand/collapse">
             <div class="property-name">${prop.property_name || prop.property_id}</div>
             ${prop.ap_name ? `<div class="ap-name" style="font-size:11px;color:#7c3aed;margin-bottom:4px;font-weight:500">${prop.ap_name}</div>` : ''}
+            ${_noteHtml}
             <div class="property-stats">
               <span>${prop.complete}/${prop.total} assigned${(prop.posted_unassigned || 0) > 0 ? ` <span style="font-size:11px;color:#3b82f6">(${prop.posted_unassigned} posted)</span>` : ''}</span>
               ${prop.vacant_accounts > 0 ? `<span style="font-size:11px;color:#a855f7" title="${prop.vacant_accounts} account(s) predominantly vacant">🏚 ${prop.vacant_accounts}V</span>` : ''}
@@ -1510,6 +1543,55 @@
       const el = document.getElementById(`accounts-${propertyId}`);
       if (el) {
         el.classList.toggle('show');
+      }
+    }
+
+    /* ---- Property Notes ---- */
+    let _propNoteState = { propertyId: '', propertyName: '' };
+
+    function editPropertyNote(propertyId, propertyName, currentNote) {
+      _propNoteState = { propertyId, propertyName };
+      const overlay = document.getElementById('propertyNoteModal');
+      if (!overlay) return;
+      document.getElementById('pnModalProperty').textContent = propertyName || propertyId;
+      document.getElementById('pnModalInput').value = currentNote || '';
+      document.getElementById('pnModalDeleteBtn').style.display = currentNote ? 'inline-block' : 'none';
+      overlay.style.display = 'flex';
+      // focus & move cursor to end
+      setTimeout(() => {
+        const inp = document.getElementById('pnModalInput');
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }, 50);
+    }
+
+    function closePropertyNoteModal() {
+      const overlay = document.getElementById('propertyNoteModal');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    async function savePropertyNote(deleteIt) {
+      const note = deleteIt ? '' : document.getElementById('pnModalInput').value.trim();
+      const propertyId = _propNoteState.propertyId;
+      if (!propertyId) { closePropertyNoteModal(); return; }
+      try {
+        const fd = new FormData();
+        fd.append('property_id', propertyId);
+        fd.append('note', note);
+        const resp = await fetch('/api/config/property-notes', { method: 'POST', body: fd });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          showToast(err.error || 'Failed to save note', 'err');
+          return;
+        }
+        closePropertyNoteModal();
+        showToast(note ? 'Property note saved' : 'Property note cleared', 'ok');
+        // Server-side cache was invalidated by POST; re-fetch to reflect the change
+        if (typeof loadCompletionTracker === 'function') {
+          loadCompletionTracker();
+        }
+      } catch (e) {
+        showToast('Error: ' + e.message, 'err');
       }
     }
 
