@@ -22163,6 +22163,17 @@ def api_completion_tracker(
         # Cache key includes period since the computation is deeply period-dependent
         _cache_name = f"completion_tracker__{period or 'all'}"
 
+        # When refresh=1 is requested, _metrics_serve's stale-while-revalidate
+        # behavior would still return the OLD cache and rebuild in background.
+        # That defeats the point — the user wants their write reflected NOW.
+        # Bust the cache layer ourselves so _metrics_serve falls through to
+        # synchronous compute on this very request.
+        if refresh:
+            try:
+                _bust_completion_tracker_caches()
+            except Exception as _e:
+                print(f"[COMPLETION TRACKER] Cache bust on refresh failed: {_e}")
+
         def _compute():
             print(f"[COMPLETION TRACKER] Starting for period: {period or 'all'}")
 
