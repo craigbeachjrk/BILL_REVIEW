@@ -8731,17 +8731,23 @@ def _extract_skip_reason_text(value) -> str:
 
 
 def _is_skip_expired(value, today_iso: str = None) -> bool:
-    """True if a dict-form skip has an expires_at date strictly before today."""
+    """True if a dict-form skip has an expires_at date strictly before today.
+    Robust to non-ISO date strings — anything that fails to parse as a date is
+    treated as 'never expires' rather than silently triggering false positives."""
     if not isinstance(value, dict):
         return False
     exp = value.get("expires_at")
     if not exp:
         return False
-    if today_iso is None:
-        today_iso = dt.date.today().isoformat()
     try:
-        return str(exp) < today_iso
+        # Parse expires_at first 10 chars as ISO date (YYYY-MM-DD).
+        # The write path always emits this format; we tolerate trailing content.
+        exp_date = dt.date.fromisoformat(str(exp)[:10])
+        today_d = (dt.date.fromisoformat(today_iso[:10])
+                   if today_iso else dt.date.today())
+        return exp_date < today_d
     except Exception:
+        # Unparseable expiry → don't expire (safer than expiring everything)
         return False
 
 
@@ -11417,7 +11423,9 @@ def api_workflow_research(
         # ------- Fuzzy account variants (handles "ID doesn't match exactly") -------
         # Try common normalization variants and look each one up. Show the rep
         # WHICH variant matched so they can spot data-entry issues at the source.
+        # Dedup by pdf_id so the same bill doesn't appear once per matching variant.
         fuzzy_account_matches = []
+        fuzzy_seen_pdf_ids = set(seen_pdf_ids)  # don't re-list bills already in pipeline_bills
         if search_entries and account_number_s:
             tried = set()
 
@@ -11427,22 +11435,25 @@ def api_workflow_research(
                     return
                 tried.add(v)
                 vlow = v.lower()
-                # Look up by exact lowercase match in account_l
                 for e in search_entries:
-                    if e.get("account_l", "") == vlow:
-                        # Filter to same property if known (otherwise risk noise)
-                        if prop_lower and prop_lower not in e.get("property_l", ""):
-                            continue
-                        fuzzy_account_matches.append({
-                            "tried_variant": v,
-                            "variant_label": label,
-                            **_entry_to_dict(e),
-                        })
+                    if e.get("account_l", "") != vlow:
+                        continue
+                    # Same-property filter (otherwise risk noise from unrelated accounts)
+                    if prop_lower and prop_lower not in e.get("property_l", ""):
+                        continue
+                    pid_e = e.get("pdf_id", "")
+                    if pid_e in fuzzy_seen_pdf_ids:
+                        continue
+                    fuzzy_seen_pdf_ids.add(pid_e)
+                    fuzzy_account_matches.append({
+                        "tried_variant": v,
+                        "variant_label": label,
+                        **_entry_to_dict(e),
+                    })
 
-            import re as _re
-            _v_strip_special = _re.sub(r'[^A-Za-z0-9]', '', account_number_s)
+            _v_strip_special = re.sub(r'[^A-Za-z0-9]', '', account_number_s)
             _v_no_lead_zero = _v_strip_special.lstrip('0') or '0'
-            _v_only_digits = _re.sub(r'\D', '', account_number_s)
+            _v_only_digits = re.sub(r'\D', '', account_number_s)
             _v_no_suffix = account_number_s.split('-')[0] if '-' in account_number_s else account_number_s
 
             _variant("strip non-alphanumeric", _v_strip_special)
@@ -11624,6 +11635,8 @@ def api_workflow_research_entrata_live(
                 "property_code": prop_code,
                 "fetched_at": dt.datetime.utcfromtimestamp(cached["ts"]).isoformat() + "Z",
                 "cache_hit": True,
+                "date_col_used": cached.get("date_col"),
+                "days_back": days_back_i,
             }
 
         # Build the query. SELECT * — we don't know every column AP_INVOICE_LIVE
@@ -11639,17 +11652,10 @@ def api_workflow_research_entrata_live(
             params.append(account_number_s)
             params.append(f"%{account_number_s}%")
 
-        # Try to filter by a date column if one exists. AP_INVOICE_LIVE
-        # likely has POSTED_DATE / INVOICE_DATE / CREATED_DATE — we add a
-        # safe wrapper that won't break if no such column exists by trying
-        # the most common name and degrading gracefully.
-        sql = f"""
-            SELECT *
-            FROM RAW.ENTRATA.AP_INVOICE_LIVE
-            WHERE {' AND '.join(clauses)}
-            LIMIT 200
-        """
-
+        # AP_INVOICE_LIVE's exact schema isn't checked into this repo. We don't
+        # know which date column to filter on, so try the most likely names and
+        # fall back gracefully. This also gives us a meaningful ORDER BY — without
+        # one, "LIMIT 200" returns arbitrary rows that may miss recent invoices.
         creds = _get_snowflake_credentials()
         if not creds:
             return JSONResponse(
@@ -11657,13 +11663,57 @@ def api_workflow_research_entrata_live(
                 status_code=503,
             )
 
+        # Try date-ordered queries in preference order; first one that succeeds wins.
+        date_col_candidates = [
+            "POSTED_DATE", "POST_DATE", "INVOICE_DATE",
+            "CREATED_DATE", "CREATED_AT", "POST_MONTH",
+        ]
+        sql_attempts = []
+        for col in date_col_candidates:
+            sql_attempts.append((
+                col,
+                f"""
+                    SELECT *
+                    FROM RAW.ENTRATA.AP_INVOICE_LIVE
+                    WHERE {' AND '.join(clauses)}
+                      AND {col} >= DATEADD(day, -%s, CURRENT_DATE())
+                    ORDER BY {col} DESC
+                    LIMIT 200
+                """,
+                list(params) + [days_back_i],
+            ))
+        # Final fallback: no date filter, no order — should always work.
+        sql_attempts.append((
+            None,
+            f"""
+                SELECT *
+                FROM RAW.ENTRATA.AP_INVOICE_LIVE
+                WHERE {' AND '.join(clauses)}
+                LIMIT 200
+            """,
+            list(params),
+        ))
+
         rows_out: list[dict] = []
         cols_out: list[str] = []
+        date_col_used = None
+        last_err = None
+
         conn = _snowflake_connect(creds)
         try:
             cur = conn.cursor()
             try:
-                cur.execute(sql, params)
+                for col, sql, attempt_params in sql_attempts:
+                    try:
+                        cur.execute(sql, attempt_params)
+                        date_col_used = col
+                        break
+                    except Exception as _qe:
+                        # Likely "invalid identifier" for a missing column — try the next.
+                        last_err = _qe
+                        continue
+                else:
+                    raise last_err or RuntimeError("All Snowflake query attempts failed")
                 cols_out = [c[0].lower() for c in (cur.description or [])]
                 for raw in cur.fetchall():
                     row = {}
@@ -11690,7 +11740,12 @@ def api_workflow_research_entrata_live(
                 pass
 
         # Cache by query key
-        _ENTRATA_LIVE_CACHE[ck] = {"ts": _now, "rows": rows_out, "columns": cols_out}
+        _ENTRATA_LIVE_CACHE[ck] = {
+            "ts": _now,
+            "rows": rows_out,
+            "columns": cols_out,
+            "date_col": date_col_used,
+        }
         # Trim cache if it grows large
         if len(_ENTRATA_LIVE_CACHE) > 500:
             _oldest = sorted(_ENTRATA_LIVE_CACHE.items(), key=lambda kv: kv[1]["ts"])[:100]
@@ -11705,6 +11760,8 @@ def api_workflow_research_entrata_live(
             "property_code": prop_code,
             "fetched_at": dt.datetime.utcnow().isoformat() + "Z",
             "cache_hit": False,
+            "date_col_used": date_col_used,
+            "days_back": days_back_i,
         }
     except Exception as e:
         print(f"[ENTRATA LIVE] Error: {e}")
