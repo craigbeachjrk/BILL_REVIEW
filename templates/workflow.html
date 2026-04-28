@@ -2239,8 +2239,17 @@ function _rd_billRow(b, extra) {
   const date = b.date ? escapeHtml(b.date) : '';
   const acct = b.account ? escapeHtml(b.account) : '';
   const vendor = b.vendor ? escapeHtml(b.vendor) : '';
-  const pid = b.pdf_id ? escapeHtml(b.pdf_id) : '';
-  const link = pid ? `<a href="/bill/timeline?pdf_id=${encodeURIComponent(pid)}" target="_blank" style="font-size:10px;color:#0369a1">view bill →</a>` : '';
+  const s3k = b.s3_key || '';
+  const pid = b.pdf_id || '';
+  // Prefer the PDF proxy (the actual invoice PDF) over the timeline page —
+  // research is about seeing the bill, not its pipeline event log.
+  const links = [];
+  if (s3k) {
+    links.push(`<a href="/pdf?k=${encodeURIComponent(s3k)}" target="_blank" rel="noopener" style="font-size:10px;color:#fff;background:#0ea5e9;padding:2px 8px;border-radius:4px;text-decoration:none;font-weight:600">View PDF</a>`);
+  }
+  if (pid) {
+    links.push(`<a href="/bill/timeline?pdf_id=${encodeURIComponent(pid)}" target="_blank" rel="noopener" style="font-size:10px;color:#64748b;text-decoration:underline">timeline</a>`);
+  }
   return `
     <div style="border:1px solid #e5e7eb;border-radius:6px;padding:6px 8px;margin-bottom:4px;font-size:12px;line-height:1.35;background:#fff">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
@@ -2248,7 +2257,7 @@ function _rd_billRow(b, extra) {
         <span style="color:#475569">${amt}</span>
       </div>
       <div style="color:#64748b">${date}${acct ? ' · acct ' + acct : ''}${extra ? ' · ' + extra : ''}</div>
-      ${link ? `<div style="margin-top:2px">${link}</div>` : ''}
+      ${links.length ? `<div style="margin-top:4px;display:flex;gap:8px;align-items:center">${links.join('')}</div>` : ''}
     </div>`;
 }
 
