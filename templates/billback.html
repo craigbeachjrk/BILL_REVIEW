@@ -2471,6 +2471,33 @@
       });
     }
 
+    // Count how many active filters reduce the visible bill list. Used for the
+    // "filters active" banner so the user notices when bills are being hidden.
+    function _countActiveFilters() {
+      const f = ubiFilters || {};
+      let n = 0;
+      const lists = ['trackerStatus','ubiStatus','utilityTypes','properties','vendors','accounts','glCodes'];
+      for (const k of lists) {
+        if (Array.isArray(f[k]) && f[k].length > 0) n++;
+      }
+      if (f.serviceStartMonth) n++;
+      return n;
+    }
+
+    function _activeFilterDescriptions() {
+      const f = ubiFilters || {};
+      const out = [];
+      if (f.trackerStatus && f.trackerStatus.length) out.push(`Tracker: ${f.trackerStatus.join(', ')}`);
+      if (f.ubiStatus && f.ubiStatus.length) out.push(`UBI: ${f.ubiStatus.join(', ')}`);
+      if (f.utilityTypes && f.utilityTypes.length) out.push(`Utility: ${f.utilityTypes.join(', ')}`);
+      if (f.properties && f.properties.length) out.push(`Property (${f.properties.length})`);
+      if (f.vendors && f.vendors.length) out.push(`Vendor (${f.vendors.length})`);
+      if (f.accounts && f.accounts.length) out.push(`Account (${f.accounts.length})`);
+      if (f.glCodes && f.glCodes.length) out.push(`GL (${f.glCodes.length})`);
+      if (f.serviceStartMonth) out.push(`Svc month: ${f.serviceStartMonth}`);
+      return out;
+    }
+
     function renderUnassignedBills() {
       const container = document.getElementById('unassignedBills');
 
@@ -2481,13 +2508,37 @@
 
       // Apply filters using helper function
       let filteredBills = getFilteredBills();
+      const totalLoaded = ubiUnassignedBills.length;
+      const visible = filteredBills.length;
+      const activeFilterCount = _countActiveFilters();
+      const filterDescs = _activeFilterDescriptions();
+
+      // Always emit a count banner so it's never ambiguous when filters are
+      // hiding bills. When visible < totalLoaded, the banner goes amber and
+      // surfaces a one-click "Clear filters" button — was previously silent,
+      // which made stuck filters look like data loss.
+      let banner = '';
+      if (activeFilterCount > 0 && visible < totalLoaded) {
+        banner = `
+          <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="font-size:13px;color:#92400e">
+              <strong>Showing ${visible.toLocaleString()} of ${totalLoaded.toLocaleString()}</strong> bills · ${totalLoaded - visible} hidden by ${activeFilterCount} active filter${activeFilterCount === 1 ? '' : 's'}: ${filterDescs.map(escapeHtml).join(' · ')}
+            </div>
+            <button class="btn small" onclick="clearAllFilters();renderUnassignedBills();" style="background:#92400e;color:#fff;font-size:12px;white-space:nowrap">Clear all filters</button>
+          </div>`;
+      } else if (activeFilterCount > 0) {
+        // All visible but filters set — quieter green banner so user knows
+        banner = `<div style="font-size:12px;color:#059669;margin-bottom:8px">Showing all ${totalLoaded.toLocaleString()} loaded bills · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active</div>`;
+      } else {
+        banner = `<div style="font-size:12px;color:#64748b;margin-bottom:8px">${totalLoaded.toLocaleString()} bills loaded</div>`;
+      }
 
       if (filteredBills.length === 0) {
-        container.innerHTML = '<div class="loading">No bills match the selected filters</div>';
+        container.innerHTML = banner + '<div class="loading">No bills match the selected filters</div>';
         return;
       }
 
-      let html = '';
+      let html = banner;
       filteredBills.forEach(bill => {
         // Get bill-level info from first line
         const firstLine = bill.unassigned_lines[0];
