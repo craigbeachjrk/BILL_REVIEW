@@ -1379,7 +1379,12 @@
     });
 
     // ===== COMPLETION TRACKER FUNCTIONS =====
-    async function loadCompletionTracker(forceRefresh) {
+    // Cached response from the most recent successful load — used for optimistic
+    // in-place updates after writes (Create Entry, etc.) so the user sees their
+    // change instantly without a server round-trip + loading flash.
+    let _currentTrackerData = null;
+
+    async function loadCompletionTracker(forceRefresh, silentRefresh) {
       const period = document.getElementById('trackerPeriod').value;
       const container = document.getElementById('trackerContent');
 
@@ -1391,7 +1396,12 @@
         return;
       }
 
-      container.innerHTML = '<div class="loading">Loading completion data...</div>';
+      // Skip the loading flash on silent refreshes (e.g. after Create Entry):
+      // the user just saw their optimistic update — replacing the screen with
+      // "Loading…" undoes that and feels jarring.
+      if (!silentRefresh) {
+        container.innerHTML = '<div class="loading">Loading completion data...</div>';
+      }
 
       try {
         const refreshParam = forceRefresh ? '&refresh=1' : '';
@@ -1399,11 +1409,51 @@
         if (!response.ok) throw new Error('Failed to load completion data');
 
         const data = await response.json();
+        _currentTrackerData = data;  // cache for optimistic updates
         renderCompletionTracker(data);
       } catch (e) {
         console.error('Error loading completion tracker:', e);
-        container.innerHTML = '<div class="loading" style="color:#ef4444">Error loading completion data</div>';
+        if (!silentRefresh) {
+          container.innerHTML = '<div class="loading" style="color:#ef4444">Error loading completion data</div>';
+        }
       }
+    }
+
+    // Mutate the in-memory tracker to reflect a freshly-created accrual entry
+    // and re-render. Done before any server round-trip so the UI feels instant.
+    function _applyOptimisticAccrualEntry(propertyId, accountNumber, vendorName, entryType) {
+      if (!_currentTrackerData || !Array.isArray(_currentTrackerData.properties)) return false;
+      const prop = _currentTrackerData.properties.find(p => p.property_id === propertyId);
+      if (!prop || !Array.isArray(prop.accounts)) return false;
+      const acc = prop.accounts.find(a =>
+        (a.account_number || '') === accountNumber &&
+        (vendorName ? (a.vendor_name || '') === vendorName : true)
+      );
+      if (!acc) return false;
+      // Only credit "complete" if this account wasn't already counted
+      const wasCompleted = !!(acc.has_bill || acc.has_manual_entry);
+      acc.has_manual_entry = true;
+      acc.manual_entry_type = entryType || 'MANUAL';
+      if (!wasCompleted) {
+        prop.complete = (prop.complete || 0) + 1;
+        if ((prop.posted_unassigned || 0) > 0 && acc.has_posted_bill) {
+          // The account just transitioned from posted-but-unassigned → counted.
+          prop.posted_unassigned = Math.max(0, prop.posted_unassigned - 1);
+        }
+        const total = prop.total || 0;
+        prop.percentage = total > 0 ? Math.round((prop.complete / total) * 1000) / 10 : 0;
+
+        // Update overall totals too
+        const overall = _currentTrackerData.overall || {};
+        overall.complete = (overall.complete || 0) + 1;
+        if (overall.posted_unassigned && acc.has_posted_bill) {
+          overall.posted_unassigned = Math.max(0, overall.posted_unassigned - 1);
+        }
+        const otot = overall.total || 0;
+        overall.percentage = otot > 0 ? Math.round((overall.complete / otot) * 1000) / 10 : 0;
+      }
+      renderCompletionTracker(_currentTrackerData);
+      return true;
     }
 
     function renderCompletionTracker(data) {
@@ -2361,8 +2411,20 @@
         });
         if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'Failed'); }
         showToast(`${entryType} entry created ($${amount.toFixed(2)})`, 'ok');
+        const propId = accrualData.property_id;
+        const acctNum = accrualData.account_number;
+        const vendor = accrualData.vendor_name || '';
         closeAccrualModal();
-        loadCompletionTracker();
+        // Optimistic in-place update: instant feedback, no loading flash.
+        const applied = _applyOptimisticAccrualEntry(propId, acctNum, vendor, entryType);
+        // Silent background refresh to reconcile with server truth (cache was
+        // busted server-side, so the next fetch returns fresh data).
+        if (applied) {
+          loadCompletionTracker(true, true);
+        } else {
+          // Couldn't find the row in cached data — fall back to a normal refresh
+          loadCompletionTracker(true);
+        }
       } catch (e) {
         console.error('Error creating accrual entry:', e);
         showToast(`Error: ${e.message}`, 'err');

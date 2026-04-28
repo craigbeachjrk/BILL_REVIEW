@@ -23004,6 +23004,15 @@ async def api_accrual_create(request: Request, user: str = Depends(require_user)
 
         print(f"[ACCRUAL CREATE] Created {entry_type} entry {entry_id} for {property_id}/{account_number} period {period} amount={amount}")
 
+        # Invalidate the completion-tracker caches so the new entry shows up
+        # on the next fetch instead of waiting for the 60-min TTL. Without this
+        # bust, the 2nd and 3rd entries created in a row look like they didn't
+        # save (the GET serves the cached response from before the 1st save).
+        try:
+            _bust_completion_tracker_caches()
+        except Exception as _e:
+            print(f"[ACCRUAL CREATE] Cache bust failed: {_e}")
+
         return {"ok": True, "entry_id": entry_id}
 
     except Exception as e:
