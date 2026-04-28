@@ -18690,14 +18690,22 @@ def _match_vendor_in_invoices(property_id: str, vendor_name: str, account_number
 def _read_historical_from_invoices_mat(property_id: str, account_number: str, vendor_name: str) -> tuple[list[dict], dict | None]:
     """Read historical amounts from precomputed INVOICES_MAT cache.
 
-    Priority: account-number match (exact per-account amounts) > vendor-name match (aggregated).
+    Returns ONLY exact per-account matches. Previously fell back to vendor-name
+    fuzzy matching when no exact account match existed, which silently aggregated
+    bills across every other account at the same property+vendor — producing a
+    bogus monthly average that looked legitimate. That fallback caused users to
+    accept accruals two orders of magnitude too high (e.g. a $0/month account
+    showing $18,878/month because 22 sister accounts were summed into it).
+
+    No exact account match → empty result. Caller must handle the empty case
+    in UI (refuse to auto-fill amount, show "no history" instead of fake numbers).
+
     Returns: (list of {"period": "MM/YYYY", "amount": float}, match_info dict or None)
     """
     cache = _INVOICE_HISTORY_CACHE
     history_records = None
     match_info = None
 
-    # Priority 1: Direct account number lookup (gives per-account amounts)
     if account_number and cache.get("account_data"):
         prop_code = cache.get("prop_code_map", {}).get(property_id, "")
         if prop_code:
@@ -18705,24 +18713,12 @@ def _read_historical_from_invoices_mat(property_id: str, account_number: str, ve
             prop_accounts = cache["account_data"].get(prop_code, {})
             if acct_clean in prop_accounts:
                 history_records = prop_accounts[acct_clean]
-                # Get the vendor name from the records
                 vendor_raw = history_records[0].get("vendor_raw", "") if history_records else ""
                 match_info = {
                     "matched_vendor": vendor_raw,
                     "match_type": "account",
                     "confidence": 1.0,
                 }
-
-    # Priority 2: Vendor name fuzzy match (falls back to aggregated vendor-level data)
-    if not history_records and vendor_name:
-        match = _match_vendor_in_invoices(property_id, vendor_name, account_number)
-        if match and match.get("history"):
-            history_records = match["history"]
-            match_info = {
-                "matched_vendor": match["matched_vendor"],
-                "match_type": match["match_type"],
-                "confidence": match["confidence"],
-            }
 
     if not history_records:
         return [], None
