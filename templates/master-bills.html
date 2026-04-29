@@ -84,8 +84,9 @@
     .x-icon{color:#ef4444}
     .x-icon.clickable{cursor:pointer;font-weight:700;padding:2px 4px;border-radius:4px;transition:background .15s}
     .x-icon.clickable:hover{background:#fee2e2}
-    .period-unassign-btn{transition:background .12s,color .12s,border-color .12s}
-    .period-unassign-btn:hover{background:#fee2e2 !important;color:#b91c1c !important;border-color:#ef4444 !important}
+    .period-row-clickable{cursor:pointer;transition:background .12s,color .12s}
+    .period-row-clickable:hover{background:#fef2f2;color:#0c4a6e}
+    .period-row-clickable:hover::after{content:" — dbl-click to unassign";color:#94a3b8;font-style:italic;font-size:9px}
     .badge.accrual{background:#dbeafe;color:#1e40af}
     .badge.manual{background:#fce7f3;color:#9d174d}
     .badge.trueup{background:#e0e7ff;color:#3730a3}
@@ -1411,8 +1412,32 @@
         if (!response.ok) throw new Error('Failed to load completion data');
 
         const data = await response.json();
+
+        // The server returns {building: true} when no cache exists and a fresh
+        // compute is running in the background (~90s). Don't clobber the
+        // current view or _currentTrackerData — let the user keep working with
+        // what they had. They (or the silent reconcile) will pick up fresh data
+        // on the next call.
+        if (data && data.building) {
+          if (!silentRefresh) {
+            if (_currentTrackerData) {
+              // Re-render existing data so the loading spinner goes away
+              renderCompletionTracker(_currentTrackerData);
+              showToast('Cache rebuilding (~90s). Click Refresh again to check.', 'ok');
+            } else {
+              container.innerHTML = '<div class="loading" style="color:#0369a1">Cache is rebuilding (this takes ~90s). Click Refresh again in a moment to see data.</div>';
+            }
+          } else {
+            console.log('[Tracker] Cache rebuilding in background — optimistic state preserved');
+          }
+          return;
+        }
+
         _currentTrackerData = data;  // cache for optimistic updates
         renderCompletionTracker(data);
+        if (forceRefresh && !silentRefresh) {
+          showToast('Tracker refreshed. Background rebuild started for next click.', 'ok');
+        }
       } catch (e) {
         console.error('Error loading completion tracker:', e);
         if (!silentRefresh) {
@@ -1567,14 +1592,18 @@
           const allPeriods = Array.isArray(acc.all_assigned_periods) ? acc.all_assigned_periods : [];
           let svcDates = '';
           if (allPeriods.length > 1) {
+            // Each period row is double-clickable to unassign — same affordance
+            // as double-click-to-remove-account elsewhere on the tracker.
+            // single-click does nothing here so it doesn't fight the parent
+            // row's click handler.
             const rows = allPeriods.map(p => {
               const range = (p.service_start || p.service_end)
                 ? `${p.service_start || '?'}${p.service_start && p.service_end ? ' - ' : ''}${p.service_end || '?'}`
                 : '(no service dates)';
-              const unassignBtn = p.s3_key
-                ? `<button class="period-unassign-btn" data-s3-key="${escapeHtml(p.s3_key)}" data-account="${escapeHtml(acc.account_number || '')}" data-vendor="${escapeHtml(acc.vendor_name || '')}" data-property="${escapeHtml(prop.property_name || '')}" data-period="${escapeHtml(p.period)}" title="Unassign period ${escapeHtml(p.period)}" style="margin-left:6px;padding:0 5px;border:1px solid #e5e7eb;background:#fff;color:#94a3b8;border-radius:3px;font-size:9px;cursor:pointer;line-height:1.4">✕</button>`
-                : '';
-              return `<div style="font-size:10px;color:#64748b;display:flex;align-items:center;gap:4px"><strong style="color:#0c4a6e">${escapeHtml(p.period)}</strong> · ${escapeHtml(range)}${unassignBtn}</div>`;
+              const dataAttrs = p.s3_key
+                ? ` class="period-row-clickable" data-s3-key="${escapeHtml(p.s3_key)}" data-account="${escapeHtml(acc.account_number || '')}" data-vendor="${escapeHtml(acc.vendor_name || '')}" data-property="${escapeHtml(prop.property_name || '')}" data-period="${escapeHtml(p.period)}" title="Double-click to unassign this period"`
+                : ' title="No s3_key — cannot unassign from here"';
+              return `<div${dataAttrs} style="font-size:10px;color:#64748b;padding:1px 4px;border-radius:3px"><strong style="color:#0c4a6e">${escapeHtml(p.period)}</strong> · ${escapeHtml(range)}</div>`;
             }).join('');
             svcDates = `<div style="margin-top:2px">${rows}</div>`;
           } else {
@@ -1616,10 +1645,18 @@
         });
       });
 
-      // Per-period unassign buttons (× next to each period in the multi-period list)
-      container.querySelectorAll('.period-unassign-btn').forEach(el => {
+      // Per-period unassign — DOUBLE-CLICK on a period row in the multi-period
+      // list. Mirrors the "double-click to remove account" pattern elsewhere on
+      // the tracker. single-click is intercepted (stopPropagation) so it
+      // doesn't trigger the parent account-item's search action — but we don't
+      // do anything with single-clicks here, double-click is the only action.
+      container.querySelectorAll('.period-row-clickable').forEach(el => {
         el.addEventListener('click', (e) => {
+          e.stopPropagation();  // don't bubble to parent account row
+        });
+        el.addEventListener('dblclick', (e) => {
           e.stopPropagation();
+          e.preventDefault();
           unassignPeriodFromTracker({
             s3Key: el.dataset.s3Key,
             account: el.dataset.account,

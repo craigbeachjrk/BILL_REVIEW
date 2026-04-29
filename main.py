@@ -22166,16 +22166,18 @@ def api_completion_tracker(
         # Cache key includes period since the computation is deeply period-dependent
         _cache_name = f"completion_tracker__{period or 'all'}"
 
-        # When refresh=1 is requested, _metrics_serve's stale-while-revalidate
-        # behavior would still return the OLD cache and rebuild in background.
-        # That defeats the point — the user wants their write reflected NOW.
-        # Bust the cache layer ourselves so _metrics_serve falls through to
-        # synchronous compute on this very request.
-        if refresh:
-            try:
-                _bust_completion_tracker_caches()
-            except Exception as _e:
-                print(f"[COMPLETION TRACKER] Cache bust on refresh failed: {_e}")
+        # NOTE: We do NOT synchronously bust caches on refresh=1. Originally we
+        # did, intending to force a fresh result on the same request, but the
+        # underlying compute takes ~85s — long enough that the browser /
+        # AppRunner load balancer times out and the user sees "Error loading
+        # completion data". Instead, refresh=1 uses stale-while-revalidate
+        # (force_refresh=True below): returns whatever cache has now, kicks off
+        # a fresh compute in the background, and the next GET picks up the new
+        # data. Frontend surfaces a "rebuilding" message so the user knows.
+        #
+        # POST endpoints (accrual create, unassign, property-notes) already
+        # call _bust_completion_tracker_caches() at write time, so the optimistic
+        # UI updates pair with eventual consistency from the bg rebuild.
 
         def _compute():
             print(f"[COMPLETION TRACKER] Starting for period: {period or 'all'}")
@@ -22809,9 +22811,11 @@ def api_completion_tracker(
             return result
 
         # Serve from S3-persisted cache; rebuild in background when stale.
-        # When refresh=1 the call bypasses both layers and recomputes synchronously —
-        # used after writes (note save, tracker delete) so the user sees their change.
-        return _metrics_serve(_cache_name, _compute, force_refresh=bool(refresh), async_cold=False)
+        # async_cold=True so a cold cache returns {"building": True} instantly
+        # instead of a synchronous ~85s compute that would blow past AppRunner's
+        # request timeout. The frontend handles the "building" response by
+        # preserving its current state and prompting the user to refresh again.
+        return _metrics_serve(_cache_name, _compute, force_refresh=bool(refresh), async_cold=True)
 
     except Exception as e:
         print(f"[COMPLETION TRACKER] Error: {e}")
