@@ -22395,6 +22395,7 @@ def api_completion_tracker(
                 vacant_stats = {}  # (prop_id, acct_num, vendor_name) -> {"vacant": N, "house": N}
                 account_all_periods = {}  # (prop_id, acct_num, vendor_name) -> set of ALL assigned periods
                 service_dates = {}  # (prop_id, acct_num, vendor_name, period) -> {"start": date, "end": date, "s3_key": key}
+                service_dates_all = {}  # SAME key → {s3_key: svc_info, ...} for ALL bills assigned to that period (multi-bill case)
                 with ThreadPoolExecutor(max_workers=50) as executor:
                     futures = {executor.submit(process_s3_file, key): key for key in all_keys}
                     for future in as_completed(futures):
@@ -22417,10 +22418,23 @@ def api_completion_tracker(
                                     vacant_stats[acct_key] = {"vacant": 0, "house": 0}
                                 vacant_stats[acct_key]["vacant"] += counts["vacant"]
                                 vacant_stats[acct_key]["house"] += counts["house"]
-                            # Merge service dates
+                            # Merge service dates. service_dates keeps its first-wins
+                            # canonical entry per (account, period) for backwards
+                            # compatibility with downstream code that reads
+                            # svc_info.get("start"). service_dates_all keeps EVERY
+                            # bill assigned to that (account, period) — used for the
+                            # multi-period UI so the tracker shows all bills under a
+                            # UBI period that has multiple assignments (catch-up
+                            # bills, retroactive corrections). Without this, the
+                            # tracker shows one service date range while BILLBACK's
+                            # "last svc → UBI" suggestion uses a different one,
+                            # making the report visibly inconsistent.
                             for svc_key, svc_info in file_svc_dates.items():
                                 if svc_key not in service_dates:
                                     service_dates[svc_key] = svc_info
+                                s3k = svc_info.get("s3_key", "")
+                                bucket = service_dates_all.setdefault(svc_key, {})
+                                bucket.setdefault(s3k, svc_info)
                         except Exception as e:
                             pass
 
@@ -22753,27 +22767,35 @@ def api_completion_tracker(
                 prev_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_prev_period), {}) if _sel_prev_period else {}
                 next_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_next_period), {}) if _sel_next_period else {}
 
-                # All periods this account is assigned to (with service dates per period).
-                # When a single bill maps to multiple UBI periods (or the account has been
-                # assigned to several periods over time), the UI needs the full list to
-                # show "this account has bills for 02/2026, 03/2026, 04/2026" instead of
-                # only the currently-selected period's date range.
+                # All periods (and ALL bills) this account is assigned to. When a
+                # single UBI period has multiple bills (e.g. 04/2026 has both a
+                # Jan-Feb-service bill AND a Feb-Mar-service bill), each bill gets
+                # its own row so the user can reconcile the tracker against
+                # BILLBACK's "last svc → UBI" suggestion without seeing
+                # contradictory dates for the same period.
                 all_assigned_periods = []
-                _seen_periods = set()
                 for _p in sorted(acct_assigned_periods or [], key=lambda x: (x.split("/")[1] if "/" in x else "", x.split("/")[0] if "/" in x else "")):
-                    if _p in _seen_periods:
+                    _bills = service_dates_all.get((property_id, account_number, vendor_name, _p), {})
+                    if not _bills:
+                        # Fallback: one entry from the canonical dict (older single-bill case)
+                        _info = (
+                            service_dates.get((property_id, account_number, vendor_name, _p), {})
+                            or _svc_by_prop_acct_period.get((property_id, norm_acct, _p), {})
+                        )
+                        if _info:
+                            _bills = {_info.get("s3_key", ""): _info}
+                    if not _bills:
+                        all_assigned_periods.append({
+                            "period": _p, "service_start": "", "service_end": "", "s3_key": "",
+                        })
                         continue
-                    _seen_periods.add(_p)
-                    _info = (
-                        service_dates.get((property_id, account_number, vendor_name, _p), {})
-                        or _svc_by_prop_acct_period.get((property_id, norm_acct, _p), {})
-                    )
-                    all_assigned_periods.append({
-                        "period": _p,
-                        "service_start": _normalize_date_display(_info.get("start", "")),
-                        "service_end": _normalize_date_display(_info.get("end", "")),
-                        "s3_key": _info.get("s3_key", ""),
-                    })
+                    for _info in _bills.values():
+                        all_assigned_periods.append({
+                            "period": _p,
+                            "service_start": _normalize_date_display(_info.get("start", "")),
+                            "service_end": _normalize_date_display(_info.get("end", "")),
+                            "s3_key": _info.get("s3_key", ""),
+                        })
 
                 # Check for accrual/manual entry - try exact then vendor-agnostic
                 has_accrual_entry = dedup_key in accrual_entries_map or prop_acct_key in _accrual_by_prop_acct
