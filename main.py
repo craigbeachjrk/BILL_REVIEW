@@ -13087,18 +13087,30 @@ def _metrics_serve(name: str, compute_fn, force_refresh: bool = False, async_col
         age = time.time() - cached.get("ts", 0)
         if not force_refresh and age < _METRICS_CACHE_TTL:
             return cached["data"]
-        # Stale — serve old data, rebuild in background
-        def _bg():
-            try:
-                _METRICS_BUILDING.add(name)
-                result = compute_fn()
-                _metrics_cache_put(name, result)
-                print(f"[METRICS CACHE] Rebuilt {name}")
-            except Exception as e:
-                print(f"[METRICS CACHE] Rebuild {name} failed: {e}")
-            finally:
-                _METRICS_BUILDING.discard(name)
-        threading.Thread(target=_bg, daemon=True).start()
+        # Stale — serve old data, rebuild in background.
+        # Dedup with _METRICS_BUILDING so repeated Refresh clicks during a
+        # long rebuild don't fan out N concurrent threads doing identical work.
+        # A rebuild is either already running (skip) or we kick off exactly one.
+        if name not in _METRICS_BUILDING:
+            _METRICS_BUILDING.add(name)
+            def _bg():
+                try:
+                    result = compute_fn()
+                    _metrics_cache_put(name, result)
+                    print(f"[METRICS CACHE] Rebuilt {name}")
+                except Exception as e:
+                    print(f"[METRICS CACHE] Rebuild {name} failed: {e}")
+                finally:
+                    _METRICS_BUILDING.discard(name)
+            threading.Thread(target=_bg, daemon=True).start()
+        # Return a copy of cached data with a rebuilding flag so callers can
+        # surface accurate UX. If the cached payload is itself a dict, merge;
+        # otherwise wrap.
+        if isinstance(cached["data"], dict):
+            out = dict(cached["data"])
+            out["_rebuilding"] = True
+            out["_cache_age_seconds"] = round(age, 1)
+            return out
         return cached["data"]
     # No cache at all
     if async_cold and name not in _METRICS_BUILDING:

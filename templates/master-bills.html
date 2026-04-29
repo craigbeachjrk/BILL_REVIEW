@@ -1436,7 +1436,17 @@
         _currentTrackerData = data;  // cache for optimistic updates
         renderCompletionTracker(data);
         if (forceRefresh && !silentRefresh) {
-          showToast('Tracker refreshed. Background rebuild started for next click.', 'ok');
+          // The server tells us whether a rebuild is in progress AND how stale
+          // the data we're serving is. Compose an honest message rather than
+          // claiming we kicked something off if it was already running.
+          if (data._rebuilding) {
+            const age = data._cache_age_seconds || 0;
+            const ageStr = age < 60 ? `${Math.round(age)}s` : `${Math.round(age/60)}m`;
+            showToast(`Showing data from ${ageStr} ago. Rebuild running in background — refresh again in ~90s.`, 'ok');
+          } else {
+            // Cache was fresh enough that no rebuild was needed/triggered
+            showToast('Tracker refreshed (cache was already fresh).', 'ok');
+          }
         }
       } catch (e) {
         console.error('Error loading completion tracker:', e);
