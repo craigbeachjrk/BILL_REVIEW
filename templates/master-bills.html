@@ -143,7 +143,7 @@
           <select id="trackerPeriod" onchange="loadCompletionTracker()" style="padding:6px 10px;border-radius:6px;border:1px solid #e5e7eb;font-size:13px">
             <option value="">-- Select Period --</option>
           </select>
-          <button class="btn small" onclick="loadCompletionTracker()">Refresh</button>
+          <button class="btn small" onclick="loadCompletionTracker(true)" title="Force a fresh recompute (bypasses both in-memory and S3 caches)">Refresh</button>
         </div>
       </div>
       <div id="trackerContent">
