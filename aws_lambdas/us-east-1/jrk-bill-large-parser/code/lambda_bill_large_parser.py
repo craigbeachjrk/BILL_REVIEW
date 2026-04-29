@@ -227,7 +227,7 @@ def lambda_handler(event, context):
         if failed_chunks:
             try:
                 ddb.update_item(
-                    TableName=JOB_TABLE,
+                    TableName=JOBS_TABLE,
                     Key={"job_id": {"S": job_id}},
                     UpdateExpression="SET #s = :failed, error_message = :err",
                     ExpressionAttributeNames={"#s": "status"},
