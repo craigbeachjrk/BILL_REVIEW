@@ -2487,13 +2487,27 @@
     function _activeFilterDescriptions() {
       const f = ubiFilters || {};
       const out = [];
-      if (f.trackerStatus && f.trackerStatus.length) out.push(`Tracker: ${f.trackerStatus.join(', ')}`);
-      if (f.ubiStatus && f.ubiStatus.length) out.push(`UBI: ${f.ubiStatus.join(', ')}`);
-      if (f.utilityTypes && f.utilityTypes.length) out.push(`Utility: ${f.utilityTypes.join(', ')}`);
-      if (f.properties && f.properties.length) out.push(`Property (${f.properties.length})`);
-      if (f.vendors && f.vendors.length) out.push(`Vendor (${f.vendors.length})`);
-      if (f.accounts && f.accounts.length) out.push(`Account (${f.accounts.length})`);
-      if (f.glCodes && f.glCodes.length) out.push(`GL (${f.glCodes.length})`);
+      // Show actual values for short lists (≤2) so the user immediately sees
+      // what's hiding their bills. Longer lists show counts to keep the banner
+      // skimmable.
+      function fmt(label, vals) {
+        if (!Array.isArray(vals) || vals.length === 0) return null;
+        if (vals.length <= 2) return `${label}: ${vals.join(', ')}`;
+        return `${label} (${vals.length})`;
+      }
+      const fields = [
+        ['Tracker', f.trackerStatus],
+        ['UBI', f.ubiStatus],
+        ['Utility', f.utilityTypes],
+        ['Property', f.properties],
+        ['Vendor', f.vendors],
+        ['Account', f.accounts],
+        ['GL', f.glCodes],
+      ];
+      for (const [label, vals] of fields) {
+        const s = fmt(label, vals);
+        if (s) out.push(s);
+      }
       if (f.serviceStartMonth) out.push(`Svc month: ${f.serviceStartMonth}`);
       return out;
     }

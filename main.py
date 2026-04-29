@@ -6936,6 +6936,14 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
             unassigned_key = _write_jsonl(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl', ''), unassigned_items)
             print(f"[UBI UNASSIGN] Wrote {len(unassigned_items)} items back to Stage 7: {unassigned_key}")
 
+            # Surface the freshly-unassigned bill in BILLBACK immediately. Without
+            # this the new S7 file sits in S3 until the next Lambda rebuild (~1-2h)
+            # and AP reps see "the bill didn't come back" until then.
+            try:
+                _add_bill_to_ubi_cache(unassigned_key, unassigned_items, posted_at="", submitter=user)
+            except Exception as _e:
+                print(f"[UBI UNASSIGN] Cache add failed (non-fatal): {_e}")
+
             # Update Stage 8 file: rewrite with remaining items or delete if empty
             if remaining_items:
                 new_key = _write_jsonl(UBI_ASSIGNED_PREFIX, y, m, d, base.replace('.jsonl', ''), remaining_items)
@@ -7144,6 +7152,15 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
             # Write unassigned items back to Stage 7
             unassigned_key = _write_jsonl(POST_ENTRATA_PREFIX, y, m, d, base.replace('.jsonl', ''), unassigned_items)
             print(f"[UBI UNASSIGN ACCOUNT] Wrote {len(unassigned_items)} items back to Stage 7: {unassigned_key}")
+
+            # Surface the freshly-unassigned bill in BILLBACK immediately. Without
+            # this, the new S7 file sits in S3 until the next jrk-ubi-cache-builder
+            # Lambda run (~1-2h) and AP reps see "the bill didn't come back" until
+            # then. Mirror of /api/advance_to_post_stage which already does this.
+            try:
+                _add_bill_to_ubi_cache(unassigned_key, unassigned_items, posted_at="", submitter=user)
+            except Exception as _e:
+                print(f"[UBI UNASSIGN ACCOUNT] Cache add failed (non-fatal): {_e}")
 
             # Update or delete Stage 8 file
             if remaining_items:
