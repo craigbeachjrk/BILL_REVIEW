@@ -84,6 +84,8 @@
     .x-icon{color:#ef4444}
     .x-icon.clickable{cursor:pointer;font-weight:700;padding:2px 4px;border-radius:4px;transition:background .15s}
     .x-icon.clickable:hover{background:#fee2e2}
+    .period-unassign-btn{transition:background .12s,color .12s,border-color .12s}
+    .period-unassign-btn:hover{background:#fee2e2 !important;color:#b91c1c !important;border-color:#ef4444 !important}
     .badge.accrual{background:#dbeafe;color:#1e40af}
     .badge.manual{background:#fce7f3;color:#9d174d}
     .badge.trueup{background:#e0e7ff;color:#3730a3}
@@ -1559,7 +1561,9 @@
           // When the account is assigned to multiple UBI periods (the same bill
           // covers several months, or quarterly billing was split), show ALL
           // of them so the AP rep can see the full coverage instead of only
-          // the currently-selected period's date range.
+          // the currently-selected period's date range. Each period row has a
+          // small × button that unassigns just that period — handy for cleaning
+          // up mis-assigned years (e.g. 03/2025 when meant 03/2026).
           const allPeriods = Array.isArray(acc.all_assigned_periods) ? acc.all_assigned_periods : [];
           let svcDates = '';
           if (allPeriods.length > 1) {
@@ -1567,7 +1571,10 @@
               const range = (p.service_start || p.service_end)
                 ? `${p.service_start || '?'}${p.service_start && p.service_end ? ' - ' : ''}${p.service_end || '?'}`
                 : '(no service dates)';
-              return `<div style="font-size:10px;color:#64748b"><strong style="color:#0c4a6e">${escapeHtml(p.period)}</strong> · ${escapeHtml(range)}</div>`;
+              const unassignBtn = p.s3_key
+                ? `<button class="period-unassign-btn" data-s3-key="${escapeHtml(p.s3_key)}" data-account="${escapeHtml(acc.account_number || '')}" data-vendor="${escapeHtml(acc.vendor_name || '')}" data-property="${escapeHtml(prop.property_name || '')}" data-period="${escapeHtml(p.period)}" title="Unassign period ${escapeHtml(p.period)}" style="margin-left:6px;padding:0 5px;border:1px solid #e5e7eb;background:#fff;color:#94a3b8;border-radius:3px;font-size:9px;cursor:pointer;line-height:1.4">✕</button>`
+                : '';
+              return `<div style="font-size:10px;color:#64748b;display:flex;align-items:center;gap:4px"><strong style="color:#0c4a6e">${escapeHtml(p.period)}</strong> · ${escapeHtml(range)}${unassignBtn}</div>`;
             }).join('');
             svcDates = `<div style="margin-top:2px">${rows}</div>`;
           } else {
@@ -1608,6 +1615,60 @@
           );
         });
       });
+
+      // Per-period unassign buttons (× next to each period in the multi-period list)
+      container.querySelectorAll('.period-unassign-btn').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          unassignPeriodFromTracker({
+            s3Key: el.dataset.s3Key,
+            account: el.dataset.account,
+            vendor: el.dataset.vendor,
+            property: el.dataset.property,
+            period: el.dataset.period,
+          });
+        });
+      });
+    }
+
+    async function unassignPeriodFromTracker({s3Key, account, vendor, property, period}) {
+      if (!s3Key || !account || !period) {
+        showToast('Missing data to unassign — try refreshing the tracker.', 'err');
+        return;
+      }
+      const msg = `Unassign period ${period} for:\n\n${vendor || 'Unknown vendor'} - ${account}\n${property || ''}\n\nThis moves the bill back to BILLBACK for re-assignment.`;
+      if (!confirm(msg)) return;
+      try {
+        const fd = new FormData();
+        fd.append('s3_key', s3Key);
+        fd.append('account_number', account);
+        fd.append('period', period);
+        const resp = await fetch('/api/billback/ubi/unassign-account', { method: 'POST', body: fd });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.error) {
+          showToast(`Failed: ${data.error || 'unknown error'}`, 'err');
+          return;
+        }
+        showToast(`Unassigned ${period} (${data.unassigned || 0} line${(data.unassigned || 0) === 1 ? '' : 's'})`, 'ok');
+        // Optimistic in-place update: drop the period from cached data and re-render.
+        // Then trigger a silent server reconcile (the unassign endpoint already
+        // busts the completion-tracker caches so the next fetch is fresh).
+        if (_currentTrackerData && Array.isArray(_currentTrackerData.properties)) {
+          for (const p of _currentTrackerData.properties) {
+            for (const a of (p.accounts || [])) {
+              if ((a.account_number || '') === account && (a.vendor_name || '') === (vendor || a.vendor_name)) {
+                if (Array.isArray(a.all_assigned_periods)) {
+                  a.all_assigned_periods = a.all_assigned_periods.filter(x => x.period !== period);
+                }
+              }
+            }
+          }
+          renderCompletionTracker(_currentTrackerData);
+        }
+        loadCompletionTracker(true, true);
+      } catch (e) {
+        showToast(`Error: ${e.message}`, 'err');
+      }
     }
 
     function togglePropertyAccounts(propertyId) {
