@@ -1555,10 +1555,26 @@
           const escapedProp = (prop.property_name || '').replace(/'/g, "\\'");
           const escapedS3Key = (acc.s3_key || '').replace(/'/g, "\\'");
 
-          // Service dates display
-          const svcStart = acc.service_start || '';
-          const svcEnd = acc.service_end || '';
-          const svcDates = (svcStart || svcEnd) ? `<div style="font-size:10px;color:#64748b;margin-top:2px">${svcStart}${svcStart && svcEnd ? ' - ' : ''}${svcEnd}</div>` : '';
+          // Service dates display.
+          // When the account is assigned to multiple UBI periods (the same bill
+          // covers several months, or quarterly billing was split), show ALL
+          // of them so the AP rep can see the full coverage instead of only
+          // the currently-selected period's date range.
+          const allPeriods = Array.isArray(acc.all_assigned_periods) ? acc.all_assigned_periods : [];
+          let svcDates = '';
+          if (allPeriods.length > 1) {
+            const rows = allPeriods.map(p => {
+              const range = (p.service_start || p.service_end)
+                ? `${p.service_start || '?'}${p.service_start && p.service_end ? ' - ' : ''}${p.service_end || '?'}`
+                : '(no service dates)';
+              return `<div style="font-size:10px;color:#64748b"><strong style="color:#0c4a6e">${escapeHtml(p.period)}</strong> · ${escapeHtml(range)}</div>`;
+            }).join('');
+            svcDates = `<div style="margin-top:2px">${rows}</div>`;
+          } else {
+            const svcStart = acc.service_start || '';
+            const svcEnd = acc.service_end || '';
+            svcDates = (svcStart || svcEnd) ? `<div style="font-size:10px;color:#64748b;margin-top:2px">${svcStart}${svcStart && svcEnd ? ' - ' : ''}${svcEnd}</div>` : '';
+          }
 
           html += `
             <div class="account-item ${accClass}" onclick="event.stopPropagation(); handleAccountClick(this, '${escapedAcct}')" ondblclick="event.stopPropagation(); handleAccountDblClick(this, '${escapedVendor}', '${escapedAcct}', '${escapedProp}', '${prop.property_id}', ${acc.has_bill}, '${escapedS3Key}')" style="cursor:pointer" title="Click to search | Double-click for options">

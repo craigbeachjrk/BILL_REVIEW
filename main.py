@@ -7008,12 +7008,18 @@ async def api_billback_ubi_unassign(request: Request, user: str = Depends(requir
         print(f"[UBI UNASSIGN] Deleted {deleted_count} DDB assignment records")
 
 
-        # 3) Invalidate the Stage 8 history cache so BILLBACK shows correct
-        # duplicate warnings and suggestions after unassign
+        # 3) Invalidate downstream caches so BILLBACK + Master Bills tracker
+        # show correct state immediately after unassign. The completion-tracker
+        # bust was previously missing — that's why the Master Bills row stayed
+        # "complete" after unassign and a refresh did nothing.
         _CACHE.pop(("ubi_unassigned",), None)
         _remove_bill_from_ubi_cache(s3_key)
         _METRICS_CACHE.pop("ubi_suggestions", None)
         _METRICS_CACHE.pop("ubi_assigned", None)
+        try:
+            _bust_completion_tracker_caches()
+        except Exception as _e:
+            print(f"[UBI UNASSIGN] Cache bust failed: {_e}")
 
         print(f"[UBI UNASSIGN] COMPLETED: Moved {total_unassigned} items back to Stage 7")
         _pipeline_track(s3_key, "UBI_UNASSIGNED", f"app:ubi_unassign:{user}", "S7", {"count": total_unassigned})
@@ -7195,13 +7201,14 @@ async def api_billback_ubi_unassign_account(request: Request, user: str = Depend
 
         print(f"[UBI UNASSIGN ACCOUNT] Deleted {deleted_count} DDB records")
 
-        # Invalidate caches
+        # Invalidate caches — both BILLBACK + Master Bills tracker
         _CACHE.pop(("ubi_unassigned",), None)
         _METRICS_CACHE.pop("ubi_suggestions", None)
         _METRICS_CACHE.pop("ubi_assigned", None)
-
-        # CRITICAL: Invalidate the Stage 8 history cache so BILLBACK shows correct
-        # duplicate warnings and suggestions after unassign
+        try:
+            _bust_completion_tracker_caches()
+        except Exception as _e:
+            print(f"[UBI UNASSIGN ACCOUNT] Cache bust failed: {_e}")
 
         print(f"[UBI UNASSIGN ACCOUNT] COMPLETED: Unassigned {total_unassigned} items for {account_number} from {period}")
         return {"ok": True, "unassigned": total_unassigned}
@@ -22715,6 +22722,28 @@ def api_completion_tracker(
                 prev_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_prev_period), {}) if _sel_prev_period else {}
                 next_svc_info = _svc_by_prop_acct_period.get((property_id, norm_acct, _sel_next_period), {}) if _sel_next_period else {}
 
+                # All periods this account is assigned to (with service dates per period).
+                # When a single bill maps to multiple UBI periods (or the account has been
+                # assigned to several periods over time), the UI needs the full list to
+                # show "this account has bills for 02/2026, 03/2026, 04/2026" instead of
+                # only the currently-selected period's date range.
+                all_assigned_periods = []
+                _seen_periods = set()
+                for _p in sorted(acct_assigned_periods or [], key=lambda x: (x.split("/")[1] if "/" in x else "", x.split("/")[0] if "/" in x else "")):
+                    if _p in _seen_periods:
+                        continue
+                    _seen_periods.add(_p)
+                    _info = (
+                        service_dates.get((property_id, account_number, vendor_name, _p), {})
+                        or _svc_by_prop_acct_period.get((property_id, norm_acct, _p), {})
+                    )
+                    all_assigned_periods.append({
+                        "period": _p,
+                        "service_start": _normalize_date_display(_info.get("start", "")),
+                        "service_end": _normalize_date_display(_info.get("end", "")),
+                        "s3_key": _info.get("s3_key", ""),
+                    })
+
                 # Check for accrual/manual entry - try exact then vendor-agnostic
                 has_accrual_entry = dedup_key in accrual_entries_map or prop_acct_key in _accrual_by_prop_acct
                 accrual_entry_type = accrual_entries_map.get(dedup_key, "") or _accrual_by_prop_acct.get(prop_acct_key, "")
@@ -22738,7 +22767,8 @@ def api_completion_tracker(
                     "service_end": _normalize_date_display(service_end),
                     "s3_key": assignment_s3_key,
                     "has_manual_entry": has_accrual_entry,
-                    "manual_entry_type": accrual_entry_type
+                    "manual_entry_type": accrual_entry_type,
+                    "all_assigned_periods": all_assigned_periods,
                 })
                 properties[property_id]["total"] += 1
                 if has_bill:
