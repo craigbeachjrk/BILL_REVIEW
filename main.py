@@ -20423,6 +20423,39 @@ async def api_update_line_item(request: Request, user: str = Depends(require_use
 
         _ddb_put_draft(draft)
 
+        # ALSO update the in-memory _UBI_UNASSIGNED_CACHE so the next
+        # /api/billback/ubi/unassigned read reflects this change. Without this,
+        # the S3 file gets the new charge code / utility / amount, but the
+        # cache replays the old line_data on the next "Load Bills" and the
+        # user sees their changes appear to vanish. This was the actual cause
+        # of "I hit Refresh GL, then Load Bills, and the charge code mapping
+        # disappears" — the cache was never told to update.
+        try:
+            cache_data = _UBI_UNASSIGNED_CACHE.get("data") or []
+            for cached_bill in cache_data:
+                if cached_bill.get("s3_key") != bill_id:
+                    continue
+                unassigned_lines = cached_bill.get("unassigned_lines") or []
+                # JS sends line_index into bill.unassigned_lines. For fresh S7
+                # bills (no exclusions yet) that's a 1:1 match with line_data.
+                if 0 <= line_index < len(unassigned_lines):
+                    cached_line = unassigned_lines[line_index]
+                    # Replace line_data wholesale — line dict already has every
+                    # mutation we just applied above.
+                    cached_line["line_data"] = line
+                    # If amount fields changed, update per-line charge too so
+                    # the bill total recomputes correctly on next render.
+                    if "current_amount" in form:
+                        try:
+                            cached_line["charge"] = float(form.get("current_amount", "0"))
+                        except Exception:
+                            pass
+                    print(f"[UPDATE LINE ITEM] Cache updated for {bill_id.split('/')[-1]} line {line_index}")
+                break
+        except Exception as _e:
+            # Non-fatal — Lambda eventually reconciles
+            print(f"[UPDATE LINE ITEM] Cache update failed (non-fatal): {_e}")
+
         return {"ok": True, "line": line}
 
     except Exception as e:
