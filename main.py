@@ -5835,12 +5835,77 @@ def api_billback_ubi_unassigned(
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
 
 
+def _find_existing_assignments_for_account(property_id: str, account_number: str,
+                                            vendor_name: str, target_periods: list[str]) -> list[dict]:
+    """Look up active Stage 8 assignments for the same (property_id, account, vendor)
+    in any of the target periods. Used by the assign endpoint to warn before
+    creating duplicate charges.
+
+    Reuses the cached `ubi_assigned` payload (built by api_billback_ubi_assigned)
+    so the check is fast — no S3 listings or extra DDB scans on the assign hot path.
+    Returns a list of dicts: {ubi_period, vendor, account, charge, s3_key, line_hash,
+    invoice_no, assigned_by, assigned_date}.
+    """
+    try:
+        norm_pid = str(property_id or "").strip()
+        norm_acct = str(account_number or "").strip().lstrip("0").lower()
+        norm_vendor = str(vendor_name or "").strip().lower()
+        target_set = set(p.strip() for p in (target_periods or []) if p and p.strip())
+        if not norm_pid or not norm_acct or not target_set:
+            return []
+
+        cached = _metrics_cache_get("ubi_assigned")
+        if not cached or not isinstance(cached.get("data"), dict):
+            return []
+        all_periods = cached["data"].get("all_periods") or []
+
+        matches = []
+        for entry in all_periods:
+            if entry.get("ubi_period") not in target_set:
+                continue
+            entry_acct = str(entry.get("account") or "").strip().lstrip("0").lower()
+            if entry_acct != norm_acct:
+                continue
+            ld = entry.get("line_data") or {}
+            entry_pid = str(ld.get("EnrichedPropertyID") or "").strip()
+            if entry_pid and entry_pid != norm_pid:
+                continue
+            entry_vendor = str(entry.get("vendor") or ld.get("EnrichedVendorName")
+                               or ld.get("Vendor Name") or "").strip().lower()
+            if norm_vendor and entry_vendor and entry_vendor != norm_vendor:
+                # Different vendor → not the same account; skip.
+                continue
+            matches.append({
+                "ubi_period": entry.get("ubi_period", ""),
+                "vendor": entry.get("vendor") or "",
+                "account": entry.get("account") or "",
+                "charge": float(entry.get("charge") or 0.0),
+                "s3_key": entry.get("s3_key", ""),
+                "line_hash": entry.get("line_hash", ""),
+                "invoice_no": entry.get("invoice_no", ""),
+                "assigned_by": entry.get("assigned_by", ""),
+                "assigned_date": entry.get("assigned_date", ""),
+                "bill_date": (ld.get("Bill Date") or ld.get("bill_date") or ""),
+                "service_start": (ld.get("Bill Period Start") or ""),
+                "service_end": (ld.get("Bill Period End") or ""),
+            })
+        return matches
+    except Exception as e:
+        print(f"[DUP CHECK] Error finding existing assignments: {e}")
+        return []
+
+
 @app.post("/api/billback/ubi/assign")
 async def api_billback_ubi_assign(request: Request, user: str = Depends(require_user)):
     """Assign line items to UBI period(s) - moves items from Stage 7 to Stage 8 (UBI Assigned).
 
     Supports multi-period assignment: pass ubi_periods as comma-separated list (e.g., "08/2025,09/2025").
     Falls back to ubi_period for single-period backward compatibility.
+
+    If the same (property, account, vendor) already has Stage 8 assignments in any
+    of the target periods, this endpoint returns 409 with details unless the
+    request includes force=1 — that's the duplicate guard the user trips when
+    accidentally posting two different bills to the same period.
     """
     try:
         import uuid
@@ -5855,6 +5920,7 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
         amounts_str = form.get("amounts", "")
         notes_str = form.get("notes", "")
         months_total = form.get("months_total", "1")
+        force_assign = str(form.get("force", "")).strip().lower() in ("1", "true", "yes")
 
         # Parse periods - prefer ubi_periods if provided, otherwise use ubi_period
         if ubi_periods_str:
@@ -6005,6 +6071,41 @@ async def api_billback_ubi_assign(request: Request, user: str = Depends(require_
 
         if not assigned_items:
             return JSONResponse({"error": "No matching line items found in the file"}, status_code=400)
+
+        # Duplicate guard: warn if same (property, account, vendor) already has
+        # Stage 8 assignments to any of the target periods. Skipped when the
+        # caller passes force=1 (user already saw the warning and confirmed).
+        if not force_assign:
+            seen_keys: set = set()
+            duplicates: list[dict] = []
+            for rec in assigned_items:
+                _pid = str(rec.get("EnrichedPropertyID") or "").strip()
+                _acct = str(rec.get("Account Number") or rec.get("Line Item Account Number") or "").strip()
+                _vendor = str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or "").strip()
+                _key = (_pid, _acct.lower(), _vendor.lower())
+                if not _pid or not _acct or _key in seen_keys:
+                    continue
+                seen_keys.add(_key)
+                hits = _find_existing_assignments_for_account(_pid, _acct, _vendor, ubi_periods)
+                # Filter out hits that are part of THIS file (shouldn't happen — those
+                # would already be in Stage 8 — but defensive).
+                hits = [h for h in hits if h.get("s3_key") != s3_key]
+                if hits:
+                    duplicates.append({
+                        "property_id": _pid,
+                        "property_name": str(rec.get("EnrichedPropertyName") or rec.get("Property Name") or "").strip(),
+                        "account": _acct,
+                        "vendor": _vendor,
+                        "existing": hits,
+                    })
+            if duplicates:
+                print(f"[UBI ASSIGN] Duplicate guard tripped: {len(duplicates)} (prop, acct) tuple(s) already assigned to target period(s)")
+                return JSONResponse({
+                    "error": "duplicate_assignment",
+                    "message": "Same vendor + account already has charges assigned to one of these periods. Confirm to proceed.",
+                    "duplicates": duplicates,
+                    "target_periods": ubi_periods,
+                }, status_code=409)
 
         # Extract date parts from source key for writing
         y, m, d = _extract_ymd_from_key(s3_key)
@@ -6367,13 +6468,18 @@ def api_billback_ubi_suggestions(user: str = Depends(require_user), page: int = 
 
 @app.post("/api/billback/ubi/accept-suggestion")
 async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depends(require_user)):
-    """Accept a UBI period suggestion and assign the bill."""
+    """Accept a UBI period suggestion and assign the bill.
+
+    Honors the same duplicate guard as /api/billback/ubi/assign — pass force=1
+    to bypass the "this account already has charges in that period" 409.
+    """
     try:
         form = await request.form()
         s3_key = form.get("s3_key", "")
         accept = form.get("accept", "true").lower() == "true"
         # Accept the period the frontend displayed (avoid recalculating a different suggestion)
         frontend_period = form.get("suggested_period", "").strip()
+        force_assign = str(form.get("force", "")).strip().lower() in ("1", "true", "yes")
 
         if not s3_key:
             return JSONResponse({"error": "s3_key required"}, status_code=400)
@@ -6518,6 +6624,36 @@ async def api_billback_ubi_accept_suggestion(request: Request, user: str = Depen
 
         if not assigned_items:
             return JSONResponse({"error": "No items to assign"}, status_code=400)
+
+        # Duplicate guard (same logic as /api/billback/ubi/assign).
+        if not force_assign:
+            seen_keys: set = set()
+            duplicates: list[dict] = []
+            for rec in assigned_items:
+                _pid = str(rec.get("EnrichedPropertyID") or "").strip()
+                _acct = str(rec.get("Account Number") or rec.get("Line Item Account Number") or "").strip()
+                _vendor = str(rec.get("EnrichedVendorName") or rec.get("Vendor Name") or "").strip()
+                _key = (_pid, _acct.lower(), _vendor.lower())
+                if not _pid or not _acct or _key in seen_keys:
+                    continue
+                seen_keys.add(_key)
+                hits = _find_existing_assignments_for_account(_pid, _acct, _vendor, ubi_periods)
+                hits = [h for h in hits if h.get("s3_key") != s3_key]
+                if hits:
+                    duplicates.append({
+                        "property_id": _pid,
+                        "property_name": str(rec.get("EnrichedPropertyName") or rec.get("Property Name") or "").strip(),
+                        "account": _acct,
+                        "vendor": _vendor,
+                        "existing": hits,
+                    })
+            if duplicates:
+                return JSONResponse({
+                    "error": "duplicate_assignment",
+                    "message": "Same vendor + account already has charges assigned to one of these periods. Confirm to proceed.",
+                    "duplicates": duplicates,
+                    "target_periods": ubi_periods,
+                }, status_code=409)
 
         # Write to Stage 8
         assigned_key = _write_jsonl(UBI_ASSIGNED_PREFIX, y, m, d, base.replace('.jsonl', ''), assigned_items)

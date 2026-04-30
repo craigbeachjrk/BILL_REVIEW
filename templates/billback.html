@@ -3370,10 +3370,18 @@
           fd.append('notes', lineDetails.map(l => l.notes).join('|||'));
           fd.append('months_total', months.toString());
 
-          const response = await fetch('/api/billback/ubi/assign', {
-            method: 'POST',
-            body: fd
-          });
+          let response;
+          try {
+            response = await postAssignWithDupCheck('/api/billback/ubi/assign', fd);
+          } catch (dupErr) {
+            if (dupErr.skipped) {
+              // User chose to skip this duplicate — keep going with the rest.
+              processedBills++;
+              updateLoadingProgress(processedBills, totalBills);
+              continue;
+            }
+            throw dupErr;
+          }
 
           processedBills++;
           updateLoadingProgress(processedBills, totalBills);
@@ -3402,6 +3410,54 @@
         console.error('Error assigning lines:', e);
         showToast(`Error assigning lines: ${e.message}`, 'err');
       }
+    }
+
+    // POST to an assign endpoint with the duplicate-guard handshake. The
+    // server returns 409 + a "duplicates" payload if the same vendor/account
+    // already has charges in any of the target periods; we surface a confirm
+    // listing the existing assignments and re-POST with force=1 if the user
+    // says go anyway.
+    async function postAssignWithDupCheck(url, fd) {
+      const resp = await fetch(url, { method: 'POST', body: fd });
+      if (resp.status !== 409) return resp;
+      let body = {};
+      try { body = await resp.json(); } catch (_e) {}
+      if (body.error !== 'duplicate_assignment') {
+        // Some other 409 — bubble up.
+        const err = new Error(body.error || `HTTP ${resp.status}`);
+        err.responseBody = body;
+        throw err;
+      }
+      const dups = Array.isArray(body.duplicates) ? body.duplicates : [];
+      const targetPeriods = (body.target_periods || []).join(', ');
+      const lines = [];
+      lines.push(`This account already has charges in ${targetPeriods}:`);
+      lines.push('');
+      for (const d of dups) {
+        const propLabel = d.property_name || d.property_id || '';
+        lines.push(`• ${propLabel} — ${d.vendor || ''} / ${d.account || ''}`);
+        for (const e of (d.existing || []).slice(0, 5)) {
+          const dateBits = [];
+          if (e.bill_date) dateBits.push(`bill ${e.bill_date}`);
+          if (e.service_start || e.service_end) dateBits.push(`svc ${e.service_start || '?'}–${e.service_end || '?'}`);
+          const datePart = dateBits.length ? `  (${dateBits.join(', ')})` : '';
+          const amt = (typeof e.charge === 'number') ? `$${e.charge.toFixed(2)}` : '';
+          lines.push(`    ↳ ${e.ubi_period}: ${amt}${datePart}`);
+        }
+        if ((d.existing || []).length > 5) {
+          lines.push(`    ↳ … and ${d.existing.length - 5} more`);
+        }
+      }
+      lines.push('');
+      lines.push('Assigning will DOUBLE-UP charges for that period.');
+      lines.push('Press OK to proceed anyway, Cancel to skip and review.');
+      if (!confirm(lines.join('\n'))) {
+        const skipErr = new Error('skipped_duplicate');
+        skipErr.skipped = true;
+        throw skipErr;
+      }
+      fd.append('force', '1');
+      return await fetch(url, { method: 'POST', body: fd });
     }
 
     // Accept smart suggestion - quickly assign all lines of a bill to suggested period
@@ -3451,10 +3507,16 @@
         fd.append('notes', lineDetails.map(l => l.notes).join('|||'));
         fd.append('months_total', months.toString());
 
-        const response = await fetch('/api/billback/ubi/assign', {
-          method: 'POST',
-          body: fd
-        });
+        let response;
+        try {
+          response = await postAssignWithDupCheck('/api/billback/ubi/assign', fd);
+        } catch (dupErr) {
+          if (dupErr.skipped) {
+            showToast('Skipped — duplicate not posted.', 'ok');
+            return;
+          }
+          throw dupErr;
+        }
 
         if (!response.ok) {
           const err = await response.json();
