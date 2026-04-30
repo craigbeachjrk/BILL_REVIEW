@@ -5563,14 +5563,36 @@ def api_billback_summary(
                 p["count"] += 1
                 p["items"].append(r)
 
-            # Convert to list, sort properties within AM by total desc
+            # Convert to list, sort properties within AM by total desc.
+            # Also roll items up by charge_code per property — that's what the
+            # asset-manager view wants at-a-glance: "what utility buckets at
+            # this property and how much" without scrolling through every bill.
             result = []
             for am_name, bucket in am_buckets.items():
                 props = list(bucket["properties"].values())
                 for p in props:
                     p["total_amount"] = round(p["total_amount"], 2)
-                    # Sort items by billback_period then vendor for stable display
-                    p["items"].sort(key=lambda x: (x.get("billback_period", ""), x.get("vendor_name", "")))
+                    # Roll up by charge_code for the property card display
+                    cc_totals: dict[str, dict] = {}
+                    for it in p["items"]:
+                        cc = it.get("charge_code") or "(unmapped)"
+                        if cc not in cc_totals:
+                            cc_totals[cc] = {"charge_code": cc, "amount": 0.0, "count": 0}
+                        cc_totals[cc]["amount"] += it.get("billback_amount", 0) or 0
+                        cc_totals[cc]["count"] += 1
+                    cc_list = [
+                        {"charge_code": k, "amount": round(v["amount"], 2), "count": v["count"]}
+                        for k, v in cc_totals.items()
+                    ]
+                    cc_list.sort(key=lambda x: -x["amount"])
+                    p["totals_by_charge_code"] = cc_list
+                    # Sort items by billback_period then service date desc, then vendor
+                    p["items"].sort(key=lambda x: (
+                        x.get("billback_period", ""),
+                        -1 * (1 if x.get("bill_period_end") else 0),
+                        x.get("bill_period_end", ""),
+                        x.get("vendor_name", ""),
+                    ), reverse=False)
                 props.sort(key=lambda x: x["total_amount"], reverse=True)
                 result.append({
                     "group_key": am_name,
@@ -30391,7 +30413,13 @@ def api_billback_report_data(
                                 "gl_code": rec.get("Charge Code") or rec.get("charge_code") or rec.get("GL Code") or rec.get("EnrichedGLAccountNumber") or "",
                                 "gl_description": rec.get("EnrichedGLAccountName") or rec.get("Charge Code Description") or rec.get("GL Description") or "",
                                 "charge": charge,
-                                "excluded": rec.get("excluded", False) or rec.get("is_excluded", False)
+                                "excluded": rec.get("excluded", False) or rec.get("is_excluded", False),
+                                "s3_key": key,
+                                "bill_period_start": rec.get("Bill Period Start") or rec.get("bill_period_start") or "",
+                                "bill_period_end": rec.get("Bill Period End") or rec.get("bill_period_end") or "",
+                                "bill_date": rec.get("Bill Date") or rec.get("bill_date") or "",
+                                "invoice_number": rec.get("Invoice Number") or rec.get("invoice_number") or "",
+                                "utility_type": rec.get("Utility Type") or rec.get("Mapped Utility Name") or rec.get("utility_type") or "",
                             })
                     else:
                         # Legacy format
@@ -30453,6 +30481,10 @@ def api_billback_report_data(
 
         # Group data by period, then by property, then by GL code
         by_period = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {"total": 0.0, "excluded": 0.0, "count": 0})))
+        # Also keep a per-(period, property) bill list — one entry per bill
+        # (deduped by s3_key) — needed for the master-packet PDF that lists
+        # individual bills with hyperlinks under each property.
+        bills_by_period_property: dict = defaultdict(lambda: defaultdict(dict))
 
         for item in all_items:
             period_key = item["ubi_period"]
@@ -30464,6 +30496,32 @@ def api_billback_report_data(
             else:
                 by_period[period_key][prop_key][gl_key]["total"] += item["charge"]
             by_period[period_key][prop_key][gl_key]["count"] += 1
+
+            # Roll up per-bill totals (a single bill may contain multiple lines
+            # — accumulate charge into one bill row keyed by s3_key)
+            s3k = item.get("s3_key") or ""
+            if s3k:
+                bucket = bills_by_period_property[period_key][prop_key].setdefault(s3k, {
+                    "s3_key": s3k,
+                    "vendor_name": item.get("vendor_name") or "",
+                    "account": item.get("account") or "",
+                    "invoice_number": item.get("invoice_number") or "",
+                    "bill_period_start": item.get("bill_period_start") or "",
+                    "bill_period_end": item.get("bill_period_end") or "",
+                    "bill_date": item.get("bill_date") or "",
+                    "utility_type": item.get("utility_type") or "",
+                    "amount": 0.0,
+                    "excluded_amount": 0.0,
+                    "line_count": 0,
+                    "gl_codes": set(),
+                })
+                if item["excluded"]:
+                    bucket["excluded_amount"] += item["charge"]
+                else:
+                    bucket["amount"] += item["charge"]
+                bucket["line_count"] += 1
+                if item.get("gl_code"):
+                    bucket["gl_codes"].add(item["gl_code"])
 
         # Build report structure for target period with historical comparison
         report_data = {
@@ -30564,6 +30622,34 @@ def api_billback_report_data(
             prop_entry["totals"]["t1"] = round(prop_entry["totals"]["t1"], 2)
             prop_entry["totals"]["t12_avg"] = round(prop_entry["totals"]["t12_avg"], 2)
 
+            # Attach the per-bill list for this property+period so the PDF
+            # generator can list individual bills with hyperlinks under each
+            # property summary.
+            target_bills_by_prop = bills_by_period_property.get(target_period, {})
+            prop_bills_dict = target_bills_by_prop.get(prop_name, {})
+            prop_bills_list = []
+            for s3k, b in prop_bills_dict.items():
+                from urllib.parse import quote as _qsk
+                prop_bills_list.append({
+                    "s3_key": s3k,
+                    "pdf_url": f"/pdf?k={_qsk(s3k, safe='')}",
+                    "vendor_name": b.get("vendor_name", ""),
+                    "account": b.get("account", ""),
+                    "invoice_number": b.get("invoice_number", ""),
+                    "bill_period_start": b.get("bill_period_start", ""),
+                    "bill_period_end": b.get("bill_period_end", ""),
+                    "bill_date": b.get("bill_date", ""),
+                    "utility_type": b.get("utility_type", ""),
+                    "gl_codes": sorted(list(b.get("gl_codes") or set())),
+                    "amount": round(b.get("amount", 0.0), 2),
+                    "excluded_amount": round(b.get("excluded_amount", 0.0), 2),
+                    "line_count": b.get("line_count", 0),
+                })
+            # Sort bills by service end date (recent first), then vendor for stability
+            prop_bills_list.sort(key=lambda x: (x.get("bill_period_end") or "", x.get("vendor_name") or ""), reverse=True)
+            prop_entry["bills"] = prop_bills_list
+            prop_entry["bill_count"] = len(prop_bills_list)
+
             if prop_entry["totals"]["billed_back"] > 0 or prop_entry["totals"]["excluded"] > 0:
                 report_data["properties"].append(prop_entry)
                 report_data["summary"]["total_billed_back"] += prop_entry["totals"]["billed_back"]
@@ -30649,15 +30735,18 @@ def api_billback_report_pdf(
     request: Request,
     user: str = Depends(require_user),
     period: str = "",
-    style: str = "corporate"
+    style: str = "packet"
 ):
     """
-    Generate a PDF billback summary report.
+    Generate a PDF Bill Inputs Report.
 
     Styles:
-    - corporate: Professional/formal financial statement look
-    - simple: Basic functional tables, minimal styling
-    - dashboard: Modern cards, charts, progress bars
+    - packet (default): Master Packet — cover, AM index, per-AM property
+      summaries, per-property bills with PDF hyperlinks. AP/AM-friendly,
+      easy to navigate by AM → property → bill.
+    - corporate / simple / dashboard: legacy analytics-style reports kept
+      for backwards compat (T-1, T-12, variance). Use ?style=corporate to
+      regenerate the old format.
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter, LETTER
@@ -30682,20 +30771,25 @@ def api_billback_report_pdf(
         buffer = BytesIO()
 
         # Generate PDF based on style
-        if style == "corporate":
+        if style == "packet":
+            _generate_master_packet_pdf(buffer, data)
+        elif style == "corporate":
             _generate_corporate_pdf(buffer, data)
         elif style == "simple":
             _generate_simple_pdf(buffer, data)
         elif style == "dashboard":
             _generate_dashboard_pdf(buffer, data)
         else:
-            _generate_corporate_pdf(buffer, data)  # Default
+            _generate_master_packet_pdf(buffer, data)  # Default
 
         buffer.seek(0)
 
         # Generate filename
         period_str = data.get("period", "report")
-        filename = f"UBI_Billback_Summary_{period_str}_{style}.pdf"
+        if style == "packet":
+            filename = f"Bill_Inputs_Report_{period_str}.pdf"
+        else:
+            filename = f"UBI_Billback_Summary_{period_str}_{style}.pdf"
 
         return StreamingResponse(
             buffer,
@@ -30708,6 +30802,302 @@ def api_billback_report_pdf(
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+
+def _generate_master_packet_pdf(buffer, data):
+    """Master Packet PDF — the AP/AM-friendly format the user actually wants.
+
+    Layout:
+      Page 1: Cover — "Bill Inputs Report" + period + portfolio totals
+      Page 2: Asset Manager Index — alphabetical list of AMs with property count
+              and totals (page numbers added by ReportLab)
+      Per AM section: AM header + property summary cards (charge code totals
+              per property, total, link to property page)
+      Per property: header + property note + charge code totals table + bills
+              list with clickable "View PDF" hyperlinks to the source bill
+              files via /pdf?k=<s3_key>
+
+    Drops variance / T-1 / T-12 columns (user explicitly doesn't want them
+    here — this is "what bills came in", not analytics).
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+    from datetime import datetime as _dt
+
+    NAVY = colors.HexColor("#0c4a6e")
+    SKY = colors.HexColor("#0ea5e9")
+    LIGHT = colors.HexColor("#f1f5f9")
+    AMBER_LIGHT = colors.HexColor("#fef3c7")
+    GRAY_TEXT = colors.HexColor("#64748b")
+    BASE_URL = "https://billreview.jrkanalytics.com"
+
+    def _fmt_money(n):
+        try:
+            return f"${float(n or 0):,.2f}"
+        except Exception:
+            return "$0.00"
+
+    def _fmt_period_display(p):
+        # accept "2026-04" or "04/2026"; render as "April 2026"
+        try:
+            if "-" in str(p):
+                y, m = str(p).split("-")[:2]
+            elif "/" in str(p):
+                m, y = str(p).split("/")[:2]
+            else:
+                return str(p)
+            mn = int(m)
+            ms = ["", "January", "February", "March", "April", "May", "June",
+                  "July", "August", "September", "October", "November", "December"]
+            return f"{ms[mn]} {y}"
+        except Exception:
+            return str(p)
+
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        topMargin=0.5 * inch, bottomMargin=0.5 * inch,
+        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+        title="Bill Inputs Report",
+        author="JRK Residential",
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    cover_title = ParagraphStyle('CoverTitle', parent=styles['Heading1'],
+                                 fontSize=32, textColor=NAVY, alignment=TA_LEFT, spaceAfter=4)
+    cover_sub = ParagraphStyle('CoverSub', parent=styles['Normal'],
+                               fontSize=14, textColor=GRAY_TEXT, alignment=TA_LEFT, spaceAfter=24)
+    h2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=16, textColor=NAVY, spaceBefore=8, spaceAfter=8)
+    h3 = ParagraphStyle('H3', parent=styles['Heading3'], fontSize=13, textColor=NAVY, spaceBefore=6, spaceAfter=4)
+    body = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10, leading=13)
+    note_style = ParagraphStyle('Note', parent=styles['Normal'], fontSize=10, textColor=NAVY,
+                                backColor=colors.HexColor("#e0f2fe"), borderColor=SKY,
+                                borderWidth=0, leftIndent=8, rightIndent=8, spaceBefore=4, spaceAfter=8,
+                                leading=13)
+    link_style = ParagraphStyle('Link', parent=styles['Normal'], fontSize=9, textColor=SKY)
+
+    summary = data.get("summary", {}) or {}
+    period_display = _fmt_period_display(data.get("period", ""))
+    total_amount = summary.get("total_billed_back", 0.0)
+    total_excluded = summary.get("total_excluded", 0.0)
+    property_count = summary.get("property_count", 0)
+    am_count = summary.get("asset_manager_count", 0)
+    asset_managers = data.get("asset_managers") or []
+    total_bill_count = sum(p.get("bill_count", 0) for p in (data.get("properties") or []))
+
+    # ---- Cover page ----
+    story.append(Paragraph("JRK RESIDENTIAL", ParagraphStyle('Co', fontSize=12, textColor=GRAY_TEXT, alignment=TA_LEFT)))
+    story.append(Spacer(1, 0.05 * inch))
+    story.append(Paragraph("Bill Inputs Report", cover_title))
+    story.append(Paragraph(f"{period_display} &nbsp;&nbsp;|&nbsp;&nbsp; Generated {_dt.now().strftime('%B %d, %Y')}", cover_sub))
+
+    cover_tbl = Table([
+        [Paragraph("<b>Total Bills Loaded</b>", body),
+         Paragraph("<b>Properties</b>", body),
+         Paragraph("<b>Asset Managers</b>", body),
+         Paragraph("<b>Total Charged</b>", body)],
+        [Paragraph(f"{total_bill_count:,}", h3),
+         Paragraph(f"{property_count:,}", h3),
+         Paragraph(f"{am_count:,}", h3),
+         Paragraph(_fmt_money(total_amount), h3)],
+    ], colWidths=[1.7 * inch, 1.7 * inch, 1.7 * inch, 1.7 * inch])
+    cover_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('PADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(cover_tbl)
+    story.append(Spacer(1, 0.4 * inch))
+
+    # ---- Asset Manager Index ----
+    story.append(Paragraph("Asset Manager Index", h2))
+    story.append(Paragraph(
+        "Click any property below to jump to that property's bill list and PDF hyperlinks. "
+        "Bills are sorted by service end date (most recent first).", body))
+    story.append(Spacer(1, 0.15 * inch))
+
+    am_index_rows = [[
+        Paragraph("<b>Asset Manager</b>", body),
+        Paragraph("<b>Properties</b>", body),
+        Paragraph("<b>Bills</b>", body),
+        Paragraph("<b>Charged</b>", body),
+    ]]
+    for am in asset_managers:
+        am_name = am.get("name", "Unassigned")
+        am_props = am.get("properties") or []
+        am_bills = sum((p.get("bill_count", 0) for p in am_props))
+        am_total = (am.get("totals") or {}).get("billed_back", 0.0)
+        # Anchor target — name escaped for href
+        anchor = f"am_{abs(hash(am_name))}"
+        am_index_rows.append([
+            Paragraph(f'<a href="#{anchor}" color="#0369a1"><b>{_pdf_safe(am_name)}</b></a>', body),
+            Paragraph(str(len(am_props)), body),
+            Paragraph(str(am_bills), body),
+            Paragraph(_fmt_money(am_total), body),
+        ])
+    am_index_tbl = Table(am_index_rows, colWidths=[3.5 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch])
+    am_index_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), NAVY),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    story.append(am_index_tbl)
+    story.append(PageBreak())
+
+    # ---- Per-AM sections ----
+    for am in asset_managers:
+        am_name = am.get("name", "Unassigned")
+        am_props = am.get("properties") or []
+        am_anchor = f"am_{abs(hash(am_name))}"
+        story.append(Paragraph(f'<a name="{am_anchor}"/>{_pdf_safe(am_name)}', h2))
+        story.append(Paragraph(
+            f"{len(am_props)} propert{'y' if len(am_props) == 1 else 'ies'} &nbsp;·&nbsp; "
+            f"{_fmt_money((am.get('totals') or {}).get('billed_back', 0.0))} total",
+            ParagraphStyle('Sub', parent=body, textColor=GRAY_TEXT, spaceAfter=10)))
+
+        # Property mini-table for this AM (sorted by total desc)
+        sorted_props = sorted(am_props, key=lambda p: -(p.get("totals") or {}).get("billed_back", 0.0))
+        prop_rows = [[
+            Paragraph("<b>Property</b>", body),
+            Paragraph("<b>Bills</b>", body),
+            Paragraph("<b>Total</b>", body),
+        ]]
+        for prop in sorted_props:
+            pname = prop.get("property_name") or prop.get("property_code") or "Unknown"
+            panchor = f"prop_{abs(hash(am_name + '|' + pname))}"
+            ptotal = (prop.get("totals") or {}).get("billed_back", 0.0)
+            pbcount = prop.get("bill_count", 0)
+            prop_rows.append([
+                Paragraph(f'<a href="#{panchor}" color="#0369a1">{_pdf_safe(pname)}</a>', body),
+                Paragraph(str(pbcount), body),
+                Paragraph(_fmt_money(ptotal), body),
+            ])
+        prop_tbl = Table(prop_rows, colWidths=[4.5 * inch, 1.0 * inch, 1.5 * inch])
+        prop_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#fafafa")]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(prop_tbl)
+        story.append(PageBreak())
+
+        # Per-property page
+        for prop in sorted_props:
+            pname = prop.get("property_name") or prop.get("property_code") or "Unknown"
+            panchor = f"prop_{abs(hash(am_name + '|' + pname))}"
+            story.append(Paragraph(f'<a name="{panchor}"/>{_pdf_safe(pname)}', h2))
+            story.append(Paragraph(
+                f"<i>{_pdf_safe(am_name)}</i> &nbsp;·&nbsp; "
+                f"{prop.get('bill_count', 0)} bill{'' if prop.get('bill_count', 0) == 1 else 's'} &nbsp;·&nbsp; "
+                f"{_fmt_money((prop.get('totals') or {}).get('billed_back', 0.0))} total",
+                ParagraphStyle('Sub', parent=body, textColor=GRAY_TEXT, spaceAfter=8)))
+
+            # Property note
+            pnote = prop.get("property_note") or ""
+            if pnote:
+                story.append(Paragraph(f"📝 {_pdf_safe(pnote)}", note_style))
+
+            # Charge code totals table
+            gl_rows = [[
+                Paragraph("<b>Charge Code</b>", body),
+                Paragraph("<b>Description</b>", body),
+                Paragraph("<b>Lines</b>", body),
+                Paragraph("<b>Amount</b>", body),
+            ]]
+            for gl in (prop.get("gl_codes") or []):
+                gl_rows.append([
+                    Paragraph(_pdf_safe(gl.get("code", "")), body),
+                    Paragraph(_pdf_safe(gl.get("description", "")), body),
+                    Paragraph(str(sum(1 for b in (prop.get("bills") or []) if gl.get("code") in (b.get("gl_codes") or []))), body),
+                    Paragraph(_fmt_money(gl.get("billed_back", 0.0)), body),
+                ])
+            if len(gl_rows) > 1:
+                gl_tbl = Table(gl_rows, colWidths=[1.4 * inch, 3.6 * inch, 0.7 * inch, 1.3 * inch])
+                gl_tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('TOPPADDING', (0, 0), (-1, -1), 3),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 5),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+                ]))
+                story.append(Paragraph("Totals by Charge Code", h3))
+                story.append(gl_tbl)
+                story.append(Spacer(1, 0.15 * inch))
+
+            # Bills list with PDF hyperlinks
+            bills = prop.get("bills") or []
+            if bills:
+                story.append(Paragraph(f"Bills ({len(bills)})", h3))
+                bill_rows = [[
+                    Paragraph("<b>Vendor</b>", body),
+                    Paragraph("<b>Account</b>", body),
+                    Paragraph("<b>Service Period</b>", body),
+                    Paragraph("<b>GL</b>", body),
+                    Paragraph("<b>Amount</b>", body),
+                    Paragraph("<b>PDF</b>", body),
+                ]]
+                for b in bills:
+                    svc = ""
+                    if b.get("bill_period_start") or b.get("bill_period_end"):
+                        svc = f"{b.get('bill_period_start', '?')} → {b.get('bill_period_end', '?')}"
+                    pdf_url = b.get("pdf_url") or ""
+                    abs_pdf = (BASE_URL + pdf_url) if pdf_url and pdf_url.startswith("/") else pdf_url
+                    pdf_cell = (
+                        f'<a href="{_pdf_safe(abs_pdf)}" color="#0369a1"><b>View PDF</b></a>'
+                        if abs_pdf else "—"
+                    )
+                    gl_summary = ", ".join(b.get("gl_codes") or [])
+                    bill_rows.append([
+                        Paragraph(_pdf_safe(b.get("vendor_name", "")), body),
+                        Paragraph(_pdf_safe(b.get("account", "")), body),
+                        Paragraph(_pdf_safe(svc), body),
+                        Paragraph(_pdf_safe(gl_summary or b.get("utility_type", "")), body),
+                        Paragraph(_fmt_money(b.get("amount", 0.0)), body),
+                        Paragraph(pdf_cell, body),
+                    ])
+                bill_tbl = Table(bill_rows, colWidths=[1.7 * inch, 1.0 * inch, 1.5 * inch, 1.1 * inch, 0.9 * inch, 0.8 * inch])
+                bill_tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+                    ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor("#e2e8f0")),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#fafafa")]),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('TOPPADDING', (0, 0), (-1, -1), 3),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                ]))
+                story.append(bill_tbl)
+
+            story.append(PageBreak())
+
+    doc.build(story)
+
+
+def _pdf_safe(s):
+    """Escape XML-ish special chars used by ReportLab Paragraph markup."""
+    if s is None:
+        return ""
+    s = str(s)
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return s
 
 
 def _generate_corporate_pdf(buffer, data):

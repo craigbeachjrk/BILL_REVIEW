@@ -155,7 +155,7 @@
     <div class="card">
       <div class="controls">
         <button class="btn success" onclick="generateMasterBills()">Refresh Data</button>
-        <button class="btn" onclick="openReportModal()" style="background:#059669">Generate Report</button>
+        <button class="btn" onclick="openReportModal()" style="background:#059669">Bill Inputs Report</button>
         <button class="btn" onclick="openUploadModal()" style="background:#8b5cf6">Upload Manual Data</button>
         <a href="/api/master-bills/manual-template" class="btn secondary small" style="margin-left:4px" title="Download CSV template for manual uploads">Template CSV</a>
         <button class="btn small" onclick="exportMasterBillsCSV()" style="background:#0284c7;margin-left:4px" title="Download current view as CSV">Export CSV</button>
@@ -265,48 +265,26 @@
 
   <!-- Report Generation Modal -->
   <div class="modal-overlay" id="reportModal">
-    <div class="modal-box" style="max-width:600px">
-      <h2 style="margin-bottom:20px">Generate Billback Summary Report</h2>
+    <div class="modal-box" style="max-width:560px">
+      <h2 style="margin-bottom:8px">Bill Inputs Report</h2>
+      <div style="font-size:12px;color:#64748b;margin-bottom:18px;line-height:1.5">
+        Master packet PDF with cover, asset-manager index, and per-property bill lists.
+        Each bill row includes a clickable <strong>View PDF</strong> link to the source bill.
+      </div>
 
       <label style="display:block;margin-bottom:8px;font-weight:600;font-size:13px">Report Period</label>
       <select id="reportPeriodSelect" style="display:block;width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:20px;font-size:14px">
         <option value="">Loading periods...</option>
       </select>
 
-      <label style="display:block;margin-bottom:12px;font-weight:600;font-size:13px">Report Style</label>
-      <div style="display:flex;gap:12px;margin-bottom:24px">
-        <label style="flex:1;cursor:pointer">
-          <input type="radio" name="reportStyle" value="corporate" checked style="display:none">
-          <div class="style-card selected" data-style="corporate">
-            <div style="font-size:24px;margin-bottom:8px">📊</div>
-            <div style="font-weight:600;font-size:14px">Corporate</div>
-            <div style="font-size:11px;color:#64748b;margin-top:4px">Professional tables, formal layout</div>
-          </div>
-        </label>
-        <label style="flex:1;cursor:pointer">
-          <input type="radio" name="reportStyle" value="simple" style="display:none">
-          <div class="style-card" data-style="simple">
-            <div style="font-size:24px;margin-bottom:8px">📄</div>
-            <div style="font-weight:600;font-size:14px">Simple</div>
-            <div style="font-size:11px;color:#64748b;margin-top:4px">Clean, minimal styling</div>
-          </div>
-        </label>
-        <label style="flex:1;cursor:pointer">
-          <input type="radio" name="reportStyle" value="dashboard" style="display:none">
-          <div class="style-card" data-style="dashboard">
-            <div style="font-size:24px;margin-bottom:8px">📈</div>
-            <div style="font-weight:600;font-size:14px">Dashboard</div>
-            <div style="font-size:11px;color:#64748b;margin-top:4px">Modern cards, visual bars</div>
-          </div>
-        </label>
-      </div>
+      <!-- Hidden style input — packet is the only modern format. The legacy
+           corporate/simple/dashboard styles remain reachable via direct API
+           call ?style=corporate for users who specifically want analytics. -->
+      <input type="hidden" name="reportStyle" value="packet">
 
-      <div class="modal-actions" style="justify-content:space-between">
-        <a href="/templates/report_example_corporate.html" target="_blank" style="font-size:12px;color:#0ea5e9">Preview Examples</a>
-        <div style="display:flex;gap:8px">
-          <button class="btn secondary" onclick="closeReportModal()">Cancel</button>
-          <button class="btn" onclick="generateReport()" style="background:#059669">Download PDF</button>
-        </div>
+      <div class="modal-actions" style="justify-content:flex-end;gap:8px">
+        <button class="btn secondary" onclick="closeReportModal()">Cancel</button>
+        <button class="btn" onclick="generateReport()" style="background:#059669">Download Bill Inputs Report</button>
       </div>
     </div>
   </div>
@@ -2265,38 +2243,56 @@
 
     function generateReport() {
       const period = document.getElementById('reportPeriodSelect').value;
-      const style = document.querySelector('input[name="reportStyle"]:checked')?.value || 'corporate';
+      const style = document.querySelector('input[name="reportStyle"]')?.value || 'packet';
 
       if (!period) {
         showToast('Please select a period', 'err');
         return;
       }
 
-      showToast('Generating PDF report...', 'ok');
+      // The packet PDF is large + does an S3 scan + ReportLab render. Tell the
+      // user it's working before kicking it off.
+      showToast('Building Bill Inputs Report (~30s for large periods)…', 'ok');
 
-      // Trigger download
-      const url = `/api/billback/report/pdf?period=${encodeURIComponent(period)}&style=${encodeURIComponent(style)}`;
+      // Normalize period to YYYY-MM since the backend validates that format
+      // (the dropdown returns YYYY-MM already, but be defensive in case some
+      // future code path passes MM/YYYY)
+      let periodNorm = period;
+      if (/^\d{2}\/\d{4}$/.test(period)) {
+        const [m, y] = period.split('/');
+        periodNorm = `${y}-${m}`;
+      }
+
+      const url = `/api/billback/report/pdf?period=${encodeURIComponent(periodNorm)}&style=${encodeURIComponent(style)}`;
 
       fetch(url)
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to generate report');
+        .then(async response => {
+          if (!response.ok) {
+            // Surface the actual server error message instead of "Failed to generate report"
+            let errMsg = `HTTP ${response.status}`;
+            try {
+              const j = await response.json();
+              if (j && j.error) errMsg = j.error;
+            } catch (_) { /* response wasn't JSON */ }
+            throw new Error(errMsg);
+          }
           return response.blob();
         })
         .then(blob => {
           const downloadUrl = window.URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = downloadUrl;
-          a.download = `UBI_Billback_Summary_${period}_${style}.pdf`;
+          a.download = `Bill_Inputs_Report_${periodNorm}.pdf`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           window.URL.revokeObjectURL(downloadUrl);
           closeReportModal();
-          showToast('Report downloaded successfully', 'ok');
+          showToast('Report downloaded', 'ok');
         })
         .catch(e => {
           console.error('Error generating report:', e);
-          showToast('Error generating report: ' + e.message, 'err');
+          showToast('Failed: ' + (e.message || 'unknown error'), 'err');
         });
     }
 
