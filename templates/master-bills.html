@@ -1733,7 +1733,11 @@
     async function savePropertyNote(deleteIt) {
       const note = deleteIt ? '' : document.getElementById('pnModalInput').value.trim();
       const propertyId = _propNoteState.propertyId;
-      if (!propertyId) { closePropertyNoteModal(); return; }
+      if (!propertyId) {
+        // Don't silently close — surface the bad state so we don't lose typed text.
+        showToast('Cannot save: property ID missing. Refresh the page and try again.', 'err');
+        return;
+      }
       try {
         const fd = new FormData();
         fd.append('property_id', propertyId);
@@ -1746,9 +1750,22 @@
         }
         closePropertyNoteModal();
         showToast(note ? 'Property note saved' : 'Property note cleared', 'ok');
-        // Force-refresh: bypass both in-memory and S3 caches so we never serve
-        // stale data after a write (handles AppRunner's 2-instance fan-out where
-        // the GET could land on a different instance than the POST).
+        // Optimistic update: AppRunner runs 2 instances and the POST only busts
+        // the cache on the instance that handled it; the next GET can land on
+        // the other instance and return stale note=''. Mutating the in-memory
+        // state + re-rendering shows the user's saved note immediately, even
+        // before the eventual GET catches up.
+        if (_currentTrackerData && Array.isArray(_currentTrackerData.properties)) {
+          for (const p of _currentTrackerData.properties) {
+            if (p.property_id === propertyId) {
+              p.property_note = note;
+            }
+          }
+          renderCompletionTracker(_currentTrackerData);
+        }
+        // Background reconcile against the server (the optimistic update above
+        // already showed the user the right state; this is just to pick up any
+        // other concurrent changes that may have happened).
         if (typeof loadCompletionTracker === 'function') {
           loadCompletionTracker(true);
         }

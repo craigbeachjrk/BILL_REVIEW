@@ -22921,7 +22921,31 @@ def api_completion_tracker(
         # instead of a synchronous ~85s compute that would blow past AppRunner's
         # request timeout. The frontend handles the "building" response by
         # preserving its current state and prompting the user to refresh again.
-        return _metrics_serve(_cache_name, _compute, force_refresh=bool(refresh), async_cold=True)
+        result = _metrics_serve(_cache_name, _compute, force_refresh=bool(refresh), async_cold=True)
+
+        # Overlay fresh property notes on top of the cached result. Without
+        # this, AppRunner's 2-instance fan-out makes notes "disappear" after a
+        # save: the POST busts the writing instance's in-memory cache, but the
+        # subsequent GET can land on the other instance whose cache is still
+        # serving the pre-save snapshot. Notes are tiny + fast to load, so we
+        # always read fresh and overlay regardless of cache state.
+        if isinstance(result, dict) and isinstance(result.get("properties"), list):
+            try:
+                _fresh_notes_raw = _ddb_get_config("property-notes") or []
+                _fresh_notes_by_id = {}
+                for _n in _fresh_notes_raw:
+                    if isinstance(_n, dict):
+                        _pid = str(_n.get("propertyId") or "").strip()
+                        _nt = str(_n.get("note") or "").strip()
+                        if _pid:
+                            _fresh_notes_by_id[_pid] = _nt
+                for _p in result["properties"]:
+                    _pid = str(_p.get("property_id") or "").strip()
+                    if _pid:
+                        _p["property_note"] = _fresh_notes_by_id.get(_pid, "")
+            except Exception as _e:
+                print(f"[COMPLETION TRACKER] Note overlay failed (serving cached): {_e}")
+        return result
 
     except Exception as e:
         print(f"[COMPLETION TRACKER] Error: {e}")
