@@ -87,6 +87,9 @@
     .period-row-clickable{cursor:pointer;transition:background .12s,color .12s}
     .period-row-clickable:hover{background:#fef2f2;color:#0c4a6e}
     .period-row-clickable:hover::after{content:" — dbl-click to unassign";color:#94a3b8;font-style:italic;font-size:9px}
+    /* Keyframes for the Bill Inputs Report progress banner */
+    @keyframes rpbSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+    @keyframes rpbSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
     .badge.accrual{background:#dbeafe;color:#1e40af}
     .badge.manual{background:#fce7f3;color:#9d174d}
     .badge.trueup{background:#e0e7ff;color:#3730a3}
@@ -155,7 +158,7 @@
     <div class="card">
       <div class="controls">
         <button class="btn success" onclick="generateMasterBills()">Refresh Data</button>
-        <button class="btn" onclick="openReportModal()" style="background:#059669">Bill Inputs Report</button>
+        <button class="btn" id="billInputsReportBtn" onclick="openReportModal()" style="background:#059669">Bill Inputs Report</button>
         <button class="btn" onclick="openUploadModal()" style="background:#8b5cf6">Upload Manual Data</button>
         <a href="/api/master-bills/manual-template" class="btn secondary small" style="margin-left:4px" title="Download CSV template for manual uploads">Template CSV</a>
         <button class="btn small" onclick="exportMasterBillsCSV()" style="background:#0284c7;margin-left:4px" title="Download current view as CSV">Export CSV</button>
@@ -1983,7 +1986,15 @@
     }
 
     // -------- Report Generation --------
+    // Tracks whether a Bill Inputs Report build is currently in flight so we
+    // don't fire a second one in parallel and waste server CPU on a dup PDF.
+    let _reportInFlight = false;
+
     function openReportModal() {
+      if (_reportInFlight) {
+        showToast('A report is already being built — wait for it to finish or click ✕ on the progress banner to cancel.', 'err');
+        return;
+      }
       const modal = document.getElementById('reportModal');
       modal.classList.add('show');
 
@@ -2250,25 +2261,41 @@
         return;
       }
 
-      // The packet PDF is large + does an S3 scan + ReportLab render. Tell the
-      // user it's working before kicking it off.
-      showToast('Building Bill Inputs Report (~30s for large periods)…', 'ok');
-
       // Normalize period to YYYY-MM since the backend validates that format
-      // (the dropdown returns YYYY-MM already, but be defensive in case some
-      // future code path passes MM/YYYY)
       let periodNorm = period;
       if (/^\d{2}\/\d{4}$/.test(period)) {
         const [m, y] = period.split('/');
         periodNorm = `${y}-${m}`;
       }
 
+      // Close the modal immediately — the user shouldn't have to sit on a
+      // frozen modal for 30+ seconds while the packet builds. Show a fixed
+      // progress banner instead with an elapsed-seconds counter.
+      closeReportModal();
+
+      _reportInFlight = true;
+      const btn = document.getElementById('billInputsReportBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        btn.dataset.origText = btn.textContent;
+        btn.textContent = 'Building…';
+      }
+
+      const startTs = Date.now();
+      const banner = _reportProgressShow(`Building Bill Inputs Report for ${periodNorm}…`);
+      const tick = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startTs) / 1000);
+        const elEl = banner && banner.querySelector('.rpb-elapsed');
+        if (elEl) elEl.textContent = `${elapsed}s elapsed · large periods can take ~30-60s`;
+      }, 1000);
+
       const url = `/api/billback/report/pdf?period=${encodeURIComponent(periodNorm)}&style=${encodeURIComponent(style)}`;
 
       fetch(url)
         .then(async response => {
           if (!response.ok) {
-            // Surface the actual server error message instead of "Failed to generate report"
             let errMsg = `HTTP ${response.status}`;
             try {
               const j = await response.json();
@@ -2279,6 +2306,9 @@
           return response.blob();
         })
         .then(blob => {
+          clearInterval(tick);
+          _reportInFlight = false;
+          _restoreReportButton();
           const downloadUrl = window.URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = downloadUrl;
@@ -2287,13 +2317,65 @@
           a.click();
           document.body.removeChild(a);
           window.URL.revokeObjectURL(downloadUrl);
-          closeReportModal();
-          showToast('Report downloaded', 'ok');
+          const total = Math.round((Date.now() - startTs) / 1000);
+          _reportProgressDismiss(banner, true, `Downloaded in ${total}s — Bill_Inputs_Report_${periodNorm}.pdf`);
         })
         .catch(e => {
+          clearInterval(tick);
+          _reportInFlight = false;
+          _restoreReportButton();
           console.error('Error generating report:', e);
-          showToast('Failed: ' + (e.message || 'unknown error'), 'err');
+          _reportProgressDismiss(banner, false, 'Failed: ' + (e.message || 'unknown error'));
         });
+    }
+
+    function _restoreReportButton() {
+      const btn = document.getElementById('billInputsReportBtn');
+      if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.cursor = '';
+        if (btn.dataset.origText) btn.textContent = btn.dataset.origText;
+      }
+    }
+
+    // Persistent progress banner anchored bottom-right. Multiple banners stack.
+    function _reportProgressShow(msg) {
+      let host = document.getElementById('reportProgressHost');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'reportProgressHost';
+        host.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:11000;display:flex;flex-direction:column;gap:10px;align-items:flex-end';
+        document.body.appendChild(host);
+      }
+      const banner = document.createElement('div');
+      banner.className = 'rpb-banner';
+      banner.style.cssText = 'background:#0c4a6e;color:#fff;padding:14px 16px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);min-width:340px;max-width:480px;display:flex;align-items:flex-start;gap:12px;font-size:13px;animation:rpbSlide .25s ease-out';
+      banner.innerHTML = `
+        <div class="rpb-spinner" style="width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:rpbSpin .8s linear infinite;flex-shrink:0;margin-top:2px"></div>
+        <div style="flex:1;line-height:1.4">
+          <div class="rpb-msg" style="font-weight:600">${msg}</div>
+          <div class="rpb-elapsed" style="font-size:11px;color:rgba(255,255,255,.7);margin-top:2px">starting…</div>
+        </div>
+        <button class="rpb-close" style="background:transparent;border:none;color:rgba(255,255,255,.6);font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0">×</button>`;
+      banner.querySelector('.rpb-close').addEventListener('click', () => banner.remove());
+      host.appendChild(banner);
+      return banner;
+    }
+
+    function _reportProgressDismiss(banner, success, msg) {
+      if (!banner) return;
+      banner.style.background = success ? '#065f46' : '#991b1b';
+      banner.innerHTML = `
+        <div style="font-size:18px;flex-shrink:0;margin-top:1px">${success ? '✓' : '✗'}</div>
+        <div style="flex:1;line-height:1.4">
+          <div style="font-weight:600">${success ? 'Bill Inputs Report ready' : 'Report failed'}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.85);margin-top:2px">${msg}</div>
+        </div>
+        <button class="rpb-close" style="background:transparent;border:none;color:rgba(255,255,255,.6);font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0">×</button>`;
+      banner.querySelector('.rpb-close').addEventListener('click', () => banner.remove());
+      // Auto-dismiss success after a few seconds; keep errors longer so user can read
+      setTimeout(() => { try { banner.remove(); } catch (_) {} }, success ? 5000 : 12000);
     }
 
     // Report modal click-outside-to-close
