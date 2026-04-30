@@ -30415,6 +30415,10 @@ def api_billback_report_data(
                                 "charge": charge,
                                 "excluded": rec.get("excluded", False) or rec.get("is_excluded", False),
                                 "s3_key": key,
+                                # source_input_key points at the actual PDF in S3
+                                # (Bill_Parser_2_Parsed_Inputs/...pdf). The JSONL s3_key
+                                # above is metadata; the /pdf?k= proxy needs the PDF file.
+                                "pdf_source_key": rec.get("source_input_key") or rec.get("PDF_LINK") or rec.get("pdf_link") or "",
                                 "bill_period_start": rec.get("Bill Period Start") or rec.get("bill_period_start") or "",
                                 "bill_period_end": rec.get("Bill Period End") or rec.get("bill_period_end") or "",
                                 "bill_date": rec.get("Bill Date") or rec.get("bill_date") or "",
@@ -30503,6 +30507,7 @@ def api_billback_report_data(
             if s3k:
                 bucket = bills_by_period_property[period_key][prop_key].setdefault(s3k, {
                     "s3_key": s3k,
+                    "pdf_source_key": item.get("pdf_source_key") or "",
                     "vendor_name": item.get("vendor_name") or "",
                     "account": item.get("account") or "",
                     "invoice_number": item.get("invoice_number") or "",
@@ -30522,6 +30527,64 @@ def api_billback_report_data(
                 bucket["line_count"] += 1
                 if item.get("gl_code"):
                     bucket["gl_codes"].add(item["gl_code"])
+
+        # Load AP / Asset Manager mapping from DDB jrk-bill-config (this is the
+        # one users actually maintain via the AP Mapping admin page; the
+        # portfolio_master AM column is often empty or stale because no one
+        # updates the CSV). Indexed by both propertyId and lowercased
+        # propertyName so we can match either way.
+        try:
+            _ap_mapping_for_report = _ddb_get_config("ap-mapping") or []
+        except Exception:
+            _ap_mapping_for_report = []
+        am_by_pid: dict[str, str] = {}
+        am_by_pname_lower: dict[str, str] = {}
+        for _ap in _ap_mapping_for_report:
+            if not isinstance(_ap, dict):
+                continue
+            _pid = str(_ap.get("propertyId") or "").strip()
+            _pname = str(_ap.get("propertyName") or "").strip()
+            _name = str(_ap.get("name") or "").strip()
+            if not _name:
+                continue
+            if _pid:
+                am_by_pid[_pid] = _name
+            if _pname:
+                am_by_pname_lower[_pname.lower()] = _name
+
+        # Map property_name (lowercased) -> first EnrichedPropertyID we see for
+        # it across all_items. Used for AM lookup via ap-mapping (keyed on
+        # propertyId) and to populate prop_entry["code"] on the report.
+        item_property_id_by_name: dict[str, str] = {}
+        for _it in all_items:
+            _nm = (_it.get("property_name") or "").strip().lower()
+            _pid = (_it.get("property_code") or "").strip()
+            if _nm and _pid and _nm not in item_property_id_by_name:
+                item_property_id_by_name[_nm] = _pid
+
+        # Property notes (one-liners AP reps maintain on the property-notes
+        # admin page). The PDF generator surfaces these on each property page.
+        try:
+            _property_notes_raw = _ddb_get_config("property-notes") or []
+        except Exception:
+            _property_notes_raw = []
+        notes_by_pid: dict[str, str] = {}
+        for _n in _property_notes_raw:
+            if isinstance(_n, dict):
+                _pid = str(_n.get("propertyId") or "").strip()
+                _nt = str(_n.get("note") or "").strip()
+                if _pid and _nt:
+                    notes_by_pid[_pid] = _nt
+
+        # GL descriptions (EnrichedGLAccountName) keyed by gl_code, taken from
+        # the bill data we already loaded. Avoids a separate DDB roundtrip and
+        # uses the description that was actually on the posted bill.
+        gl_desc_by_code: dict[str, str] = {}
+        for _it in all_items:
+            _gc = (_it.get("gl_code") or "").strip()
+            _gd = (_it.get("gl_description") or "").strip()
+            if _gc and _gd and _gc not in gl_desc_by_code:
+                gl_desc_by_code[_gc] = _gd
 
         # Build report structure for target period with historical comparison
         report_data = {
@@ -30560,13 +30623,36 @@ def api_billback_report_data(
             prop_key = prop_name.lower().strip()
             port_data = portfolio_by_name.get(prop_key, {})
 
+            # AM resolution priority:
+            #   1. ap-mapping DDB config keyed by EnrichedPropertyID (preferred —
+            #      most precise, user-maintained on the AP Mapping admin page)
+            #   2. ap-mapping DDB config keyed by lowercased property_name
+            #   3. portfolio_master CSV asset_manager column
+            #   4. "Unassigned"
+            _enriched_pid = item_property_id_by_name.get((prop_name or "").strip().lower(), "")
+            _pname_lower = (prop_name or "").strip().lower()
+            am_resolved = (
+                (am_by_pid.get(_enriched_pid) if _enriched_pid else None)
+                or am_by_pname_lower.get(_pname_lower)
+                or port_data.get("asset_manager")
+                or "Unassigned"
+            )
+            _pcode = _enriched_pid or port_data.get("property_code", "")
+            _pnote = notes_by_pid.get(_enriched_pid, "") if _enriched_pid else ""
+
             prop_entry = {
+                # Both "name"/"code" (legacy dashboard JSON consumers) and
+                # "property_name"/"property_code" (master-packet PDF generator)
+                # are populated to keep both readers happy.
                 "name": prop_name,
-                "code": port_data.get("property_code", ""),
+                "code": _pcode,
+                "property_name": prop_name,
+                "property_code": _pcode,
+                "property_note": _pnote,
                 "region": port_data.get("region", ""),
                 "fund": port_data.get("fund", ""),
                 "units": port_data.get("units", 0) or 0,
-                "asset_manager": port_data.get("asset_manager", "Unassigned"),
+                "asset_manager": am_resolved,
                 "analyst": port_data.get("analyst", ""),
                 "gl_codes": [],
                 "totals": {
@@ -30602,7 +30688,7 @@ def api_billback_report_data(
 
                 gl_entry = {
                     "code": gl_code,
-                    "description": "",  # Would come from GL mapping
+                    "description": gl_desc_by_code.get(gl_code, ""),
                     "billed_back": round(gl_current["total"], 2),
                     "excluded": round(gl_current["excluded"], 2),
                     "t1": round(gl_t1["total"], 2),
@@ -30628,11 +30714,16 @@ def api_billback_report_data(
             target_bills_by_prop = bills_by_period_property.get(target_period, {})
             prop_bills_dict = target_bills_by_prop.get(prop_name, {})
             prop_bills_list = []
+            from urllib.parse import quote as _qsk
             for s3k, b in prop_bills_dict.items():
-                from urllib.parse import quote as _qsk
+                # Use the PDF source path for the link, NOT the JSONL s3_key.
+                # Fall back to s3_key if missing (will likely 404 but at least
+                # surfaces the bill row).
+                pdf_key = b.get("pdf_source_key") or s3k
                 prop_bills_list.append({
                     "s3_key": s3k,
-                    "pdf_url": f"/pdf?k={_qsk(s3k, safe='')}",
+                    "pdf_source_key": b.get("pdf_source_key", ""),
+                    "pdf_url": f"/pdf?k={_qsk(pdf_key, safe='')}" if pdf_key else "",
                     "vendor_name": b.get("vendor_name", ""),
                     "account": b.get("account", ""),
                     "invoice_number": b.get("invoice_number", ""),
@@ -30868,9 +30959,11 @@ def _generate_master_packet_pdf(buffer, data):
     story = []
 
     cover_title = ParagraphStyle('CoverTitle', parent=styles['Heading1'],
-                                 fontSize=32, textColor=NAVY, alignment=TA_LEFT, spaceAfter=4)
+                                 fontSize=32, leading=38, textColor=NAVY,
+                                 alignment=TA_LEFT, spaceAfter=10)
     cover_sub = ParagraphStyle('CoverSub', parent=styles['Normal'],
-                               fontSize=14, textColor=GRAY_TEXT, alignment=TA_LEFT, spaceAfter=24)
+                               fontSize=14, leading=18, textColor=GRAY_TEXT,
+                               alignment=TA_LEFT, spaceAfter=24)
     h2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=16, textColor=NAVY, spaceBefore=8, spaceAfter=8)
     h3 = ParagraphStyle('H3', parent=styles['Heading3'], fontSize=13, textColor=NAVY, spaceBefore=6, spaceAfter=4)
     body = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10, leading=13)
@@ -30940,7 +31033,7 @@ def _generate_master_packet_pdf(buffer, data):
             Paragraph(str(am_bills), body),
             Paragraph(_fmt_money(am_total), body),
         ])
-    am_index_tbl = Table(am_index_rows, colWidths=[3.5 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch])
+    am_index_tbl = Table(am_index_rows, colWidths=[3.5 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch], repeatRows=1)
     am_index_tbl.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), NAVY),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -30983,7 +31076,7 @@ def _generate_master_packet_pdf(buffer, data):
                 Paragraph(str(pbcount), body),
                 Paragraph(_fmt_money(ptotal), body),
             ])
-        prop_tbl = Table(prop_rows, colWidths=[4.5 * inch, 1.0 * inch, 1.5 * inch])
+        prop_tbl = Table(prop_rows, colWidths=[4.5 * inch, 1.0 * inch, 1.5 * inch], repeatRows=1)
         prop_tbl.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
@@ -31008,27 +31101,37 @@ def _generate_master_packet_pdf(buffer, data):
                 f"{_fmt_money((prop.get('totals') or {}).get('billed_back', 0.0))} total",
                 ParagraphStyle('Sub', parent=body, textColor=GRAY_TEXT, spaceAfter=8)))
 
-            # Property note
+            # Property note. Helvetica has no glyph for the 📝 emoji (renders
+            # as a missing-char box), and ReportLab Paragraphs treat \r\n as
+            # whitespace by default — convert to <br/> so multi-line notes
+            # actually wrap.
             pnote = prop.get("property_note") or ""
             if pnote:
-                story.append(Paragraph(f"📝 {_pdf_safe(pnote)}", note_style))
+                pnote_html = _pdf_safe(pnote).replace("\r\n", "<br/>").replace("\r", "<br/>").replace("\n", "<br/>")
+                story.append(Paragraph(f"<b>Note:</b> {pnote_html}", note_style))
 
-            # Charge code totals table
+            # Charge code totals table.
+            # Skip zero-amount rows: gl_codes may include codes from historical
+            # months that didn't bill in the target period — surfacing $0 rows
+            # is just noise on a "what bills came in" report.
             gl_rows = [[
                 Paragraph("<b>Charge Code</b>", body),
                 Paragraph("<b>Description</b>", body),
-                Paragraph("<b>Lines</b>", body),
+                Paragraph("<b>Bills</b>", body),
                 Paragraph("<b>Amount</b>", body),
             ]]
             for gl in (prop.get("gl_codes") or []):
+                amount = gl.get("billed_back", 0.0) or 0.0
+                if not amount:
+                    continue
                 gl_rows.append([
                     Paragraph(_pdf_safe(gl.get("code", "")), body),
                     Paragraph(_pdf_safe(gl.get("description", "")), body),
                     Paragraph(str(sum(1 for b in (prop.get("bills") or []) if gl.get("code") in (b.get("gl_codes") or []))), body),
-                    Paragraph(_fmt_money(gl.get("billed_back", 0.0)), body),
+                    Paragraph(_fmt_money(amount), body),
                 ])
             if len(gl_rows) > 1:
-                gl_tbl = Table(gl_rows, colWidths=[1.4 * inch, 3.6 * inch, 0.7 * inch, 1.3 * inch])
+                gl_tbl = Table(gl_rows, colWidths=[1.4 * inch, 3.6 * inch, 0.7 * inch, 1.3 * inch], repeatRows=1)
                 gl_tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
@@ -31073,7 +31176,7 @@ def _generate_master_packet_pdf(buffer, data):
                         Paragraph(_fmt_money(b.get("amount", 0.0)), body),
                         Paragraph(pdf_cell, body),
                     ])
-                bill_tbl = Table(bill_rows, colWidths=[1.7 * inch, 1.0 * inch, 1.5 * inch, 1.1 * inch, 0.9 * inch, 0.8 * inch])
+                bill_tbl = Table(bill_rows, colWidths=[1.7 * inch, 1.0 * inch, 1.5 * inch, 1.1 * inch, 0.9 * inch, 0.8 * inch], repeatRows=1)
                 bill_tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
                     ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor("#e2e8f0")),
