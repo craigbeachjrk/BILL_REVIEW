@@ -1527,7 +1527,20 @@
             }
           };
           if (propNameSel){ propNameSel.addEventListener('change', syncProp); }
-          if (vendNameSel){ vendNameSel.addEventListener('change', syncVend); syncVend(); }
+          if (vendNameSel){
+            vendNameSel.addEventListener('change', syncVend);
+            // On initial render, populate the hidden vendCode field but do
+            // NOT call full syncVend() — that would look up vendIdToName
+            // (the canonical dim_vendor name) and overwrite hdr_vendor_view
+            // with it, clobbering whatever name the user already saved in
+            // their draft. We only want the canonical name to take over
+            // when the user actually picks a different vendor from the
+            // dropdown.
+            const initSelId = (vendNameSel.value || '').trim();
+            if (initSelId && vendCode){
+              vendCode.value = vendIdToCode[String(initSelId)] || '';
+            }
+          }
           // header selects are searchable via Choices.js
 
           // Line selects initializer (reused for existing and newly added/duplicated lines)
