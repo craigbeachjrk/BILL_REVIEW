@@ -20763,472 +20763,589 @@ async def api_save_gl_charge_code_mapping(request: Request, user: str = Depends(
 
 
 # -------- Master Bills (Aggregation) --------
+# ---------- Master bills generation: async job tracking ----------
+# Generation scans up to a year of Stage 8 prefixes and aggregates ~30k+ line
+# items. On AppRunner that consistently runs longer than the gateway's request
+# timeout, so the user sees an error even when the job actually finished.
+# Pattern mirrors the completion-tracker rebuild: kick off a background thread
+# that mutates a shared job-state record, and let the frontend poll for status.
+import threading as _mb_threading
+_MB_JOB_LOCK = _mb_threading.Lock()
+_MB_JOB_LOCAL: dict | None = None  # in-memory cache of latest job state
+_MB_JOB_S3_KEY = CONFIG_PREFIX + "master_bills_job.json"
+
+def _mb_job_load_from_s3() -> dict | None:
+    """Read the job state from S3 — cross-instance source of truth. Falls back
+    to the in-memory cache on any S3 hiccup so we don't lose a "running" flag
+    just because S3 GET timed out."""
+    global _MB_JOB_LOCAL
+    try:
+        obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=_MB_JOB_S3_KEY)
+        data = json.loads(obj["Body"].read())
+        if isinstance(data, dict):
+            _MB_JOB_LOCAL = data
+            return data
+    except Exception as e:
+        msg = str(e)
+        if "NoSuchKey" not in msg and "404" not in msg:
+            print(f"[MB JOB] Read failed: {e}")
+    return _MB_JOB_LOCAL
+
+def _mb_job_save(state: dict) -> None:
+    """Persist job state to S3 + update local cache. Best-effort — S3 errors
+    are logged but don't fail the foreground request, since the in-memory
+    state is still correct on this instance."""
+    global _MB_JOB_LOCAL
+    _MB_JOB_LOCAL = state
+    try:
+        s3.put_object(
+            Bucket=CONFIG_BUCKET,
+            Key=_MB_JOB_S3_KEY,
+            Body=json.dumps(state).encode("utf-8"),
+            ContentType="application/json",
+        )
+    except Exception as e:
+        print(f"[MB JOB] Save failed: {e}")
+
+
 @app.post("/api/master-bills/generate")
 async def api_generate_master_bills(request: Request, user: str = Depends(require_user)):
-    """Generate master bills by aggregating line items from Stage 8 (UBI Assigned)"""
-    try:
-        from datetime import datetime, timedelta
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        import hashlib
+    """Kick off a master-bills generation job in the background and return
+    immediately with the current job state. Safe to call repeatedly — a second
+    POST while a job is running just returns the in-flight job's state.
 
-        print("[GENERATE MASTER BILLS] Starting generation...")
+    Returns 202 with one of:
+      {"status": "running", "started_at": "...", "started_by": "...", ...}
+      {"status": "succeeded", "count": N, "total_amount": X, "finished_at": "..."}
+      {"status": "failed", "error": "...", "finished_at": "..."}
+
+    The frontend polls /api/master-bills/generate/status while status==running.
+    """
+    try:
         payload = await request.json()
-        # Now uses MM/YYYY format directly from dropdown
         start_period = payload.get("start_period", "").strip() if isinstance(payload, dict) else ""
         end_period = payload.get("end_period", "").strip() if isinstance(payload, dict) else ""
         days_back = int(payload.get("days_back", 365)) if isinstance(payload, dict) else 365
-        print(f"[GENERATE MASTER BILLS] Period filter: {start_period} to {end_period}")
 
-        # Build property_id → lookup_code map from dim_property
-        _prop_lookup = {}
-        try:
-            _prop_rows = _load_dim_records(DIM_PROPERTY_PREFIX)
-            for _pr in _prop_rows:
-                _pid = str(_pr.get("propertyId") or _pr.get("PROPERTY_ID") or _pr.get("Property ID") or _pr.get("id") or "").strip()
-                _lc = str(_pr.get("LOOKUP_CODE") or _pr.get("lookup_code") or _pr.get("LookupCode") or _pr.get("PROPERTY_CODE") or "").strip()
-                if _pid and _lc:
-                    _prop_lookup[_pid] = _lc
-            print(f"[GENERATE MASTER BILLS] Loaded {len(_prop_lookup)} property lookup codes")
-        except Exception as e:
-            print(f"[GENERATE MASTER BILLS] Warning: could not load property lookup codes: {e}")
+        from datetime import datetime as _dt2
+        import uuid as _uuid
 
-        # Scan Stage 8 (UBI_ASSIGNED_PREFIX) for assigned line items
-        print("[GENERATE MASTER BILLS] Scanning Stage 8 for assigned items...")
+        with _MB_JOB_LOCK:
+            current = _mb_job_load_from_s3() or {}
+            if current.get("status") == "running":
+                # Another job is already in flight — return its state. The
+                # frontend will poll until it transitions out of "running".
+                print(f"[MB JOB] Already running (started {current.get('started_at')} by {current.get('started_by')})")
+                return JSONResponse(current, status_code=202)
 
-        # Build date-partitioned prefixes
-        prefixes_to_scan = []
-        today = datetime.now()
-        for i in range(days_back):
-            d = today - timedelta(days=i)
-            prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
-            prefixes_to_scan.append(prefix)
+            new_state = {
+                "status": "running",
+                "job_id": _uuid.uuid4().hex,
+                "started_at": _dt2.utcnow().isoformat() + "Z",
+                "started_by": user,
+                "params": {
+                    "start_period": start_period,
+                    "end_period": end_period,
+                    "days_back": days_back,
+                },
+                "finished_at": None,
+                "count": None,
+                "total_amount": None,
+                "error": None,
+            }
+            _mb_job_save(new_state)
 
-        # Collect all S3 keys
-        all_keys = []
-        for prefix in prefixes_to_scan:
+        def _bg():
+            print(f"[MB JOB] Starting generation (job_id={new_state['job_id']}, user={user})")
             try:
-                paginator = s3.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-                    for obj in page.get('Contents', []):
-                        key = obj['Key']
-                        if key.endswith('.jsonl'):
-                            all_keys.append(key)
+                result = _run_master_bills_generation(start_period, end_period, days_back, user)
+                done = dict(new_state)
+                done["status"] = "succeeded"
+                done["finished_at"] = _dt2.utcnow().isoformat() + "Z"
+                done["count"] = result.get("count")
+                done["total_amount"] = result.get("total_amount")
+                _mb_job_save(done)
+                print(f"[MB JOB] Done: {done['count']} bills, ${done['total_amount']:.2f}")
             except Exception as e:
-                pass  # Skip inaccessible prefixes
-
-        print(f"[GENERATE MASTER BILLS] Found {len(all_keys)} files in Stage 8")
-
-        # Load all assigned line items from Stage 8
-        all_line_items = []
-
-        def process_file(key):
-            """Process a single S3 file and extract assigned line items."""
-            try:
-                body = _read_s3_text(BUCKET, key)
-                items = []
-                for line in body.splitlines():
-                    line = (line or '').strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                        # Only include lines with ubi_period (assigned items)
-                        if rec.get("ubi_period"):
-                            rec["__stage8_key__"] = key  # Track Stage 8 source (separate from baked __s3_key__)
-                            items.append(rec)
-                    except Exception:
-                        continue
-                return items
-            except Exception as e:
-                print(f"[GENERATE MASTER BILLS] Error processing {key}: {e}")
-                return []
-
-        # Process files concurrently
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(process_file, key): key for key in all_keys}
-            for future in as_completed(futures):
-                all_line_items.extend(future.result())
-
-        print(f"[GENERATE MASTER BILLS] Found {len(all_line_items)} assigned line items")
-
-        # Process each assigned line item
-        master_bills = {}  # key: property_id|charge_code|utility_name|ubi_period
-        gl_mappings = _ddb_get_config("gl-charge-code-mapping") or []
-
-        print("[GENERATE MASTER BILLS] Processing assigned items...")
-        for idx, line_data in enumerate(all_line_items):
-            try:
-                # Handle multi-period format (ubi_assignments array)
-                ubi_assignments = line_data.get("ubi_assignments", [])
-                if not ubi_assignments:
-                    # Legacy format: create single-item list from ubi_period field
-                    legacy_period = line_data.get("ubi_period", "")
-                    legacy_amount = float(line_data.get("ubi_amount", 0))
-                    if legacy_amount == 0:
-                        charge_str = str(line_data.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
-                        legacy_amount = float(charge_str) if charge_str else 0.0
-                    if legacy_period:
-                        ubi_assignments = [{"period": legacy_period, "amount": legacy_amount}]
-
-                if not ubi_assignments:
-                    continue
-
-                # Process each UBI period assignment for this line
-                for ubi_asn in ubi_assignments:
-                    ubi_period = ubi_asn.get("period", "")
-
-                    # IMPORTANT: Check if amount was overridden AFTER assignment
-                    # If Amount Overridden is True, always use Current Amount (even if it's 0)
-                    # This handles the case where user zeroed out an amount after UBI assignment
-                    amount_overridden_flag = line_data.get("Amount Overridden") or line_data.get("amount_overridden")
-                    if amount_overridden_flag:
-                        # User explicitly set this amount - use their value
-                        amount = float(line_data.get("Current Amount") or line_data.get("current_amount") or 0)
-                    else:
-                        # Use stored assignment amount, with fallbacks
-                        amount = float(ubi_asn.get("amount", 0))
-                        if amount == 0:
-                            # Check for Current Amount first, then fall back to Line Item Charge
-                            if line_data.get("Current Amount") is not None:
-                                amount = float(line_data.get("Current Amount", 0))
-                            else:
-                                charge_str = str(line_data.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
-                                amount = float(charge_str) if charge_str else 0.0
-
-                    if not ubi_period:
-                        continue
-
-                    # Extract line item details (use enriched fields from Stage 7)
-                    property_id = line_data.get("EnrichedPropertyID", line_data.get("Property ID", ""))
-                    property_name = line_data.get("EnrichedPropertyName", line_data.get("Property Name", ""))
-                    charge_code = line_data.get("Charge Code", "")
-                    utility_name = line_data.get("Utility Type", line_data.get("Utility Name", ""))
-                    gl_code = line_data.get("EnrichedGLAccountNumber", line_data.get("GL Account Number", ""))
-                    gl_name = line_data.get("EnrichedGLAccountName", line_data.get("GL Account Name", ""))
-                    description = line_data.get("Line Item Description", "")
-                    bill_id_from_s3 = line_data.get("__stage8_key__", "")
-                    line_index_from_s3 = int(line_data.get("Line Index", 0))
-                    account_number = line_data.get("Account Number", line_data.get("AccountNumber", ""))
-                    vendor_name = line_data.get("EnrichedVendorName", line_data.get("Vendor Name", ""))
-
-                    # Standardize utility name
-                    _UTILITY_NORMALIZE = {
-                        "electricity": "Electric", "electric": "Electric",
-                        "natural gas": "Gas", "nat gas": "Gas",
-                        "stormwater": "Stormwater", "storm water": "Stormwater",
-                        "sewage": "Sewer", "wastewater": "Sewer",
-                        "refuse": "Trash", "garbage": "Trash", "waste": "Trash",
-                    }
-                    if utility_name:
-                        utility_name = _UTILITY_NORMALIZE.get(utility_name.lower().strip(), utility_name.strip())
-                    # If utility_name is still empty, derive from GL account name
-                    if not utility_name and gl_name:
-                        gln = gl_name.lower()
-                        if "electric" in gln: utility_name = "Electric"
-                        elif "gas" in gln: utility_name = "Gas"
-                        elif "water" in gln and "storm" not in gln: utility_name = "Water"
-                        elif "sewer" in gln: utility_name = "Sewer"
-                        elif "storm" in gln: utility_name = "Stormwater"
-                        elif "trash" in gln or "refuse" in gln: utility_name = "Trash"
-                        elif "pest" in gln: utility_name = "Pest Control"
-                        elif "vacant" in gln:
-                            for kw, ut in [("electric", "Electric"), ("water", "Water"), ("gas", "Gas"), ("sewer", "Sewer")]:
-                                if kw in gln:
-                                    utility_name = f"Vacant {ut}"
-                                    break
-                    # Last resort: derive from charge code mapping
-                    if not utility_name and charge_code:
-                        for _m in gl_mappings:
-                            if _m.get("charge_code") == charge_code and _m.get("utility_name"):
-                                utility_name = _m["utility_name"]
-                                break
-                    if not utility_name:
-                        utility_name = "Other"
-
-                    # Skip excluded line items
-                    is_excluded = line_data.get("Is Excluded From UBI", 0)
-                    exclusion_reason = line_data.get("Exclusion Reason", "")
-                    if is_excluded:
-                        print(f"[GENERATE MASTER BILLS] Skipping excluded line (Reason: {exclusion_reason})")
-                        continue
-
-                    # Check for overrides
-                    amount_overridden = line_data.get("Amount Overridden", False)
-                    charge_code_overridden = line_data.get("Charge Code Overridden", False)
-                    amount_override_reason = line_data.get("Amount Override Reason", "")
-                    charge_code_override_reason = line_data.get("Charge Code Override Reason", "")
-
-                    if not property_id:
-                        print(f"[GENERATE MASTER BILLS] Skipping line: missing property_id")
-                        continue
-
-                    # Look up charge code from GL mapping if missing
-                    if not charge_code or charge_code == "N/A":
-                        gl_match = _lookup_charge_code(str(property_id).strip(), "", str(gl_code).strip(), gl_mappings)
-                        if gl_match and gl_match.get("charge_code"):
-                            charge_code = gl_match["charge_code"]
-                            if gl_match.get("utility_name") and utility_name in ("Other", ""):
-                                utility_name = gl_match["utility_name"]
-                            print(f"[GENERATE MASTER BILLS] Resolved via GL mapping: property={property_id} GL={gl_code} -> CC={charge_code}")
-                        else:
-                            charge_code = "UNMAPPED"
-                            print(f"[GENERATE MASTER BILLS] UNMAPPED: property={property_id} GL={gl_code} gl_name={gl_name} (mappings loaded: {len(gl_mappings)})")
-
-                    # Parse period (format: "12/2025 to 12/2025" or "01/2025 to 03/2025")
-                    period_parts = ubi_period.split(" to ")
-                    period_start_str = period_parts[0].strip() if len(period_parts) > 0 else ""
-                    period_end_str = period_parts[1].strip() if len(period_parts) > 1 else period_start_str
-
-                    # Convert to actual dates (first day of first month, last day of last month)
-                    import calendar
-
-                    try:
-                        # Parse MM/YYYY format
-                        start_month, start_year = period_start_str.split("/")
-                        end_month, end_year = period_end_str.split("/")
-
-                        # First day of start month
-                        period_start = f"{start_month}/01/{start_year}"
-
-                        # Last day of end month
-                        last_day = calendar.monthrange(int(end_year), int(end_month))[1]
-                        period_end = f"{end_month}/{last_day:02d}/{end_year}"
-
-                    except (ValueError, IndexError) as e:
-                        print(f"[GENERATE MASTER BILLS] Error parsing period {ubi_period}: {e}")
-                        continue
-
-                    # Filter by period range if provided
-                    # Both start_period, end_period, and period_start_str are MM/YYYY format
-                    # Convert all to YYYY-MM for proper string comparison
-                    if start_period or end_period:
-                        # Convert period_start_str (MM/YYYY) to YYYY-MM for comparison
-                        try:
-                            p_month, p_year = period_start_str.split("/")
-                            period_yyyymm = f"{p_year}-{p_month.zfill(2)}"
-                        except Exception:
-                            continue
-
-                        if start_period:
-                            # Convert start_period (MM/YYYY) to YYYY-MM
-                            try:
-                                s_month, s_year = start_period.split("/")
-                                start_yyyymm = f"{s_year}-{s_month.zfill(2)}"
-                                if period_yyyymm < start_yyyymm:
-                                    continue
-                            except Exception:
-                                pass
-                        if end_period:
-                            # Convert end_period (MM/YYYY) to YYYY-MM
-                            try:
-                                e_month, e_year = end_period.split("/")
-                                end_yyyymm = f"{e_year}-{e_month.zfill(2)}"
-                                if period_yyyymm > end_yyyymm:
-                                    continue
-                            except Exception:
-                                pass
-
-                    # Create master bill key using original period strings for consistency
-                    mb_key = f"{property_id}|{charge_code}|{utility_name}|{period_start_str}|{period_end_str}"
-
-                    if mb_key not in master_bills:
-                        master_bills[mb_key] = {
-                            "master_bill_id": mb_key,
-                            "property_id": property_id,
-                            "property_name": property_name,
-                            "property_lookup_code": _prop_lookup.get(str(property_id), ""),
-                            "ar_code_mapping": charge_code,
-                            "utility_name": utility_name,
-                            "billback_month_start": period_start,
-                            "billback_month_end": period_end,
-                            "utility_amount": 0,
-                            "source_line_items": [],
-                            "created_utc": datetime.utcnow().isoformat(),
-                            "created_by": user,
-                            "status": "draft"
-                        }
-
-                    # Add to aggregate amount
-                    master_bills[mb_key]["utility_amount"] += amount
-
-                    # Compute line hash for unassign functionality
-                    # __s3_key__ still contains the original baked Stage 4 key (not overwritten)
-                    # so hash matches what the unassign endpoint computes from the raw Stage 8 file
-                    line_hash = _compute_stable_line_hash(line_data)
-
-                    # Extract service period dates
-                    service_start = (line_data.get("Bill Period Start") or line_data.get("billPeriodStart") or "").strip()
-                    service_end = (line_data.get("Bill Period End") or line_data.get("billPeriodEnd") or "").strip()
-                    bill_date = (line_data.get("Bill Date") or line_data.get("Invoice Date") or line_data.get("billDate") or "").strip()
-
-                    # Get original PDF key for viewing
-                    pdf_key = (line_data.get("source_input_key") or line_data.get("PDF_LINK") or line_data.get("__pdf_s3_key__") or line_data.get("pdfKey") or "").strip()
-
-                    # Add source line item
-                    master_bills[mb_key]["source_line_items"].append({
-                        "bill_id": bill_id_from_s3,
-                        "line_index": line_index_from_s3,
-                        "line_hash": line_hash,
-                        "account_number": account_number,
-                        "vendor_name": vendor_name,
-                        "gl_code": gl_code,
-                        "gl_code_name": gl_name,
-                        "utility_name": utility_name,
-                        "description": description,
-                        "amount": amount,
-                        "service_start": _normalize_date_display(service_start),
-                        "service_end": _normalize_date_display(service_end),
-                        "bill_date": _normalize_date_display(bill_date),
-                        "pdf_key": pdf_key,
-                        "overridden": amount_overridden or charge_code_overridden,
-                        "override_reason": " | ".join(filter(None, [
-                            amount_override_reason,
-                            charge_code_override_reason
-                        ]))
-                    })
-
-                if (idx + 1) % 100 == 0:
-                    print(f"[GENERATE MASTER BILLS] Processed {idx + 1}/{len(all_line_items)} line items...")
-
-            except Exception as e:
-                print(f"[GENERATE MASTER BILLS] Error processing assignment {idx}: {e}")
                 import traceback
                 traceback.print_exc()
+                failed = dict(new_state)
+                failed["status"] = "failed"
+                failed["finished_at"] = _dt2.utcnow().isoformat() + "Z"
+                failed["error"] = _sanitize_error(e, "master bills generation")
+                _mb_job_save(failed)
+                print(f"[MB JOB] Failed: {failed['error']}")
+
+        _mb_threading.Thread(target=_bg, daemon=True, name=f"mb-gen-{new_state['job_id'][:8]}").start()
+        return JSONResponse(new_state, status_code=202)
+
+    except Exception as e:
+        print(f"[MB JOB] Dispatch error: {e}")
+        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+
+@app.get("/api/master-bills/generate/status")
+def api_master_bills_generate_status(user: str = Depends(require_user)):
+    """Poll the current/last master-bills generation job."""
+    state = _mb_job_load_from_s3() or {"status": "idle"}
+    return state
+
+
+def _run_master_bills_generation(start_period: str, end_period: str, days_back: int, user: str) -> dict:
+    """Sync worker: the original generate logic, now invoked from a background
+    thread. Returns {"count": int, "total_amount": float}. Raises on failure
+    (the caller serializes the error into the job state)."""
+    from datetime import datetime, timedelta
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import hashlib
+
+    print("[GENERATE MASTER BILLS] Starting generation...")
+    print(f"[GENERATE MASTER BILLS] Period filter: {start_period} to {end_period}")
+
+    # Build property_id → lookup_code map from dim_property
+    _prop_lookup = {}
+    try:
+        _prop_rows = _load_dim_records(DIM_PROPERTY_PREFIX)
+        for _pr in _prop_rows:
+            _pid = str(_pr.get("propertyId") or _pr.get("PROPERTY_ID") or _pr.get("Property ID") or _pr.get("id") or "").strip()
+            _lc = str(_pr.get("LOOKUP_CODE") or _pr.get("lookup_code") or _pr.get("LookupCode") or _pr.get("PROPERTY_CODE") or "").strip()
+            if _pid and _lc:
+                _prop_lookup[_pid] = _lc
+        print(f"[GENERATE MASTER BILLS] Loaded {len(_prop_lookup)} property lookup codes")
+    except Exception as e:
+        print(f"[GENERATE MASTER BILLS] Warning: could not load property lookup codes: {e}")
+
+    # Scan Stage 8 (UBI_ASSIGNED_PREFIX) for assigned line items
+    print("[GENERATE MASTER BILLS] Scanning Stage 8 for assigned items...")
+
+    # Build date-partitioned prefixes
+    prefixes_to_scan = []
+    today = datetime.now()
+    for i in range(days_back):
+        d = today - timedelta(days=i)
+        prefix = f"{UBI_ASSIGNED_PREFIX}yyyy={d.year}/mm={d.month:02d}/dd={d.day:02d}/"
+        prefixes_to_scan.append(prefix)
+
+    # Collect all S3 keys
+    all_keys = []
+    for prefix in prefixes_to_scan:
+        try:
+            paginator = s3.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+                for obj in page.get('Contents', []):
+                    key = obj['Key']
+                    if key.endswith('.jsonl'):
+                        all_keys.append(key)
+        except Exception as e:
+            pass  # Skip inaccessible prefixes
+
+    print(f"[GENERATE MASTER BILLS] Found {len(all_keys)} files in Stage 8")
+
+    # Load all assigned line items from Stage 8
+    all_line_items = []
+
+    def process_file(key):
+        """Process a single S3 file and extract assigned line items."""
+        try:
+            body = _read_s3_text(BUCKET, key)
+            items = []
+            for line in body.splitlines():
+                line = (line or '').strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    # Only include lines with ubi_period (assigned items)
+                    if rec.get("ubi_period"):
+                        rec["__stage8_key__"] = key  # Track Stage 8 source (separate from baked __s3_key__)
+                        items.append(rec)
+                except Exception:
+                    continue
+            return items
+        except Exception as e:
+            print(f"[GENERATE MASTER BILLS] Error processing {key}: {e}")
+            return []
+
+    # Process files concurrently
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(process_file, key): key for key in all_keys}
+        for future in as_completed(futures):
+            all_line_items.extend(future.result())
+
+    print(f"[GENERATE MASTER BILLS] Found {len(all_line_items)} assigned line items")
+
+    # Process each assigned line item
+    master_bills = {}  # key: property_id|charge_code|utility_name|ubi_period
+    gl_mappings = _ddb_get_config("gl-charge-code-mapping") or []
+
+    print("[GENERATE MASTER BILLS] Processing assigned items...")
+    for idx, line_data in enumerate(all_line_items):
+        try:
+            # Handle multi-period format (ubi_assignments array)
+            ubi_assignments = line_data.get("ubi_assignments", [])
+            if not ubi_assignments:
+                # Legacy format: create single-item list from ubi_period field
+                legacy_period = line_data.get("ubi_period", "")
+                legacy_amount = float(line_data.get("ubi_amount", 0))
+                if legacy_amount == 0:
+                    charge_str = str(line_data.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+                    legacy_amount = float(charge_str) if charge_str else 0.0
+                if legacy_period:
+                    ubi_assignments = [{"period": legacy_period, "amount": legacy_amount}]
+
+            if not ubi_assignments:
                 continue
 
-        # Merge manual/accrual entries for the same period range
-        try:
-            me_items = []
-            me_response = ddb.scan(TableName=MANUAL_ENTRIES_TABLE)
-            me_items = me_response.get("Items", [])
-            while me_response.get("LastEvaluatedKey"):
-                me_response = ddb.scan(
-                    TableName=MANUAL_ENTRIES_TABLE,
-                    ExclusiveStartKey=me_response["LastEvaluatedKey"]
-                )
-                me_items.extend(me_response.get("Items", []))
+            # Process each UBI period assignment for this line
+            for ubi_asn in ubi_assignments:
+                ubi_period = ubi_asn.get("period", "")
 
-            manual_count = 0
-            for me_item in me_items:
-                me_period = me_item.get("period", {}).get("S", "")
-                me_amount = float(me_item.get("amount", {}).get("N", "0"))
-                me_property_id = me_item.get("property_id", {}).get("S", "")
-                me_property_name = me_item.get("property_name", {}).get("S", "")
-                me_charge_code = me_item.get("charge_code", {}).get("S", "")
-                me_utility_name = me_item.get("utility_name", {}).get("S", "")
-                me_entry_type = me_item.get("entry_type", {}).get("S", "")
-                me_reason_code = me_item.get("reason_code", {}).get("S", "")
-                me_note = me_item.get("note", {}).get("S", "")
-                me_account_number = me_item.get("account_number", {}).get("S", "")
-                me_vendor_name = me_item.get("vendor_name", {}).get("S", "")
-                me_entry_id = me_item.get("entry_id", {}).get("S", "")
+                # IMPORTANT: Check if amount was overridden AFTER assignment
+                # If Amount Overridden is True, always use Current Amount (even if it's 0)
+                # This handles the case where user zeroed out an amount after UBI assignment
+                amount_overridden_flag = line_data.get("Amount Overridden") or line_data.get("amount_overridden")
+                if amount_overridden_flag:
+                    # User explicitly set this amount - use their value
+                    amount = float(line_data.get("Current Amount") or line_data.get("current_amount") or 0)
+                else:
+                    # Use stored assignment amount, with fallbacks
+                    amount = float(ubi_asn.get("amount", 0))
+                    if amount == 0:
+                        # Check for Current Amount first, then fall back to Line Item Charge
+                        if line_data.get("Current Amount") is not None:
+                            amount = float(line_data.get("Current Amount", 0))
+                        else:
+                            charge_str = str(line_data.get("Line Item Charge", "0") or "0").replace("$", "").replace(",", "").strip()
+                            amount = float(charge_str) if charge_str else 0.0
 
-                if not me_period or not me_property_id:
+                if not ubi_period:
                     continue
 
-                # Apply same period filter
+                # Extract line item details (use enriched fields from Stage 7)
+                property_id = line_data.get("EnrichedPropertyID", line_data.get("Property ID", ""))
+                property_name = line_data.get("EnrichedPropertyName", line_data.get("Property Name", ""))
+                charge_code = line_data.get("Charge Code", "")
+                utility_name = line_data.get("Utility Type", line_data.get("Utility Name", ""))
+                gl_code = line_data.get("EnrichedGLAccountNumber", line_data.get("GL Account Number", ""))
+                gl_name = line_data.get("EnrichedGLAccountName", line_data.get("GL Account Name", ""))
+                description = line_data.get("Line Item Description", "")
+                bill_id_from_s3 = line_data.get("__stage8_key__", "")
+                line_index_from_s3 = int(line_data.get("Line Index", 0))
+                account_number = line_data.get("Account Number", line_data.get("AccountNumber", ""))
+                vendor_name = line_data.get("EnrichedVendorName", line_data.get("Vendor Name", ""))
+
+                # Standardize utility name
+                _UTILITY_NORMALIZE = {
+                    "electricity": "Electric", "electric": "Electric",
+                    "natural gas": "Gas", "nat gas": "Gas",
+                    "stormwater": "Stormwater", "storm water": "Stormwater",
+                    "sewage": "Sewer", "wastewater": "Sewer",
+                    "refuse": "Trash", "garbage": "Trash", "waste": "Trash",
+                }
+                if utility_name:
+                    utility_name = _UTILITY_NORMALIZE.get(utility_name.lower().strip(), utility_name.strip())
+                # If utility_name is still empty, derive from GL account name
+                if not utility_name and gl_name:
+                    gln = gl_name.lower()
+                    if "electric" in gln: utility_name = "Electric"
+                    elif "gas" in gln: utility_name = "Gas"
+                    elif "water" in gln and "storm" not in gln: utility_name = "Water"
+                    elif "sewer" in gln: utility_name = "Sewer"
+                    elif "storm" in gln: utility_name = "Stormwater"
+                    elif "trash" in gln or "refuse" in gln: utility_name = "Trash"
+                    elif "pest" in gln: utility_name = "Pest Control"
+                    elif "vacant" in gln:
+                        for kw, ut in [("electric", "Electric"), ("water", "Water"), ("gas", "Gas"), ("sewer", "Sewer")]:
+                            if kw in gln:
+                                utility_name = f"Vacant {ut}"
+                                break
+                # Last resort: derive from charge code mapping
+                if not utility_name and charge_code:
+                    for _m in gl_mappings:
+                        if _m.get("charge_code") == charge_code and _m.get("utility_name"):
+                            utility_name = _m["utility_name"]
+                            break
+                if not utility_name:
+                    utility_name = "Other"
+
+                # Skip excluded line items
+                is_excluded = line_data.get("Is Excluded From UBI", 0)
+                exclusion_reason = line_data.get("Exclusion Reason", "")
+                if is_excluded:
+                    print(f"[GENERATE MASTER BILLS] Skipping excluded line (Reason: {exclusion_reason})")
+                    continue
+
+                # Check for overrides
+                amount_overridden = line_data.get("Amount Overridden", False)
+                charge_code_overridden = line_data.get("Charge Code Overridden", False)
+                amount_override_reason = line_data.get("Amount Override Reason", "")
+                charge_code_override_reason = line_data.get("Charge Code Override Reason", "")
+
+                if not property_id:
+                    print(f"[GENERATE MASTER BILLS] Skipping line: missing property_id")
+                    continue
+
+                # Look up charge code from GL mapping if missing
+                if not charge_code or charge_code == "N/A":
+                    gl_match = _lookup_charge_code(str(property_id).strip(), "", str(gl_code).strip(), gl_mappings)
+                    if gl_match and gl_match.get("charge_code"):
+                        charge_code = gl_match["charge_code"]
+                        if gl_match.get("utility_name") and utility_name in ("Other", ""):
+                            utility_name = gl_match["utility_name"]
+                        print(f"[GENERATE MASTER BILLS] Resolved via GL mapping: property={property_id} GL={gl_code} -> CC={charge_code}")
+                    else:
+                        charge_code = "UNMAPPED"
+                        print(f"[GENERATE MASTER BILLS] UNMAPPED: property={property_id} GL={gl_code} gl_name={gl_name} (mappings loaded: {len(gl_mappings)})")
+
+                # Parse period (format: "12/2025 to 12/2025" or "01/2025 to 03/2025")
+                period_parts = ubi_period.split(" to ")
+                period_start_str = period_parts[0].strip() if len(period_parts) > 0 else ""
+                period_end_str = period_parts[1].strip() if len(period_parts) > 1 else period_start_str
+
+                # Convert to actual dates (first day of first month, last day of last month)
+                import calendar
+
+                try:
+                    # Parse MM/YYYY format
+                    start_month, start_year = period_start_str.split("/")
+                    end_month, end_year = period_end_str.split("/")
+
+                    # First day of start month
+                    period_start = f"{start_month}/01/{start_year}"
+
+                    # Last day of end month
+                    last_day = calendar.monthrange(int(end_year), int(end_month))[1]
+                    period_end = f"{end_month}/{last_day:02d}/{end_year}"
+
+                except (ValueError, IndexError) as e:
+                    print(f"[GENERATE MASTER BILLS] Error parsing period {ubi_period}: {e}")
+                    continue
+
+                # Filter by period range if provided
+                # Both start_period, end_period, and period_start_str are MM/YYYY format
+                # Convert all to YYYY-MM for proper string comparison
                 if start_period or end_period:
+                    # Convert period_start_str (MM/YYYY) to YYYY-MM for comparison
                     try:
-                        p_month, p_year = me_period.split("/")
+                        p_month, p_year = period_start_str.split("/")
                         period_yyyymm = f"{p_year}-{p_month.zfill(2)}"
                     except Exception:
                         continue
+
                     if start_period:
+                        # Convert start_period (MM/YYYY) to YYYY-MM
                         try:
                             s_month, s_year = start_period.split("/")
-                            if period_yyyymm < f"{s_year}-{s_month.zfill(2)}":
+                            start_yyyymm = f"{s_year}-{s_month.zfill(2)}"
+                            if period_yyyymm < start_yyyymm:
                                 continue
                         except Exception:
                             pass
                     if end_period:
+                        # Convert end_period (MM/YYYY) to YYYY-MM
                         try:
                             e_month, e_year = end_period.split("/")
-                            if period_yyyymm > f"{e_year}-{e_month.zfill(2)}":
+                            end_yyyymm = f"{e_year}-{e_month.zfill(2)}"
+                            if period_yyyymm > end_yyyymm:
                                 continue
                         except Exception:
                             pass
 
-                # Build period dates
-                import calendar
-                try:
-                    p_month, p_year = me_period.split("/")
-                    period_start = f"{p_month}/01/{p_year}"
-                    last_day = calendar.monthrange(int(p_year), int(p_month))[1]
-                    period_end = f"{p_month}/{last_day:02d}/{p_year}"
-                except Exception:
-                    continue
-
-                mb_key = f"{me_property_id}|{me_charge_code}|{me_utility_name}|{me_period}|{me_period}"
+                # Create master bill key using original period strings for consistency
+                mb_key = f"{property_id}|{charge_code}|{utility_name}|{period_start_str}|{period_end_str}"
 
                 if mb_key not in master_bills:
                     master_bills[mb_key] = {
                         "master_bill_id": mb_key,
-                        "property_id": me_property_id,
-                        "property_name": me_property_name,
-                        "ar_code_mapping": me_charge_code,
-                        "utility_name": me_utility_name,
+                        "property_id": property_id,
+                        "property_name": property_name,
+                        "property_lookup_code": _prop_lookup.get(str(property_id), ""),
+                        "ar_code_mapping": charge_code,
+                        "utility_name": utility_name,
                         "billback_month_start": period_start,
                         "billback_month_end": period_end,
                         "utility_amount": 0,
                         "source_line_items": [],
-                        "has_non_actual": False,
                         "created_utc": datetime.utcnow().isoformat(),
                         "created_by": user,
                         "status": "draft"
                     }
 
-                master_bills[mb_key]["utility_amount"] += me_amount
-                master_bills[mb_key]["has_non_actual"] = True
+                # Add to aggregate amount
+                master_bills[mb_key]["utility_amount"] += amount
 
+                # Compute line hash for unassign functionality
+                # __s3_key__ still contains the original baked Stage 4 key (not overwritten)
+                # so hash matches what the unassign endpoint computes from the raw Stage 8 file
+                line_hash = _compute_stable_line_hash(line_data)
+
+                # Extract service period dates
+                service_start = (line_data.get("Bill Period Start") or line_data.get("billPeriodStart") or "").strip()
+                service_end = (line_data.get("Bill Period End") or line_data.get("billPeriodEnd") or "").strip()
+                bill_date = (line_data.get("Bill Date") or line_data.get("Invoice Date") or line_data.get("billDate") or "").strip()
+
+                # Get original PDF key for viewing
+                pdf_key = (line_data.get("source_input_key") or line_data.get("PDF_LINK") or line_data.get("__pdf_s3_key__") or line_data.get("pdfKey") or "").strip()
+
+                # Add source line item
                 master_bills[mb_key]["source_line_items"].append({
-                    "bill_id": me_entry_id,
-                    "line_index": 0,
-                    "account_number": me_account_number,
-                    "vendor_name": me_vendor_name,
-                    "gl_code": me_item.get("gl_account_number", {}).get("S", ""),
-                    "gl_code_name": me_item.get("gl_account_name", {}).get("S", ""),
-                    "description": f"{me_entry_type}: {me_reason_code}",
-                    "amount": me_amount,
-                    "overridden": False,
-                    "override_reason": "",
-                    "entry_type": me_entry_type,
-                    "reason_code": me_reason_code,
-                    "note": me_note
+                    "bill_id": bill_id_from_s3,
+                    "line_index": line_index_from_s3,
+                    "line_hash": line_hash,
+                    "account_number": account_number,
+                    "vendor_name": vendor_name,
+                    "gl_code": gl_code,
+                    "gl_code_name": gl_name,
+                    "utility_name": utility_name,
+                    "description": description,
+                    "amount": amount,
+                    "service_start": _normalize_date_display(service_start),
+                    "service_end": _normalize_date_display(service_end),
+                    "bill_date": _normalize_date_display(bill_date),
+                    "pdf_key": pdf_key,
+                    "overridden": amount_overridden or charge_code_overridden,
+                    "override_reason": " | ".join(filter(None, [
+                        amount_override_reason,
+                        charge_code_override_reason
+                    ]))
                 })
-                manual_count += 1
 
-            print(f"[GENERATE MASTER BILLS] Merged {manual_count} manual/accrual entries")
+            if (idx + 1) % 100 == 0:
+                print(f"[GENERATE MASTER BILLS] Processed {idx + 1}/{len(all_line_items)} line items...")
 
         except Exception as e:
-            print(f"[GENERATE MASTER BILLS] Error merging manual entries: {e}")
+            print(f"[GENERATE MASTER BILLS] Error processing assignment {idx}: {e}")
             import traceback
             traceback.print_exc()
+            continue
 
-        # Convert to list and save
-        master_bills_list = list(master_bills.values())
+    # Merge manual/accrual entries for the same period range
+    try:
+        me_items = []
+        me_response = ddb.scan(TableName=MANUAL_ENTRIES_TABLE)
+        me_items = me_response.get("Items", [])
+        while me_response.get("LastEvaluatedKey"):
+            me_response = ddb.scan(
+                TableName=MANUAL_ENTRIES_TABLE,
+                ExclusiveStartKey=me_response["LastEvaluatedKey"]
+            )
+            me_items.extend(me_response.get("Items", []))
 
-        print(f"[GENERATE MASTER BILLS] Created {len(master_bills_list)} master bills from {len(all_line_items)} line items + manual entries")
+        manual_count = 0
+        for me_item in me_items:
+            me_period = me_item.get("period", {}).get("S", "")
+            me_amount = float(me_item.get("amount", {}).get("N", "0"))
+            me_property_id = me_item.get("property_id", {}).get("S", "")
+            me_property_name = me_item.get("property_name", {}).get("S", "")
+            me_charge_code = me_item.get("charge_code", {}).get("S", "")
+            me_utility_name = me_item.get("utility_name", {}).get("S", "")
+            me_entry_type = me_item.get("entry_type", {}).get("S", "")
+            me_reason_code = me_item.get("reason_code", {}).get("S", "")
+            me_note = me_item.get("note", {}).get("S", "")
+            me_account_number = me_item.get("account_number", {}).get("S", "")
+            me_vendor_name = me_item.get("vendor_name", {}).get("S", "")
+            me_entry_id = me_item.get("entry_id", {}).get("S", "")
 
-        # Store master bills in S3 (handles large datasets without size limits)
-        save_ok = _s3_put_master_bills(master_bills_list)
-        if not save_ok:
-            print(f"[GENERATE MASTER BILLS] ERROR: Failed to save master bills to S3!")
-            return JSONResponse({"error": "Failed to save master bills - please try again"}, status_code=500)
+            if not me_period or not me_property_id:
+                continue
 
-        total_amount = sum(mb["utility_amount"] for mb in master_bills_list)
-        print(f"[GENERATE MASTER BILLS] Total amount: ${total_amount:.2f}")
+            # Apply same period filter
+            if start_period or end_period:
+                try:
+                    p_month, p_year = me_period.split("/")
+                    period_yyyymm = f"{p_year}-{p_month.zfill(2)}"
+                except Exception:
+                    continue
+                if start_period:
+                    try:
+                        s_month, s_year = start_period.split("/")
+                        if period_yyyymm < f"{s_year}-{s_month.zfill(2)}":
+                            continue
+                    except Exception:
+                        pass
+                if end_period:
+                    try:
+                        e_month, e_year = end_period.split("/")
+                        if period_yyyymm > f"{e_year}-{e_month.zfill(2)}":
+                            continue
+                    except Exception:
+                        pass
 
-        return {
-            "ok": True,
-            "count": len(master_bills_list),
-            "total_amount": total_amount
-        }
+            # Build period dates
+            import calendar
+            try:
+                p_month, p_year = me_period.split("/")
+                period_start = f"{p_month}/01/{p_year}"
+                last_day = calendar.monthrange(int(p_year), int(p_month))[1]
+                period_end = f"{p_month}/{last_day:02d}/{p_year}"
+            except Exception:
+                continue
+
+            mb_key = f"{me_property_id}|{me_charge_code}|{me_utility_name}|{me_period}|{me_period}"
+
+            if mb_key not in master_bills:
+                master_bills[mb_key] = {
+                    "master_bill_id": mb_key,
+                    "property_id": me_property_id,
+                    "property_name": me_property_name,
+                    "ar_code_mapping": me_charge_code,
+                    "utility_name": me_utility_name,
+                    "billback_month_start": period_start,
+                    "billback_month_end": period_end,
+                    "utility_amount": 0,
+                    "source_line_items": [],
+                    "has_non_actual": False,
+                    "created_utc": datetime.utcnow().isoformat(),
+                    "created_by": user,
+                    "status": "draft"
+                }
+
+            master_bills[mb_key]["utility_amount"] += me_amount
+            master_bills[mb_key]["has_non_actual"] = True
+
+            master_bills[mb_key]["source_line_items"].append({
+                "bill_id": me_entry_id,
+                "line_index": 0,
+                "account_number": me_account_number,
+                "vendor_name": me_vendor_name,
+                "gl_code": me_item.get("gl_account_number", {}).get("S", ""),
+                "gl_code_name": me_item.get("gl_account_name", {}).get("S", ""),
+                "description": f"{me_entry_type}: {me_reason_code}",
+                "amount": me_amount,
+                "overridden": False,
+                "override_reason": "",
+                "entry_type": me_entry_type,
+                "reason_code": me_reason_code,
+                "note": me_note
+            })
+            manual_count += 1
+
+        print(f"[GENERATE MASTER BILLS] Merged {manual_count} manual/accrual entries")
 
     except Exception as e:
-        print(f"[GENERATE MASTER BILLS] Error: {e}")
+        print(f"[GENERATE MASTER BILLS] Error merging manual entries: {e}")
         import traceback
         traceback.print_exc()
-        return JSONResponse({"error": _sanitize_error(e, "request")}, status_code=500)
+
+    # Convert to list and save
+    master_bills_list = list(master_bills.values())
+
+    print(f"[GENERATE MASTER BILLS] Created {len(master_bills_list)} master bills from {len(all_line_items)} line items + manual entries")
+
+    # Store master bills in S3 (handles large datasets without size limits)
+    save_ok = _s3_put_master_bills(master_bills_list)
+    if not save_ok:
+        print(f"[GENERATE MASTER BILLS] ERROR: Failed to save master bills to S3!")
+        raise RuntimeError("Failed to save master bills to S3")
+
+    total_amount = sum(mb["utility_amount"] for mb in master_bills_list)
+    print(f"[GENERATE MASTER BILLS] Total amount: ${total_amount:.2f}")
+
+    return {
+        "count": len(master_bills_list),
+        "total_amount": total_amount,
+    }
+
 
 
 @app.get("/api/master-bills/list")

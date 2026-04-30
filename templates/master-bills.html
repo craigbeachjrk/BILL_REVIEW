@@ -458,20 +458,26 @@
       return null;
     }
 
+    // Generation runs as a background job — POST kicks it off and returns
+    // immediately; we poll /generate/status until it transitions out of
+    // "running" (the AppRunner gateway times out long before the full scan
+    // finishes, so making this sync was guaranteed to error).
+    let _mbGenPollTimer = null;
+    let _mbGenPollFinishedJobIds = new Set();
+
     async function generateMasterBills() {
       const loading = document.getElementById('loading');
       const table = document.getElementById('masterBillsTable');
       const summary = document.getElementById('summary');
 
       loading.style.display = 'block';
-      loading.textContent = 'Generating master bills...';
+      loading.textContent = 'Kicking off master bills generation…';
       table.style.display = 'none';
       summary.style.display = 'none';
 
       try {
         const startPeriod = document.getElementById('filterStartPeriod').value;
         const endPeriod = document.getElementById('filterEndPeriod').value;
-
         const payload = {
           start_period: startPeriod || "",
           end_period: endPeriod || ""
@@ -479,25 +485,121 @@
 
         const response = await fetch('/api/master-bills/generate', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
         });
 
-        if (!response.ok) throw new Error('Failed to generate master bills');
-
+        // 202 (running / re-issued / already-running) is expected. Treat any
+        // 5xx as a real dispatch error.
+        if (response.status >= 500) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${response.status}`);
+        }
         const data = await response.json();
-        showToast(`Generated ${data.count} master bills (Total: $${data.total_amount.toFixed(2)})`, 'ok');
-
-        // Load the generated master bills
-        await loadMasterBills();
-        updateLastRefreshed();
+        if (data.status === 'running') {
+          showToast(data.started_by && data.started_by !== '{{ user }}'
+            ? `Generation already running (kicked off ${formatRelTime(data.started_at)} by ${data.started_by}). Polling for completion…`
+            : 'Generation started. This usually takes 1–3 minutes.',
+            'ok');
+        }
+        loading.textContent = renderMbJobBanner(data);
+        startMbGenPolling();
       } catch (e) {
-        console.error('Error generating master bills:', e);
-        loading.textContent = 'Error generating master bills. Please try again.';
-        showToast('Error generating master bills', 'err');
+        console.error('Error kicking off master bills generation:', e);
+        loading.textContent = 'Error starting generation. Please try again.';
+        showToast(`Error starting generation: ${e.message}`, 'err');
       }
+    }
+
+    function renderMbJobBanner(state) {
+      if (!state) return 'Loading…';
+      if (state.status === 'running') {
+        const startedAt = state.started_at ? new Date(state.started_at) : null;
+        const elapsed = startedAt ? Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1000)) : 0;
+        const who = state.started_by ? ` (started by ${state.started_by})` : '';
+        return `Generating master bills…  ${elapsed}s elapsed${who}`;
+      }
+      if (state.status === 'succeeded') {
+        const amt = (typeof state.total_amount === 'number') ? `$${state.total_amount.toFixed(2)}` : '';
+        return `Last generation: ${state.count || 0} bills, ${amt} (finished ${formatRelTime(state.finished_at)}).`;
+      }
+      if (state.status === 'failed') {
+        return `Last generation FAILED: ${state.error || 'unknown error'} (at ${formatRelTime(state.finished_at)}).`;
+      }
+      return 'No generation has run yet. Click "Generate Master Bills" to kick one off.';
+    }
+
+    function formatRelTime(iso) {
+      if (!iso) return '';
+      try {
+        const t = new Date(iso).getTime();
+        const diff = Math.max(0, Date.now() - t) / 1000;
+        if (diff < 60) return `${Math.round(diff)}s ago`;
+        if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+        return new Date(iso).toLocaleString();
+      } catch (_e) { return ''; }
+    }
+
+    async function pollMbGenStatus() {
+      try {
+        const resp = await fetch('/api/master-bills/generate/status');
+        if (!resp.ok) return; // transient network issue, try again next tick
+        const state = await resp.json();
+        const loading = document.getElementById('loading');
+        if (loading) loading.textContent = renderMbJobBanner(state);
+
+        if (state.status === 'running') return; // keep polling
+
+        // Terminal — stop the timer, surface the result, dedup so we don't
+        // re-toast the same finished job on every page revisit.
+        stopMbGenPolling();
+        const jobId = state.job_id || `${state.status}-${state.finished_at || ''}`;
+        if (_mbGenPollFinishedJobIds.has(jobId)) return;
+        _mbGenPollFinishedJobIds.add(jobId);
+
+        if (state.status === 'succeeded') {
+          showToast(
+            `Generated ${state.count || 0} master bills` +
+            (typeof state.total_amount === 'number' ? ` (Total: $${state.total_amount.toFixed(2)})` : ''),
+            'ok'
+          );
+          await loadMasterBills();
+          updateLastRefreshed();
+        } else if (state.status === 'failed') {
+          showToast(`Generation failed: ${state.error || 'unknown error'}`, 'err');
+        }
+      } catch (e) {
+        console.error('mb gen poll error:', e);
+      }
+    }
+
+    function startMbGenPolling() {
+      stopMbGenPolling();
+      // Poll once immediately then every 4s while running.
+      pollMbGenStatus();
+      _mbGenPollTimer = setInterval(pollMbGenStatus, 4000);
+    }
+    function stopMbGenPolling() {
+      if (_mbGenPollTimer) { clearInterval(_mbGenPollTimer); _mbGenPollTimer = null; }
+    }
+
+    // On page load: if a generation is already in flight (perhaps started by
+    // someone else, or by this user before they navigated away), pick up
+    // polling so the UI reflects reality without a click.
+    async function checkMbGenStatusOnLoad() {
+      try {
+        const resp = await fetch('/api/master-bills/generate/status');
+        if (!resp.ok) return;
+        const state = await resp.json();
+        if (state.status === 'running') {
+          const loading = document.getElementById('loading');
+          if (loading) {
+            loading.style.display = 'block';
+            loading.textContent = renderMbJobBanner(state);
+          }
+          startMbGenPolling();
+        }
+      } catch (_e) {}
     }
 
     function updateLastRefreshed() {
@@ -2711,6 +2813,9 @@
     }
 
     loadMasterBills();
+    // If a generation is already running (from another tab / user), surface
+    // the banner and pick up polling without requiring a click.
+    checkMbGenStatusOnLoad();
   </script>
 </body>
 </html>
