@@ -219,6 +219,7 @@ def get_job_info(job_id: str) -> dict:
             'expected_account_number': item.get('expected_account_number', {}).get('S', ''),
             'bill_from': item.get('bill_from', {}).get('S', ''),
             'pages_per_chunk': int(item.get('pages_per_chunk', {}).get('N', '2')),  # Default to 2 pages per chunk
+            'notes': item.get('notes', {}).get('S', ''),  # Free-form rework instructions
         }
     except Exception as e:
         print(f"Error getting job info: {e}")
@@ -502,7 +503,7 @@ def _remaining_ms(deadline_epoch_ms: int) -> int:
 MIN_TIME_FOR_ATTEMPT_MS = 30_000  # 30 seconds — generous buffer for API + S3 write
 
 
-def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0, knowledge_notes: str = "", expected_account_number: str = "") -> tuple[list[list[str]], str]:
+def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0, knowledge_notes: str = "", expected_account_number: str = "", rework_notes: str = "") -> tuple[list[list[str]], str]:
     """
     Parse a PDF chunk with key rotation and exponential backoff.
 
@@ -585,6 +586,15 @@ Use the vendor, account number, and bill dates from the previous context on EVER
         prompt += (f"\n\n**ACCOUNT NUMBER CORRECTION**: A human reviewer has verified that the correct Account Number for this bill is '{expected_account_number}'. "
                    f"You MUST use '{expected_account_number}' as the Account Number (digits only) for ALL rows. "
                    "Do NOT use any other account number found on the bill.")
+
+    # Reviewer's free-form rework instructions ("skip the summary page, parse
+    # pages 2-4 for all line items"). These get top billing — they're
+    # human-verified and override default behavior. Apply per-chunk so each
+    # chunk respects the same instruction set.
+    if rework_notes:
+        prompt += (f"\n\n**USER REWORK INSTRUCTIONS** (a human reviewer who has the actual bill in front of them said): "
+                   f"{rework_notes}\n"
+                   "Follow these instructions exactly. They override your default behavior for this chunk too.")
 
     # Retry loop with key rotation and exponential backoff
     last_error = None
@@ -1004,6 +1014,7 @@ def lambda_handler(event, context):
             deadline_ms=deadline_ms,
             knowledge_notes=knowledge_notes,
             expected_account_number=job_info.get('expected_account_number', ''),
+            rework_notes=job_info.get('notes', ''),
         )
 
         timing["geminiMs"] = int((time.time() - t0) * 1000)

@@ -196,7 +196,17 @@
       <h2>Send to Rework</h2>
       <p style="font-size:13px;color:#64748b;margin-bottom:12px">Send <strong><span id="reworkSelCount">0</span></strong> selected invoice(s) back for re-parsing. The same notes will be applied to all.</p>
       <label for="reworkNotes">Notes for Parser (applied to all selected)</label>
-      <textarea id="reworkNotes" placeholder="e.g., 'Missing line items', 'Wrong account number', 'Need to extract meter reads'..."></textarea>
+      <textarea id="reworkNotes" placeholder="e.g., 'skip the summary page, parse pages 2-4 for all line items'"></textarea>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:13px">
+        <label for="reworkExpectedLines" style="display:flex;flex-direction:column;gap:2px;flex:0 0 auto">
+          <span>Min line count <span style="color:#94a3b8">(optional)</span></span>
+          <input type="number" id="reworkExpectedLines" min="1" placeholder="e.g. 30" style="width:120px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px">
+        </label>
+        <label for="reworkForceBigBill" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff7ed">
+          <input type="checkbox" id="reworkForceBigBill">
+          <span><strong>Force Big Bill parser</strong> <span style="color:#94a3b8">— skip router, use chunked parser</span></span>
+        </label>
+      </div>
       <div class="bulk-modal-actions">
         <button class="btn secondary" onclick="closeReworkModal()">Cancel</button>
         <button class="btn" style="background:#ea580c" onclick="submitBulkRework()">Send to Rework</button>
@@ -735,14 +745,24 @@
     async function submitBulkRework() {
       const picks = getSelectedPdfIds();
       const notes = document.getElementById('reworkNotes').value.trim();
+      const expectedLines = (document.getElementById('reworkExpectedLines').value || '').trim();
+      const forceBigBill = !!document.getElementById('reworkForceBigBill').checked;
       if (!picks.length) { alert('No invoices selected'); return; }
       if (!notes) { alert('Please enter notes for the parser'); return; }
-      if (!confirm(`Send ${picks.length} invoice(s) back for re-parsing?\n\nThis will delete the current parsed data and queue the PDFs for re-processing.`)) return;
+      const confirmExtras = [];
+      if (expectedLines) confirmExtras.push(`min line count: ${expectedLines}`);
+      if (forceBigBill) confirmExtras.push('force Big Bill parser');
+      const confirmMsg = `Send ${picks.length} invoice(s) back for re-parsing?` +
+        (confirmExtras.length ? `\n\nFlags: ${confirmExtras.join(', ')}` : '') +
+        `\n\nThis will delete the current parsed data and queue the PDFs for re-processing.`;
+      if (!confirm(confirmMsg)) return;
 
       const fd = new FormData();
       fd.append('date', '{{ date }}');
       fd.append('pdf_ids', picks.join(','));
       fd.append('notes', notes);
+      if (expectedLines && /^\d+$/.test(expectedLines)) fd.append('expected_lines', expectedLines);
+      if (forceBigBill) fd.append('force_large_parser', '1');
 
       try {
         const r = await fetch('/api/bulk_rework', { method: 'POST', body: fd });

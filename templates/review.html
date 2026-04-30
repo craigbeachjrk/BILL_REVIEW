@@ -865,7 +865,7 @@
             }catch(_){ }
           }
         }catch(_){ }
-        const notes = window.prompt('Tell the parser what went wrong (optional):', '');
+        const notes = window.prompt('Tell the parser what went wrong (optional):\nE.g. "skip the summary page, parse pages 2-4 for all line items"', '');
         if (notes === null) return; // cancelled
         const fd = new FormData();
         fd.append('date', dateVal);
@@ -878,6 +878,10 @@
           const n = String(exp).trim();
           if (/^\d+$/.test(n)) fd.append('expected_lines', n);
         }
+        // Optional: force Big Bill parser (chunked, page-by-page) instead of letting the
+        // page-count router pick. Useful when a small-page bill has dense line items.
+        const forceBig = window.confirm('Force "Big Bill" parser (chunked, page-by-page)?\n\nOK = use Big Bill (skips router)\nCancel = let the router decide based on page count');
+        if (forceBig) fd.append('force_large_parser', '1');
         // Pass current Bill From through to REWORK so parser/enricher can use it
         const bfInput = document.querySelector('input[name="Bill From"]');
         const bfView = document.getElementById('hdr_bill_from_view');

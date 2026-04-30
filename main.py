@@ -26368,6 +26368,8 @@ def api_bulk_rework(
     date: str = Form(...),
     pdf_ids: str = Form(...),
     notes: str = Form(""),
+    expected_lines: str | None = Form(None),
+    force_large_parser: str | None = Form(None),
     user: str = Depends(require_user)
 ):
     """Bulk send selected invoices back for rework with shared notes."""
@@ -26469,6 +26471,21 @@ def api_bulk_rework(
                 "expected_account_number": bulk_acct,
                 "bill_date": first.get("Bill Date", ""),
             }
+            # Optional shared expected_lines applied to every selected invoice
+            try:
+                _exp_n = int(str(expected_lines or "").strip())
+                if _exp_n > 0:
+                    meta["expected_line_count"] = _exp_n
+                    meta["expectedLines"] = _exp_n
+                    meta["expected_lines"] = _exp_n
+                    meta["line_count"] = _exp_n
+                    meta["min_lines"] = _exp_n
+            except Exception:
+                pass
+            # Force-big-bill flag — bypass router, send straight to large parser
+            if str(force_large_parser or "").strip().lower() in ("1", "true", "yes", "on"):
+                meta["force_large_parser"] = True
+                meta["force_big_bill"] = True
             meta_key = dest_key.rsplit('.', 1)[0] + ".rework.json"
             s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(meta, ensure_ascii=False).encode('utf-8'), ContentType='application/json')
 
@@ -26674,6 +26691,7 @@ def api_rework(
     bill_date: str = Form(""),
     pdf_key: str = Form(""),
     expected_lines: str | None = Form(None),
+    force_large_parser: str | None = Form(None),
     user: str = Depends(require_user)
 ):
     """Send a bill back to a REWORK pipeline and delete current parsed artifacts for this pdf_id on the given day.
@@ -26842,6 +26860,13 @@ def api_rework(
         if not expected_account_number:
             expected_account_number = str(first.get("Account Number", "") or "").strip()
 
+        # Force-large-parser: when the user clicks "Force Big Bill" on the
+        # rework dialog, the rework forwarder routes the PDF straight into
+        # Bill_Parser_1_LargeFile/ instead of going through the page-count
+        # router. Useful when a small-page bill has dense data that the
+        # standard parser undercounts.
+        force_large_flag = str(force_large_parser or "").strip().lower() in ("1", "true", "yes", "on")
+
         meta = {
             "requested_by": user,
             "requested_utc": dt.datetime.utcnow().isoformat(),
@@ -26863,6 +26888,9 @@ def api_rework(
             meta["expected_lines"] = exp_lines_val
             meta["line_count"] = exp_lines_val
             meta["min_lines"] = exp_lines_val
+        if force_large_flag:
+            meta["force_large_parser"] = True
+            meta["force_big_bill"] = True
         meta_key = dest_key.rsplit('.', 1)[0] + ".rework.json"
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(meta, ensure_ascii=False).encode('utf-8'), ContentType='application/json')
 

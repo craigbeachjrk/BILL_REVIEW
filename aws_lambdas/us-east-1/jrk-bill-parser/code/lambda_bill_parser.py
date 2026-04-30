@@ -525,9 +525,22 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
     prev_content_errors = []  # Track content validation errors for retry feedback
     rows: list[list[str]] = []
     failed_due_to_columns = False
-    while attempts < MAX_ATTEMPTS:
+    # When the user has provided explicit rework instructions or an expected
+    # line count, give the model more attempts to honor them. Default 10 → 14
+    # so it has more chances to recount when it returns short.
+    effective_max_attempts = MAX_ATTEMPTS
+    if __EXPECTED_LINES > 0 or __REWORK_NOTES:
+        effective_max_attempts = max(MAX_ATTEMPTS, 14)
+    while attempts < effective_max_attempts:
         attempts += 1
         prompt = PROMPT
+        # Reviewer's free-form rework instructions get top billing — these are
+        # human-verified and override the model's default behavior. e.g.
+        # "skip the summary page, parse pages 2-4 for all line items".
+        if __REWORK_NOTES:
+            prompt += (f"\n\n**USER REWORK INSTRUCTIONS** (a human reviewer who has the actual bill in front of them said): "
+                       f"{__REWORK_NOTES}\n"
+                       "Follow these instructions exactly. They override your default behavior.")
         # Add expected_account_number hint if provided from rework metadata
         if __EXPECTED_ACCOUNT_NUMBER:
             prompt += (f"\n\n**ACCOUNT NUMBER CORRECTION**: A human reviewer has verified that the correct Account Number for this bill is '{__EXPECTED_ACCOUNT_NUMBER}'. "
@@ -645,6 +658,29 @@ def call_gemini_with_retry_rest(api_key: str, pdf_bytes: bytes, source_name: str
                 time.sleep(2)
                 continue  # Retry with error feedback
 
+            # Enforce expected_line_count: if a human reviewer told us this
+            # bill has N lines and we got fewer, retry with explicit feedback.
+            # Without this check the model can return 7 rows on a 44-line bill
+            # and the parser would happily ship the short result.
+            if __EXPECTED_LINES > 0 and len(candidate_rows) < __EXPECTED_LINES:
+                shortfall = __EXPECTED_LINES - len(candidate_rows)
+                print(json.dumps({
+                    "message": "line_count_below_expected_retrying",
+                    "attempt": attempts,
+                    "got": len(candidate_rows),
+                    "expected": __EXPECTED_LINES,
+                    "shortfall": shortfall,
+                }))
+                prev_content_errors = [
+                    f"You returned {len(candidate_rows)} rows. The reviewer counted {__EXPECTED_LINES} on this bill. "
+                    f"You are missing {shortfall} line items. Re-examine EVERY page, EVERY section — "
+                    "look for charges, credits, fees, taxes, surcharges, adjustments, base charges, usage charges, "
+                    "and any itemized amount. Do NOT combine or aggregate. Each itemized charge gets its own row."
+                ]
+                failed_due_to_columns = True
+                time.sleep(2)
+                continue  # Retry with shortfall feedback
+
             # All validation passed - return success
             rows = [[*r, f"{source_name}"] for r in candidate_rows]
             return rows, False, prev_reply
@@ -662,6 +698,11 @@ __BILL_FROM_HINT = ""
 __EXPECTED_LINES = 0
 # Injected: Expected account number hint from rework
 __EXPECTED_ACCOUNT_NUMBER = ""
+# Injected: Free-form rework notes from the user (e.g. "skip the first
+# summary page, parse pages 2-4 for all line items"). When set, this is
+# pasted verbatim into the Gemini prompt under a "USER REWORK INSTRUCTIONS"
+# block so the model can act on it.
+__REWORK_NOTES = ""
 
 def _norm_bf(s: str) -> str:
     try:
@@ -849,6 +890,7 @@ def lambda_handler(event, context):
         bill_from = ""
         expected_lines = 0
         expected_account_number = ""
+        rework_notes = ""
         try:
             pending_side = key.rsplit('.',1)[0] + '.notes.json'
             print(json.dumps({"message": "Looking for notes.json", "pending_side": pending_side, "bucket": bucket}))
@@ -859,7 +901,10 @@ def lambda_handler(event, context):
             # Also check for expected_lines in notes.json
             expected_lines = int(side.get('expected_line_count') or side.get('expected_lines') or side.get('min_lines') or 0)
             expected_account_number = str(side.get('expected_account_number') or '').strip()
-            print(json.dumps({"message": "Read notes.json successfully", "expected_lines": expected_lines, "bill_from": bill_from}))
+            # Free-form notes the user typed in the rework dialog ("skip the
+            # summary page, parse pages 2-4 for all line items")
+            rework_notes = str(side.get('notes') or side.get('instructions') or '').strip()
+            print(json.dumps({"message": "Read notes.json successfully", "expected_lines": expected_lines, "bill_from": bill_from, "has_notes": bool(rework_notes)}))
         except Exception as e:
             print(json.dumps({"message": "Failed to read notes.json", "error": str(e), "pending_side": pending_side if 'pending_side' in dir() else "unknown"}))
         # Also try to read .rework.json for expected_line_count hint
@@ -877,8 +922,22 @@ def lambda_handler(event, context):
                 expected_account_number = str(rework.get('expected_account_number') or '').strip()
                 if expected_account_number:
                     print(json.dumps({"message": "Read expected_account_number from rework.json", "expected_account_number": expected_account_number}))
+            if not rework_notes:
+                rework_notes = str(rework.get('notes') or rework.get('instructions') or '').strip()
+                if rework_notes:
+                    print(json.dumps({"message": "Read rework_notes from rework.json", "notes_preview": rework_notes[:200]}))
         except Exception as e:
             # rework.json won't exist in Pending, this is expected
+            pass
+        # Fallback: object metadata (set by rework forwarder lambda)
+        try:
+            head = s3.head_object(Bucket=bucket, Key=key)
+            md = {k.lower(): v for k, v in (head.get('Metadata') or {}).items()}
+            if not rework_notes:
+                rework_notes = str(md.get('rework-notes') or '').strip()
+                if rework_notes:
+                    print(json.dumps({"message": "Read rework-notes from object metadata", "notes_preview": rework_notes[:200]}))
+        except Exception:
             pass
         submitted_by = ""
         try:
@@ -892,15 +951,18 @@ def lambda_handler(event, context):
         except Exception:
             pass
         try:
-            global __BILL_FROM_RAW, __BILL_FROM_HINT, __EXPECTED_LINES, __EXPECTED_ACCOUNT_NUMBER
+            global __BILL_FROM_RAW, __BILL_FROM_HINT, __EXPECTED_LINES, __EXPECTED_ACCOUNT_NUMBER, __REWORK_NOTES
             __BILL_FROM_RAW = bill_from
             __BILL_FROM_HINT = _norm_bf(bill_from)
             __EXPECTED_LINES = expected_lines
             __EXPECTED_ACCOUNT_NUMBER = expected_account_number
+            __REWORK_NOTES = rework_notes
             if expected_lines:
                 print(json.dumps({"message": "Expected lines hint found", "expected_lines": expected_lines, "key": key}))
             if expected_account_number:
                 print(json.dumps({"message": "Expected account number hint found", "expected_account_number": expected_account_number, "key": key}))
+            if rework_notes:
+                print(json.dumps({"message": "Rework notes injected into prompt", "notes_preview": rework_notes[:300], "key": key}))
         except Exception:
             pass
         # Track source key for deletion AFTER processing completes successfully
@@ -967,6 +1029,23 @@ def lambda_handler(event, context):
         timing["geminiMs"] = int((time.time() - t_gemini) * 1000)
         timing["retryCount"] = attempt
         timing["pageCount"] = total_pages
+
+        # Reviewer-set expected_line_count enforcement at the outer layer:
+        # if the inner retry loop exhausted attempts and we still came out
+        # short of the human-counted total, treat this as a failure so the
+        # bill goes back to the user instead of shipping a short result.
+        # The user can then re-rework with different page hints.
+        rework_short = bool(rows and __EXPECTED_LINES > 0 and len(rows) < __EXPECTED_LINES)
+        if rework_short:
+            print(json.dumps({
+                "message": "rework_failed_under_expected_lines_routing_to_failed",
+                "got": len(rows),
+                "expected": __EXPECTED_LINES,
+                "key": key,
+            }))
+            rows = []  # treat as failure → falls through to Failed Jobs branch below
+            failed_due_to_columns = True
+            last_error = f"Reworked but short: got {len(rows) if rows else 0}/{__EXPECTED_LINES} lines after {effective_max_attempts if 'effective_max_attempts' in dir() else attempt} attempts"
 
         if rows:
             timing["lineCount"] = len(rows)

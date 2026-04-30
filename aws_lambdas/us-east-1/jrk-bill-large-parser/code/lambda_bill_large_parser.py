@@ -53,11 +53,14 @@ def split_pdf_into_chunks(pdf_bytes: bytes, pages_per_chunk: int) -> list[bytes]
 
 
 def get_rework_metadata(bucket: str, pdf_key: str) -> dict:
-    """Read .rework.json sidecar file to get expected_lines, bill_from, and expected_account_number hints.
+    """Read .rework.json sidecar file to get expected_lines, bill_from,
+    expected_account_number, and free-form rework notes.
 
-    The sidecar files are in Bill_Parser_1_Pending_Parsing/ (router only copies PDF).
+    The sidecar files are typically next to the PDF — for force_large_parser
+    reworks they sit alongside the PDF in LARGEFILE_PREFIX, and for normal
+    routes they live in Bill_Parser_1_Pending_Parsing/.
     """
-    metadata = {'expected_lines': 0, 'bill_from': '', 'expected_account_number': ''}
+    metadata = {'expected_lines': 0, 'bill_from': '', 'expected_account_number': '', 'notes': ''}
 
     # Extract suffix from the key (remove prefix)
     if pdf_key.startswith(LARGEFILE_PREFIX):
@@ -65,40 +68,52 @@ def get_rework_metadata(bucket: str, pdf_key: str) -> dict:
     else:
         suffix = pdf_key.rsplit('/', 1)[-1] if '/' in pdf_key else pdf_key
 
-    # Look in Pending_Parsing where the sidecar files remain
-    pending_base = f"{PENDING_PREFIX}{suffix}"
-    base_no_ext = pending_base.rsplit('.', 1)[0]
+    # Look first next to the PDF itself (force_large_parser reworks land here),
+    # then fall back to Pending_Parsing where the router-routed reworks left
+    # their sidecars.
+    candidate_bases = [
+        f"{LARGEFILE_PREFIX}{suffix}".rsplit('.', 1)[0],
+        f"{PENDING_PREFIX}{suffix}".rsplit('.', 1)[0],
+    ]
 
-    # Try .rework.json first (used by send-back-to-parser)
-    try:
-        rework_key = base_no_ext + '.rework.json'
-        obj = s3.get_object(Bucket=bucket, Key=rework_key)
-        data = json.loads(obj['Body'].read().decode('utf-8', 'ignore'))
-        metadata['expected_lines'] = int(data.get('expected_line_count') or data.get('expected_lines') or data.get('min_lines') or 0)
-        metadata['bill_from'] = str(data.get('Bill From') or data.get('bill_from') or '').strip()
-        metadata['expected_account_number'] = str(data.get('expected_account_number') or '').strip()
-        print(json.dumps({"message": "Rework metadata found", "expected_lines": metadata['expected_lines'], "bill_from": metadata['bill_from'][:50], "key": rework_key}))
-    except Exception:
-        pass
-
-    # Also try .notes.json as fallback
-    if not metadata['expected_lines']:
+    for base_no_ext in candidate_bases:
+        # Try .rework.json first (used by send-back-to-parser)
         try:
-            notes_key = base_no_ext + '.notes.json'
-            obj = s3.get_object(Bucket=bucket, Key=notes_key)
+            rework_key = base_no_ext + '.rework.json'
+            obj = s3.get_object(Bucket=bucket, Key=rework_key)
             data = json.loads(obj['Body'].read().decode('utf-8', 'ignore'))
-            metadata['expected_lines'] = int(data.get('expected_line_count') or data.get('expected_lines') or data.get('min_lines') or 0)
+            if not metadata['expected_lines']:
+                metadata['expected_lines'] = int(data.get('expected_line_count') or data.get('expected_lines') or data.get('min_lines') or 0)
             if not metadata['bill_from']:
                 metadata['bill_from'] = str(data.get('Bill From') or data.get('bill_from') or '').strip()
             if not metadata['expected_account_number']:
                 metadata['expected_account_number'] = str(data.get('expected_account_number') or '').strip()
+            if not metadata['notes']:
+                metadata['notes'] = str(data.get('notes') or data.get('instructions') or '').strip()
+            print(json.dumps({"message": "Rework metadata found", "expected_lines": metadata['expected_lines'], "bill_from": metadata['bill_from'][:50], "has_notes": bool(metadata['notes']), "key": rework_key}))
+        except Exception:
+            pass
+
+        # Also try .notes.json as fallback
+        try:
+            notes_key = base_no_ext + '.notes.json'
+            obj = s3.get_object(Bucket=bucket, Key=notes_key)
+            data = json.loads(obj['Body'].read().decode('utf-8', 'ignore'))
+            if not metadata['expected_lines']:
+                metadata['expected_lines'] = int(data.get('expected_line_count') or data.get('expected_lines') or data.get('min_lines') or 0)
+            if not metadata['bill_from']:
+                metadata['bill_from'] = str(data.get('Bill From') or data.get('bill_from') or '').strip()
+            if not metadata['expected_account_number']:
+                metadata['expected_account_number'] = str(data.get('expected_account_number') or '').strip()
+            if not metadata['notes']:
+                metadata['notes'] = str(data.get('notes') or data.get('instructions') or '').strip()
         except Exception:
             pass
 
     return metadata
 
 
-def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_keys: list[str], expected_lines: int = 0, bill_from: str = '', pages_per_chunk: int = 2, expected_account_number: str = ''):
+def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_keys: list[str], expected_lines: int = 0, bill_from: str = '', pages_per_chunk: int = 2, expected_account_number: str = '', notes: str = ''):
     """Create job tracking record in DynamoDB."""
     now = datetime.now(timezone.utc)
     item = {
@@ -116,9 +131,10 @@ def create_job_record(job_id: str, source_file: str, total_chunks: int, chunk_ke
         'bill_from': {'S': bill_from},  # Vendor hint for chunk processors
         'pages_per_chunk': {'N': str(pages_per_chunk)},  # Pages per chunk for page tracking
         'expected_account_number': {'S': expected_account_number},  # Account number hint for chunk processors
+        'notes': {'S': notes[:1900] if notes else ''},  # Free-form rework instructions for chunk processors
     }
     ddb.put_item(TableName=JOBS_TABLE, Item=item)
-    print(json.dumps({"message": "Job record created", "job_id": job_id, "total_chunks": total_chunks, "expected_lines": expected_lines, "pages_per_chunk": pages_per_chunk}))
+    print(json.dumps({"message": "Job record created", "job_id": job_id, "total_chunks": total_chunks, "expected_lines": expected_lines, "pages_per_chunk": pages_per_chunk, "has_notes": bool(notes)}))
 
 
 def lambda_handler(event, context):
@@ -193,6 +209,7 @@ def lambda_handler(event, context):
             create_job_record(job_id, dest_key_inputs, len(chunks), chunk_keys,
                             expected_lines=metadata['expected_lines'],
                             bill_from=metadata['bill_from'],
+                            notes=metadata.get('notes', ''),
                             pages_per_chunk=PAGES_PER_CHUNK,
                             expected_account_number=metadata['expected_account_number'])
         except Exception as e:
