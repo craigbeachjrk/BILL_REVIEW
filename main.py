@@ -30915,7 +30915,7 @@ def _generate_master_packet_pdf(buffer, data):
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Flowable
     from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
     from datetime import datetime as _dt
 
@@ -30925,6 +30925,22 @@ def _generate_master_packet_pdf(buffer, data):
     AMBER_LIGHT = colors.HexColor("#fef3c7")
     GRAY_TEXT = colors.HexColor("#64748b")
     BASE_URL = "https://billreview.jrkanalytics.com"
+
+    # Zero-height flowable that calls bookmarkPage + addOutlineEntry on the
+    # current page. Placed inline before each AM/property heading so the PDF
+    # gets a navigable outline tree (sidebar) — essential for a 192-page packet.
+    class _Bookmark(Flowable):
+        def __init__(self, title, key, level=0):
+            super().__init__()
+            self._title = title
+            self._key = key
+            self._level = level
+        def wrap(self, *args):
+            return 0, 0
+        def draw(self):
+            c = self.canv
+            c.bookmarkPage(self._key)
+            c.addOutlineEntry(self._title, self._key, level=self._level, closed=(self._level == 0))
 
     def _fmt_money(n):
         try:
@@ -31020,11 +31036,17 @@ def _generate_master_packet_pdf(buffer, data):
         Paragraph("<b>Bills</b>", body),
         Paragraph("<b>Charged</b>", body),
     ]]
+    am_idx_total_props = 0
+    am_idx_total_bills = 0
+    am_idx_total_charged = 0.0
     for am in asset_managers:
         am_name = am.get("name", "Unassigned")
         am_props = am.get("properties") or []
         am_bills = sum((p.get("bill_count", 0) for p in am_props))
         am_total = (am.get("totals") or {}).get("billed_back", 0.0)
+        am_idx_total_props += len(am_props)
+        am_idx_total_bills += am_bills
+        am_idx_total_charged += am_total
         # Anchor target — name escaped for href
         anchor = f"am_{abs(hash(am_name))}"
         am_index_rows.append([
@@ -31033,12 +31055,19 @@ def _generate_master_packet_pdf(buffer, data):
             Paragraph(str(am_bills), body),
             Paragraph(_fmt_money(am_total), body),
         ])
+    am_index_rows.append([
+        Paragraph("<b>Total</b>", body),
+        Paragraph(f"<b>{am_idx_total_props}</b>", body),
+        Paragraph(f"<b>{am_idx_total_bills}</b>", body),
+        Paragraph(f"<b>{_fmt_money(am_idx_total_charged)}</b>", body),
+    ])
     am_index_tbl = Table(am_index_rows, colWidths=[3.5 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch], repeatRows=1)
     am_index_tbl.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), NAVY),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('BACKGROUND', (0, -1), (-1, -1), LIGHT),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT]),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, LIGHT]),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
@@ -31053,6 +31082,7 @@ def _generate_master_packet_pdf(buffer, data):
         am_name = am.get("name", "Unassigned")
         am_props = am.get("properties") or []
         am_anchor = f"am_{abs(hash(am_name))}"
+        story.append(_Bookmark(am_name, am_anchor, level=0))
         story.append(Paragraph(f'<a name="{am_anchor}"/>{_pdf_safe(am_name)}', h2))
         story.append(Paragraph(
             f"{len(am_props)} propert{'y' if len(am_props) == 1 else 'ies'} &nbsp;·&nbsp; "
@@ -31066,21 +31096,31 @@ def _generate_master_packet_pdf(buffer, data):
             Paragraph("<b>Bills</b>", body),
             Paragraph("<b>Total</b>", body),
         ]]
+        am_props_total_bills = 0
+        am_props_total_charged = 0.0
         for prop in sorted_props:
             pname = prop.get("property_name") or prop.get("property_code") or "Unknown"
             panchor = f"prop_{abs(hash(am_name + '|' + pname))}"
             ptotal = (prop.get("totals") or {}).get("billed_back", 0.0)
             pbcount = prop.get("bill_count", 0)
+            am_props_total_bills += pbcount
+            am_props_total_charged += ptotal
             prop_rows.append([
                 Paragraph(f'<a href="#{panchor}" color="#0369a1">{_pdf_safe(pname)}</a>', body),
                 Paragraph(str(pbcount), body),
                 Paragraph(_fmt_money(ptotal), body),
             ])
+        prop_rows.append([
+            Paragraph("<b>Total</b>", body),
+            Paragraph(f"<b>{am_props_total_bills}</b>", body),
+            Paragraph(f"<b>{_fmt_money(am_props_total_charged)}</b>", body),
+        ])
         prop_tbl = Table(prop_rows, colWidths=[4.5 * inch, 1.0 * inch, 1.5 * inch], repeatRows=1)
         prop_tbl.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+            ('BACKGROUND', (0, -1), (-1, -1), LIGHT),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#fafafa")]),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor("#fafafa")]),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
             ('RIGHTPADDING', (0, 0), (-1, -1), 6),
@@ -31094,6 +31134,7 @@ def _generate_master_packet_pdf(buffer, data):
         for prop in sorted_props:
             pname = prop.get("property_name") or prop.get("property_code") or "Unknown"
             panchor = f"prop_{abs(hash(am_name + '|' + pname))}"
+            story.append(_Bookmark(pname, panchor, level=1))
             story.append(Paragraph(f'<a name="{panchor}"/>{_pdf_safe(pname)}', h2))
             story.append(Paragraph(
                 f"<i>{_pdf_safe(am_name)}</i> &nbsp;·&nbsp; "
@@ -31120,20 +31161,33 @@ def _generate_master_packet_pdf(buffer, data):
                 Paragraph("<b>Bills</b>", body),
                 Paragraph("<b>Amount</b>", body),
             ]]
+            gl_total_bills = 0
+            gl_total_amt = 0.0
             for gl in (prop.get("gl_codes") or []):
                 amount = gl.get("billed_back", 0.0) or 0.0
                 if not amount:
                     continue
+                bcount = sum(1 for b in (prop.get("bills") or []) if gl.get("code") in (b.get("gl_codes") or []))
+                gl_total_bills += bcount
+                gl_total_amt += amount
                 gl_rows.append([
                     Paragraph(_pdf_safe(gl.get("code", "")), body),
                     Paragraph(_pdf_safe(gl.get("description", "")), body),
-                    Paragraph(str(sum(1 for b in (prop.get("bills") or []) if gl.get("code") in (b.get("gl_codes") or []))), body),
+                    Paragraph(str(bcount), body),
                     Paragraph(_fmt_money(amount), body),
                 ])
             if len(gl_rows) > 1:
+                gl_rows.append([
+                    Paragraph("<b>Total</b>", body),
+                    "",
+                    Paragraph(f"<b>{gl_total_bills}</b>", body),
+                    Paragraph(f"<b>{_fmt_money(gl_total_amt)}</b>", body),
+                ])
                 gl_tbl = Table(gl_rows, colWidths=[1.4 * inch, 3.6 * inch, 0.7 * inch, 1.3 * inch], repeatRows=1)
                 gl_tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+                    ('BACKGROUND', (0, -1), (-1, -1), LIGHT),
+                    ('SPAN', (0, -1), (1, -1)),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                     ('TOPPADDING', (0, 0), (-1, -1), 3),
@@ -31152,6 +31206,7 @@ def _generate_master_packet_pdf(buffer, data):
                 bill_rows = [[
                     Paragraph("<b>Vendor</b>", body),
                     Paragraph("<b>Account</b>", body),
+                    Paragraph("<b>Bill Date</b>", body),
                     Paragraph("<b>Service Period</b>", body),
                     Paragraph("<b>GL</b>", body),
                     Paragraph("<b>Amount</b>", body),
@@ -31171,14 +31226,26 @@ def _generate_master_packet_pdf(buffer, data):
                     bill_rows.append([
                         Paragraph(_pdf_safe(b.get("vendor_name", "")), body),
                         Paragraph(_pdf_safe(b.get("account", "")), body),
+                        Paragraph(_pdf_safe(b.get("bill_date", "")), body),
                         Paragraph(_pdf_safe(svc), body),
                         Paragraph(_pdf_safe(gl_summary or b.get("utility_type", "")), body),
                         Paragraph(_fmt_money(b.get("amount", 0.0)), body),
                         Paragraph(pdf_cell, body),
                     ])
-                bill_tbl = Table(bill_rows, colWidths=[1.7 * inch, 1.0 * inch, 1.5 * inch, 1.1 * inch, 0.9 * inch, 0.8 * inch], repeatRows=1)
+                # Total row at bottom for quick reconciliation against the
+                # property header total + ap-tracker numbers.
+                bill_total = sum((b.get("amount", 0.0) or 0.0) for b in bills)
+                bill_rows.append([
+                    Paragraph("<b>Total</b>", body),
+                    "", "", "", "",
+                    Paragraph(f"<b>{_fmt_money(bill_total)}</b>", body),
+                    "",
+                ])
+                bill_tbl = Table(bill_rows, colWidths=[1.5 * inch, 1.0 * inch, 0.85 * inch, 1.35 * inch, 1.0 * inch, 0.9 * inch, 0.8 * inch], repeatRows=1)
                 bill_tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), LIGHT),
+                    ('BACKGROUND', (0, -1), (-1, -1), LIGHT),
+                    ('SPAN', (0, -1), (4, -1)),
                     ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor("#e2e8f0")),
                     ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#fafafa")]),
                     ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -31191,7 +31258,19 @@ def _generate_master_packet_pdf(buffer, data):
 
             story.append(PageBreak())
 
-    doc.build(story)
+    # Footer with page numbers + report period. Skipped on the cover (page 1)
+    # because we don't want a footer cluttering the title page.
+    def _draw_footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(GRAY_TEXT)
+        page_num = canvas.getPageNumber()
+        # Left: report period. Right: page X.
+        canvas.drawString(0.5 * inch, 0.3 * inch, f"Bill Inputs Report — {period_display}")
+        canvas.drawRightString(letter[0] - 0.5 * inch, 0.3 * inch, f"Page {page_num}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=lambda c, d: None, onLaterPages=_draw_footer)
 
 
 def _pdf_safe(s):
