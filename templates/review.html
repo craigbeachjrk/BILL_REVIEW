@@ -2331,11 +2331,21 @@
       if (headerBox){
         headerBox.querySelectorAll('input').forEach(i => fields[i.name] = i.value);
         headerBox.querySelectorAll('select').forEach(s => {
-          // For vendor select: value is ID, but we save NAME for EnrichedVendorName
+          // For vendor select: value is ID, save NAME under EnrichedVendorName.
+          // Read data-name straight off the selected <option> — it's set when
+          // the option is built and is always present for a user pick. Falling
+          // back to _vendIdToName[id] used to silently save an empty string
+          // when that lookup map didn't have the ID (race / missing catalog
+          // entry / dup-name collision). Empty meant the backend's
+          // `if header_fields[k] != ""` check skipped the override and kept
+          // whatever wrong EnrichedVendorName the enricher originally set —
+          // user's correction silently lost on submit.
           if (s.name === 'EnrichedVendorName') {
             const vendId = s.value || '';
-            const vendName = (window._vendIdToName || {})[vendId] || '';
-            fields[s.name] = vendName;
+            const opt = (s.selectedIndex >= 0) ? s.options[s.selectedIndex] : null;
+            const dataName = opt ? (opt.getAttribute('data-name') || '') : '';
+            const lookupName = (window._vendIdToName || {})[vendId] || '';
+            fields[s.name] = dataName || lookupName;
           } else {
             fields[s.name] = s.value;
           }
