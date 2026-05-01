@@ -503,7 +503,7 @@ def _remaining_ms(deadline_epoch_ms: int) -> int:
 MIN_TIME_FOR_ATTEMPT_MS = 30_000  # 30 seconds — generous buffer for API + S3 write
 
 
-def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0, knowledge_notes: str = "", expected_account_number: str = "", rework_notes: str = "") -> tuple[list[list[str]], str]:
+def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, total_chunks: int, previous_context: str, expected_lines: int = 0, deadline_ms: int = 0, knowledge_notes: str = "", expected_account_number: str = "", rework_notes: str = "", pages_per_chunk: int = 1) -> tuple[list[list[str]], str]:
     """
     Parse a PDF chunk with key rotation and exponential backoff.
 
@@ -533,6 +533,17 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
     context_service_state = ""
     context_service_zip = ""
 
+    # Compute the original-PDF page range this chunk covers so prompts that
+    # reference "page 1" / "skip the summary page" / "parse pages 2-4" can
+    # be applied correctly. Without this, each chunk only knew its chunk
+    # number, not which pages of the original PDF it actually contains.
+    page_start = (chunk_num - 1) * max(1, pages_per_chunk) + 1
+    page_end = chunk_num * max(1, pages_per_chunk)
+    page_range_str = (
+        f"page {page_start} of the original PDF" if page_start == page_end
+        else f"pages {page_start}-{page_end} of the original PDF"
+    )
+
     if previous_context and chunk_num > 1:
         # Extract service address from previous context for post-processing fallback
         import re as _re_ctx
@@ -548,7 +559,7 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
             context_service_zip = state_zip_match.group(2).strip()
 
         fallback_addr = context_service_address or "(use address visible on this page)"
-        context_note = f"""IMPORTANT: This is chunk {chunk_num} of {total_chunks}. Previous chunks contained:
+        context_note = f"""IMPORTANT: This is chunk {chunk_num} of {total_chunks}. This chunk contains {page_range_str}. Previous chunks contained:
 {previous_context}
 
 **SERVICE ADDRESS FOR THIS CHUNK**:
@@ -565,7 +576,9 @@ def parse_chunk_with_retry(api_keys: list, pdf_bytes: bytes, chunk_num: int, tot
 
 Use the vendor, account number, and bill dates from the previous context on EVERY row you output from this chunk."""
     else:
-        context_note = f"This is chunk {chunk_num} of {total_chunks} from a multi-page invoice. Extract header information (vendor, account, dates, addresses) and include them on EVERY row."
+        context_note = (f"This is chunk {chunk_num} of {total_chunks} from a multi-page invoice. "
+                        f"This chunk contains {page_range_str}. "
+                        "Extract header information (vendor, account, dates, addresses) and include them on EVERY row.")
 
     # Append knowledge notes to context_note if available
     if knowledge_notes:
@@ -590,11 +603,18 @@ Use the vendor, account number, and bill dates from the previous context on EVER
     # Reviewer's free-form rework instructions ("skip the summary page, parse
     # pages 2-4 for all line items"). These get top billing — they're
     # human-verified and override default behavior. Apply per-chunk so each
-    # chunk respects the same instruction set.
+    # chunk respects the same instruction set, and remind the model exactly
+    # which original-PDF pages this chunk shows so page-targeted instructions
+    # actually land.
     if rework_notes:
         prompt += (f"\n\n**USER REWORK INSTRUCTIONS** (a human reviewer who has the actual bill in front of them said): "
                    f"{rework_notes}\n"
-                   "Follow these instructions exactly. They override your default behavior for this chunk too.")
+                   f"This chunk shows {page_range_str}. When the instructions mention specific page numbers, "
+                   "interpret them as referring to the original PDF page numbering — apply the instructions only "
+                   "if THIS chunk's page range overlaps the pages the user mentioned. If the user told you to "
+                   "skip a page that this chunk does NOT contain, ignore that instruction and parse this chunk "
+                   "normally. If the user told you to parse pages this chunk DOES contain, extract every line "
+                   "item from those pages.")
 
     # Retry loop with key rotation and exponential backoff
     last_error = None
@@ -1015,6 +1035,7 @@ def lambda_handler(event, context):
             knowledge_notes=knowledge_notes,
             expected_account_number=job_info.get('expected_account_number', ''),
             rework_notes=job_info.get('notes', ''),
+            pages_per_chunk=job_info.get('pages_per_chunk', 1),
         )
 
         timing["geminiMs"] = int((time.time() - t0) * 1000)

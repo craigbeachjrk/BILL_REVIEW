@@ -767,19 +767,44 @@
       try {
         const r = await fetch('/api/bulk_rework', { method: 'POST', body: fd });
         const j = await r.json();
-        if (r.ok && j.ok) {
-          showToast(`${j.sent || picks.length} invoice(s) sent to rework`, 'ok');
-          closeReworkModal();
-          // Remove reworked rows from table
-          const set = new Set(picks);
-          document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
-            if (set.has(tr.getAttribute('data-pdf-id'))) tr.remove();
-          });
-          updateSelectedCount();
-          clearAllChecks();
-        } else {
+        if (!r.ok || !j.ok) {
           showToast('Failed: ' + (j.error || 'Unknown error'), 'err');
+          return;
         }
+        const sent = j.sent || 0;
+        const requested = j.requested || picks.length;
+        const errs = j.errors || [];
+
+        // Loud failure: nothing actually got submitted. Most common cause is
+        // the parser failing to decode a bare-S3-key PDF_LINK. Show details
+        // so the user knows their click didn't queue anything.
+        if (sent === 0) {
+          const detail = errs.length ? `\n\n${errs.slice(0,5).join('\n')}${errs.length > 5 ? `\n... +${errs.length-5} more` : ''}` : '';
+          alert(`Rework FAILED — 0 of ${requested} invoice(s) were queued.${detail}`);
+          showToast(`Rework failed: 0/${requested} sent`, 'err');
+          return;
+        }
+
+        // Partial: queued some, errored on others.
+        if (sent < requested) {
+          const detail = errs.length ? `\n\n${errs.slice(0,5).join('\n')}${errs.length > 5 ? `\n... +${errs.length-5} more` : ''}` : '';
+          alert(`Partial rework: ${sent} of ${requested} queued. ${requested - sent} failed.${detail}`);
+          showToast(`Sent ${sent}/${requested} (${requested - sent} failed)`, 'err');
+        } else {
+          showToast(`${sent} invoice(s) sent to rework`, 'ok');
+        }
+
+        closeReworkModal();
+        // Remove only successfully-queued rows; keep failed ones visible so the
+        // user can retry them. (Server returns errors keyed by pdf_id text but
+        // not as a structured list of failed pids — until we wire that, we
+        // can't selectively clear, so we clear all and let the user refresh.)
+        const set = new Set(picks);
+        document.querySelectorAll('tbody tr[data-pdf-id]').forEach(tr => {
+          if (set.has(tr.getAttribute('data-pdf-id'))) tr.remove();
+        });
+        updateSelectedCount();
+        clearAllChecks();
       } catch(e) {
         showToast('Error: ' + e.message, 'err');
       }

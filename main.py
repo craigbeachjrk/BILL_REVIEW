@@ -26397,11 +26397,13 @@ def api_bulk_rework(
 
         sent_count = 0
         errors = []
+        failed_pids: set[str] = set()
 
         for pid in wanted:
             pid_rows = by_pdf.get(pid, [])
             if not pid_rows:
                 errors.append(f"No data found for {pid}")
+                failed_pids.add(pid)
                 continue
 
             first = pid_rows[0]
@@ -26414,35 +26416,62 @@ def api_bulk_rework(
 
             if not pdf_link:
                 errors.append(f"No PDF link for {pid}")
+                failed_pids.add(pid)
                 continue
 
-            # Parse the S3 key from PDF link
+            # Parse the S3 key from PDF link. Mirrors the robust parsing in
+            # /api/rework — handles s3://, virtual-hosted-style URLs, the /pdf
+            # proxy with ?k=<key>, and bare S3 keys (which is what most
+            # PDF_LINK fields actually contain post-pipeline).
+            from urllib.parse import urlparse, parse_qs, unquote
             final_url = pdf_link
-            if '?' in final_url:
-                final_url = final_url.split('?')[0]
-
             parsed = None
-            if final_url.startswith('s3://'):
-                parts = final_url[5:].split('/', 1)
-                if len(parts) == 2:
-                    parsed = (parts[0], parts[1])
-            elif '.s3.' in final_url or 's3.amazonaws.com' in final_url:
-                try:
-                    from urllib.parse import urlparse
+            try:
+                # 1. s3:// scheme
+                if final_url.startswith('s3://'):
+                    parts = final_url[5:].split('/', 1)
+                    if len(parts) == 2:
+                        parsed = (parts[0], parts[1])
+                # 2. http(s):// — could be /pdf?k=<key>, *.s3.amazonaws.com, or bucket.s3.* virtual host
+                elif final_url.startswith(('http://', 'https://')):
                     pu = urlparse(final_url)
-                    if '.s3.' in pu.netloc:
+                    qs = parse_qs(pu.query or '')
+                    if 'k' in qs and qs['k']:
+                        parsed = (BUCKET, unquote(qs['k'][0]).lstrip('/'))
+                    elif '.s3.' in pu.netloc:
                         bucket_part = pu.netloc.split('.s3.')[0]
-                        key_part = pu.path.lstrip('/')
-                        parsed = (bucket_part, key_part)
+                        key_part = unquote((pu.path or '').lstrip('/'))
+                        if bucket_part and key_part:
+                            parsed = (bucket_part, key_part)
                     elif 's3.amazonaws.com' in pu.netloc:
-                        path_parts = pu.path.lstrip('/').split('/', 1)
+                        path = unquote((pu.path or '').lstrip('/'))
+                        path_parts = path.split('/', 1)
                         if len(path_parts) == 2:
                             parsed = (path_parts[0], path_parts[1])
+                # 3. Bare key (e.g. "Bill_Parser_2_Parsed_Inputs/20260430T...pdf")
+                elif '/' in final_url and not final_url.startswith(('//', 'data:')):
+                    key2 = final_url.lstrip('/')
+                    if key2.startswith(f"{BUCKET}/"):
+                        key2 = key2[len(BUCKET) + 1:]
+                    parsed = (BUCKET, key2)
+            except Exception as e:
+                print(f"[BULK_REWORK] parse exception for {pid}: {e}")
+                parsed = None
+
+            if not parsed:
+                # Last-ditch: try _infer_pdf_key_for_doc
+                try:
+                    inferred = _infer_pdf_key_for_doc(y, m, d, pid_rows, pid)
+                    if inferred:
+                        parsed = (BUCKET, inferred.lstrip('/'))
                 except Exception:
                     pass
 
             if not parsed:
-                errors.append(f"Cannot parse PDF location for {pid}")
+                msg = f"Cannot parse PDF location for {pid} (link={pdf_link!r})"
+                print(f"[BULK_REWORK] {msg}")
+                errors.append(msg)
+                failed_pids.add(pid)
                 continue
 
             src_bucket, src_key = parsed
@@ -26456,6 +26485,7 @@ def api_bulk_rework(
                 s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": src_bucket, "Key": src_key}, Key=dest_key)
             except Exception as e:
                 errors.append(f"Copy failed for {pid}: {str(e)}")
+                failed_pids.add(pid)
                 continue
 
             # Write sidecar rework.json with notes
@@ -26573,10 +26603,22 @@ def api_bulk_rework(
         invalidate_day_cache(y, m, d)
         _CACHE.pop(("day_status_counts", y, m, d), None)
         _CACHE.pop(("parse_dashboard",), None)
-        # Remove stale entries from search index
-        _search_index_remove(set(wanted))
+        # Remove stale entries from search index — only for IDs we actually
+        # successfully forwarded. Otherwise a failed bulk submission would
+        # nuke the search index for bills the user was trying to rework.
+        if sent_count > 0:
+            _search_index_remove(set(wanted) - set(failed_pids))
 
-        return {"ok": True, "sent": sent_count, "errors": errors if errors else None}
+        # Log the outcome explicitly so silent-failure bulks don't fly under
+        # the radar in the future. Prior bug: parser couldn't decode bare-key
+        # PDF_LINKs, all 8 bills errored, response returned 200 OK with
+        # sent=0, no log entry — user thought rework was queued.
+        print(f"[BULK_REWORK] user={user} requested={len(wanted)} sent={sent_count} errors={len(errors)}")
+        if errors:
+            for e in errors[:10]:
+                print(f"[BULK_REWORK]   error: {e}")
+
+        return {"ok": True, "sent": sent_count, "requested": len(wanted), "errors": errors if errors else None}
     except Exception as e:
         import traceback
         traceback.print_exc()
