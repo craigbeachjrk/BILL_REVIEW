@@ -341,6 +341,21 @@ def process_job(job_id: str):
         print(json.dumps({"error": "job_not_found", "job_id": job_id}))
         return
 
+    # Idempotency guard. The aggregator gets fired by both a DynamoDB stream
+    # event and an S3 ObjectCreated event for the final chunk result, so it
+    # runs at least twice for every job. Without this check, the second
+    # invocation walks the same chunk results, finds them cleaned up by the
+    # first run, errors with "no_rows_found", and overwrites status from
+    # completed -> failed. The Stage 3 output stays correct but DDB lies.
+    current_status = (job_info.get('status') or '').lower()
+    if current_status in ('completed', 'failed'):
+        print(json.dumps({
+            "message": "Job already in terminal state; skipping duplicate aggregation",
+            "job_id": job_id,
+            "current_status": current_status,
+        }))
+        return
+
     # Check if all chunks completed
     if job_info['chunks_completed'] < job_info['total_chunks']:
         print(json.dumps({
