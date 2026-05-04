@@ -174,6 +174,14 @@
             <span style="color:${numColor};font-weight:700">${s.count}</span> ${labels[s.stage]||s.stage}${s.count > 0 && age > 0 ? ` <span style="color:#64748b;font-size:10px">${age}m</span>` : ''}
           </span>`;
         }
+        // Show failed bill count if any (last 48h)
+        const failedCount = data.failed_count || 0;
+        if (failedCount > 0) {
+          hasData = true;
+          html += `<span style="background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.3);color:#fca5a5;padding:3px 10px;border-radius:6px;white-space:nowrap;font-weight:500" title="Bills that failed to parse in the last 48 hours. Contact an administrator to retry.">
+            <span style="color:#ef4444;font-weight:700">${failedCount}</span> Failed
+          </span>`;
+        }
         container.innerHTML = html;
         bar.style.display = '';
       } catch(e) { /* silent */ }
