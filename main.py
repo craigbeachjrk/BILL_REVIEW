@@ -13958,9 +13958,14 @@ def _build_filename_latest_index(now_epoch: int, max_age_hours: int):
     This de-fragments the per-stage pdf_id problem: one logical bill has a
     different pk per stage AND a different extension (.pdf vs .jsonl), but the
     timestamped basename stem is consistent across all stage tracker writes.
+
+    Chunk events (chunk_NNN.pdf) whose parent job is in a terminal status
+    (completed/failed) are filtered out — those are historical artifacts of
+    long-finished jobs and shouldn't pollute the live "stuck" view.
     """
     floor_epoch = now_epoch - (max_age_hours * 3600)
     latest_by_key: dict = {}
+    chunk_job_ids_seen: set = set()  # job_ids referenced by chunk events; bulk-checked at end
 
     for st in _ALL_TRACKED_STAGES:
         last_key = None
@@ -14001,9 +14006,55 @@ def _build_filename_latest_index(now_epoch: int, max_age_hours: int):
                     "event_type": it.get("event_type", {}).get("S", ""),
                     "s3_key": s3_key,
                 }
+                # Stash job_id of chunk events for terminal-status filtering
+                if fn.startswith("chunk_") and s3_key.startswith("Bill_Parser_1_LargeFile_Chunks/"):
+                    parts = s3_key.split("/", 2)
+                    if len(parts) >= 3:
+                        chunk_job_ids_seen.add(parts[1])
             last_key = resp.get("LastEvaluatedKey")
             if not last_key:
                 break
+
+    # Bulk-fetch parent job statuses for chunk events. Anything in a terminal
+    # state (completed/failed) is a historical artifact, not actually stuck.
+    if chunk_job_ids_seen:
+        terminal_jobs: set = set()
+        ids = list(chunk_job_ids_seen)
+        for i in range(0, len(ids), 100):
+            chunk = ids[i : i + 100]
+            try:
+                resp = ddb.batch_get_item(
+                    RequestItems={
+                        "jrk-bill-parser-jobs": {
+                            "Keys": [{"job_id": {"S": j}} for j in chunk],
+                            "ProjectionExpression": "job_id, #s",
+                            "ExpressionAttributeNames": {"#s": "status"},
+                        }
+                    }
+                )
+                items = resp.get("Responses", {}).get("jrk-bill-parser-jobs", []) or []
+                for it in items:
+                    if it.get("status", {}).get("S", "") in ("completed", "failed"):
+                        terminal_jobs.add(it.get("job_id", {}).get("S", ""))
+            except Exception as e:
+                print(f"[PIPELINE] batch_get_item for chunk job statuses failed: {e}")
+
+        if terminal_jobs:
+            keys_to_drop = []
+            for k, v in latest_by_key.items():
+                if not v.get("filename", "").startswith("chunk_"):
+                    continue
+                s3k = v.get("s3_key", "")
+                if not s3k.startswith("Bill_Parser_1_LargeFile_Chunks/"):
+                    continue
+                parts = s3k.split("/", 2)
+                if len(parts) < 3:
+                    continue
+                if parts[1] in terminal_jobs:
+                    keys_to_drop.append(k)
+            for k in keys_to_drop:
+                latest_by_key.pop(k, None)
+
     return latest_by_key
 
 
