@@ -13830,13 +13830,13 @@ def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, use
         return JSONResponse({"error": "Admin access required"}, status_code=403)
     now_epoch = int(time.time())
     threshold_epoch = now_epoch - (threshold_minutes * 60)
-    latest_by_filename = _build_filename_latest_index(now_epoch, max_age_hours)
+    latest_by_key = _build_filename_latest_index(now_epoch, max_age_hours)
     stuck = []
-    for fn, latest in latest_by_filename.items():
+    for key, latest in latest_by_key.items():
         if latest["stage"] in _PRE_SUBMISSION_STAGES and latest["ts"] <= threshold_epoch:
             stuck.append({
                 "pdf_id": latest["pk"].replace("BILL#", ""),
-                "filename": fn,
+                "filename": latest.get("filename", key),
                 "stage": latest["stage"],
                 "age_minutes": (now_epoch - latest["ts"]) // 60,
                 "event_type": latest["event_type"],
@@ -13933,18 +13933,34 @@ _POST_SUBMISSION_STAGES = {"S4", "S6", "S7", "S8", "S9", "S99"}
 _ALL_TRACKED_STAGES = _PRE_SUBMISSION_STAGES | _POST_SUBMISSION_STAGES
 
 
-def _build_filename_latest_index(now_epoch: int, max_age_hours: int):
-    """Walk gsi-stage-time across every stage in the window, group by filename,
-    return {filename: {'ts': latest_ts, 'stage': latest_stage, 'pk': latest_pk,
-    'event_type': str, 's3_key': str}}.
+def _canonical_bill_key(filename: str, s3_key: str) -> str:
+    """Pick a stable identifier that survives the stage-by-stage extension change
+    (.pdf in S1 -> .jsonl after parsing). Strips the trailing extension from the
+    filename. For chunked big-bill events (chunk_NNN.pdf) the basename collides
+    across jobs, so we prepend the parent S3 path to keep them distinct.
+    """
+    if not filename:
+        return s3_key or ""
+    stem = filename.rsplit(".", 1)[0]
+    if stem.startswith("chunk_") and s3_key:
+        # disambiguate chunks of different big bills by their S3 parent
+        parent = s3_key.rsplit("/", 1)[0] if "/" in s3_key else ""
+        return f"{parent}/{stem}"
+    return stem
 
-    This is how we de-fragment the per-stage pdf_id problem: a single logical bill
-    has a different pk per stage, but `filename` (the basename of the pending S3 key,
-    e.g. "20260504T142442Z_Inv_54668...pdf") is preserved across all stage tracker
-    writes, so it's the canonical link.
+
+def _build_filename_latest_index(now_epoch: int, max_age_hours: int):
+    """Walk gsi-stage-time across every stage in the window, group by canonical
+    bill key (filename stem, with chunks disambiguated by parent path), return
+    {key: {'ts': latest_ts, 'stage': latest_stage, 'filename': original_filename,
+    'pk': latest_pk, 'event_type': str, 's3_key': str}}.
+
+    This de-fragments the per-stage pdf_id problem: one logical bill has a
+    different pk per stage AND a different extension (.pdf vs .jsonl), but the
+    timestamped basename stem is consistent across all stage tracker writes.
     """
     floor_epoch = now_epoch - (max_age_hours * 3600)
-    latest_by_filename: dict = {}
+    latest_by_key: dict = {}
 
     for st in _ALL_TRACKED_STAGES:
         last_key = None
@@ -13969,23 +13985,26 @@ def _build_filename_latest_index(now_epoch: int, max_age_hours: int):
                 break
             for it in resp.get("Items", []):
                 fn = it.get("filename", {}).get("S", "")
-                if not fn:
+                s3_key = it.get("s3_key", {}).get("S", "")
+                key = _canonical_bill_key(fn, s3_key)
+                if not key:
                     continue
                 ts = int(it.get("timestamp_epoch", {}).get("N", "0"))
-                prev = latest_by_filename.get(fn)
+                prev = latest_by_key.get(key)
                 if prev is not None and ts <= prev["ts"]:
                     continue
-                latest_by_filename[fn] = {
+                latest_by_key[key] = {
                     "ts": ts,
                     "stage": it.get("stage", {}).get("S", ""),
+                    "filename": fn,
                     "pk": it.get("pk", {}).get("S", ""),
                     "event_type": it.get("event_type", {}).get("S", ""),
-                    "s3_key": it.get("s3_key", {}).get("S", ""),
+                    "s3_key": s3_key,
                 }
             last_key = resp.get("LastEvaluatedKey")
             if not last_key:
                 break
-    return latest_by_filename
+    return latest_by_key
 
 
 @app.get("/api/pipeline/stuck-count")
@@ -14004,14 +14023,14 @@ def api_pipeline_stuck_count(threshold_minutes: int = 60, max_age_hours: int = 4
     now_epoch = int(time.time())
     threshold_epoch = now_epoch - (threshold_minutes * 60)
 
-    latest_by_filename = _build_filename_latest_index(now_epoch, max_age_hours)
+    latest_by_key = _build_filename_latest_index(now_epoch, max_age_hours)
 
     # Tally
     stuck_by_stage = {s: 0 for s in _PRE_SUBMISSION_STAGES}
     flowing_by_stage = {s: 0 for s in _POST_SUBMISSION_STAGES}
     stuck_total = 0
     flowing_total = 0
-    for fn, latest in latest_by_filename.items():
+    for key, latest in latest_by_key.items():
         st = latest["stage"]
         if st in _PRE_SUBMISSION_STAGES and latest["ts"] <= threshold_epoch:
             stuck_by_stage[st] = stuck_by_stage.get(st, 0) + 1
@@ -14025,7 +14044,7 @@ def api_pipeline_stuck_count(threshold_minutes: int = 60, max_age_hours: int = 4
         "stuck_by_stage": stuck_by_stage,
         "flowing_total": flowing_total,
         "flowing_by_stage": flowing_by_stage,
-        "total_unique_files": len(latest_by_filename),
+        "total_unique_files": len(latest_by_key),
         "threshold_minutes": threshold_minutes,
         "max_age_hours": max_age_hours,
     }
