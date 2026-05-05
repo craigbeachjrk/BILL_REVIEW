@@ -196,8 +196,8 @@
     <!-- ═══ THROUGHPUT CHART ═══ -->
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h2 style="margin:0;font-size:16px">Throughput (24h)</h2>
-        <select id="chartHours" onchange="loadStats()" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit">
+        <h2 style="margin:0;font-size:16px">Throughput &amp; Stuck Window</h2>
+        <select id="chartHours" onchange="onWindowChange()" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:inherit" title="Window applies to throughput chart AND stuck-bill list">
           <option value="6">Last 6h</option>
           <option value="12">Last 12h</option>
           <option value="24" selected>Last 24h</option>
@@ -346,9 +346,16 @@ function renderQueue(data) {
 }
 
 /* ═══ STUCK BILLS ═══ */
+function getWindowHours() {
+  const sel = document.getElementById('chartHours');
+  const v = sel ? parseInt(sel.value, 10) : 24;
+  return Number.isFinite(v) && v > 0 ? v : 24;
+}
+
 async function loadStuck() {
   try {
-    const resp = await fetch('/api/pipeline/stuck?threshold_minutes=60');
+    const hrs = getWindowHours();
+    const resp = await fetch(`/api/pipeline/stuck?threshold_minutes=60&max_age_hours=${hrs}`);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     stuckBills = data.stuck || [];
@@ -357,6 +364,11 @@ async function loadStuck() {
     console.error('loadStuck error:', e);
     /* non-critical — don't toast */
   }
+}
+
+function onWindowChange() {
+  loadStats();
+  loadStuck();
 }
 
 function renderStuck() {
@@ -370,7 +382,8 @@ function renderStuck() {
   }
 
   banner.classList.add('visible');
-  titleEl.textContent = stuckBills.length + ' bill' + (stuckBills.length !== 1 ? 's' : '') + ' stuck for >60 minutes';
+  const hrs = getWindowHours();
+  titleEl.textContent = stuckBills.length + ' bill' + (stuckBills.length !== 1 ? 's' : '') + ` stuck >60 min (last ${hrs}h)`;
 
   let html = '';
   for (const bill of stuckBills) {

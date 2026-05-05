@@ -13818,21 +13818,28 @@ def api_pipeline_bill(pdf_id: str, user: str = Depends(require_user)):
 
 
 @app.get("/api/pipeline/stuck")
-def api_pipeline_stuck(threshold_minutes: int = 60, user: str = Depends(require_user)):
-    """Find bills stuck in a stage longer than threshold."""
+def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, user: str = Depends(require_user)):
+    """Find bills stuck in a stage longer than threshold and within max_age_hours.
+
+    threshold_minutes: lower bound — bill's last event must be at least this many minutes old.
+    max_age_hours: upper bound — bill's last event must be no older than this. Caps the window so
+    abandoned/orphaned bills (events from days ago that never progressed) don't pollute the live list.
+    """
     if user not in ADMIN_USERS:
         return JSONResponse({"error": "Admin access required"}, status_code=403)
-    cutoff_epoch = int(time.time()) - (threshold_minutes * 60)
     now_epoch = int(time.time())
+    cutoff_epoch = now_epoch - (threshold_minutes * 60)
+    floor_epoch = now_epoch - (max_age_hours * 3600)
     stuck = []
     for st in ["S1", "S1_Std", "S1_Lg", "S3"]:
         try:
             resp = ddb.query(
                 TableName=PIPELINE_TRACKER_TABLE,
                 IndexName="gsi-stage-time",
-                KeyConditionExpression="stage = :s AND timestamp_epoch < :cutoff",
+                KeyConditionExpression="stage = :s AND timestamp_epoch BETWEEN :floor AND :cutoff",
                 ExpressionAttributeValues={
                     ":s": {"S": st},
+                    ":floor": {"N": str(floor_epoch)},
                     ":cutoff": {"N": str(cutoff_epoch)},
                 },
                 ScanIndexForward=True,
@@ -13856,6 +13863,11 @@ def api_pipeline_stuck(threshold_minutes: int = 60, user: str = Depends(require_
                         latest_stage = latest_items[0].get("stage", {}).get("S", "")
                         if latest_stage != st:
                             continue  # Bill has moved on — not actually stuck
+                        latest_ts = int(latest_items[0].get("timestamp_epoch", {}).get("N", "0"))
+                        # Re-check upper bound against the LATEST event (handles bills with old
+                        # stage-entry events but newer same-stage events that bumped the timestamp)
+                        if latest_ts < floor_epoch:
+                            continue
                 except Exception:
                     pass  # If check fails, include it anyway (conservative)
                 meta = {}
@@ -13875,7 +13887,7 @@ def api_pipeline_stuck(threshold_minutes: int = 60, user: str = Depends(require_
         except Exception as e:
             print(f"[PIPELINE] Stuck query for {st} failed: {e}")
     stuck.sort(key=lambda x: x["age_minutes"], reverse=True)
-    return {"stuck": stuck, "threshold_minutes": threshold_minutes}
+    return {"stuck": stuck, "threshold_minutes": threshold_minutes, "max_age_hours": max_age_hours}
 
 
 @app.get("/api/pipeline/stats")
