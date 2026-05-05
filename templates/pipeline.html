@@ -179,6 +179,8 @@
     </div>
 
     <!-- ═══ STUCK BILLS ALERT ═══ -->
+    <div id="flowSummary" style="background:rgba(15,23,42,.04);border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:inherit"></div>
+
     <div class="stuck-banner" id="stuckBanner" onclick="toggleStuck()">
       <div class="stuck-title">
         <span class="stuck-chevron" id="stuckChevron">&#9654;</span>
@@ -361,8 +363,8 @@ async function loadStuckCount() {
     const resp = await fetch(`/api/pipeline/stuck-count?threshold_minutes=60&max_age_hours=${hrs}`);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
-    stuckCount = data.total || 0;
-    renderStuckBanner(data.by_stage || {});
+    stuckCount = data.stuck_total || 0;
+    renderStuckBanner(data);
   } catch (e) {
     console.error('loadStuckCount error:', e);
   }
@@ -392,20 +394,38 @@ function onWindowChange() {
   }
 }
 
-function renderStuckBanner(byStage) {
+function renderStuckBanner(data) {
   const banner = document.getElementById('stuckBanner');
   const titleEl = document.getElementById('stuckTitle');
+  const stuckByStage = data.stuck_by_stage || {};
+  const flowingByStage = data.flowing_by_stage || {};
+  const flowingTotal = data.flowing_total || 0;
+  const totalFiles = data.total_unique_files || 0;
+  const hrs = getWindowHours();
+
+  // Update the side-by-side flow/stuck summary card (rendered into the page header)
+  const summaryEl = document.getElementById('flowSummary');
+  if (summaryEl) {
+    const flowBits = ['S4','S6','S7','S8'].map(s => `${s}: ${flowingByStage[s] ?? 0}`).join(' · ');
+    summaryEl.innerHTML = `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
+        <div><span style="color:#16a34a;font-weight:700">${flowingTotal}</span> flowing through &middot; <span style="opacity:.8">${flowBits}</span></div>
+        <div><span style="color:#dc2626;font-weight:700">${stuckCount}</span> stuck</div>
+        <div style="opacity:.7">${totalFiles} unique files in last ${hrs}h</div>
+      </div>`;
+  }
+
   if (!stuckCount) {
     banner.classList.remove('visible');
     banner.classList.remove('expanded');
     return;
   }
   banner.classList.add('visible');
-  const hrs = getWindowHours();
-  const stageBits = ['S1','S1_Std','S1_Lg','S3']
-    .map(s => `${s}: ${byStage[s] ?? 0}`)
+  const stageBits = ['S1','S1_Std','S1_Lg','S1_largefile','S3']
+    .map(s => `${s}: ${stuckByStage[s] ?? 0}`)
+    .filter(b => !b.endsWith(': 0'))
     .join(' · ');
-  titleEl.textContent = `${stuckCount} stuck event${stuckCount !== 1 ? 's' : ''} >60 min (last ${hrs}h) — ${stageBits}`;
+  titleEl.textContent = `${stuckCount} bill${stuckCount !== 1 ? 's' : ''} stuck >60 min (last ${hrs}h) — ${stageBits}`;
 }
 
 function renderStuckList() {

@@ -13819,11 +13819,41 @@ def api_pipeline_bill(pdf_id: str, user: str = Depends(require_user)):
 
 @app.get("/api/pipeline/stuck")
 def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, user: str = Depends(require_user)):
-    """Find bills stuck in a stage longer than threshold and within max_age_hours.
+    """Filename-grouped list of actually-stuck bills.
 
-    threshold_minutes: lower bound — bill's last event must be at least this many minutes old.
-    max_age_hours: upper bound — bill's last event must be no older than this. Caps the window so
-    abandoned/orphaned bills (events from days ago that never progressed) don't pollute the live list.
+    Walks every stage in the window, groups events by filename, returns only
+    filenames whose latest-anywhere event is in a pre-submission stage and
+    >threshold_minutes old. This is the verified, displayable list that pairs
+    with /api/pipeline/stuck-count.
+    """
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    now_epoch = int(time.time())
+    threshold_epoch = now_epoch - (threshold_minutes * 60)
+    latest_by_filename = _build_filename_latest_index(now_epoch, max_age_hours)
+    stuck = []
+    for fn, latest in latest_by_filename.items():
+        if latest["stage"] in _PRE_SUBMISSION_STAGES and latest["ts"] <= threshold_epoch:
+            stuck.append({
+                "pdf_id": latest["pk"].replace("BILL#", ""),
+                "filename": fn,
+                "stage": latest["stage"],
+                "age_minutes": (now_epoch - latest["ts"]) // 60,
+                "event_type": latest["event_type"],
+                "s3_key": latest["s3_key"],
+            })
+    stuck.sort(key=lambda x: x["age_minutes"], reverse=True)
+    return {"stuck": stuck, "threshold_minutes": threshold_minutes, "max_age_hours": max_age_hours}
+
+
+@app.get("/api/pipeline/stuck-legacy")
+def api_pipeline_stuck_legacy(threshold_minutes: int = 60, max_age_hours: int = 48, user: str = Depends(require_user)):
+    """Old per-pk stuck logic, kept for diagnostic comparison.
+
+    Find events with stage in pre-submission stages, age between threshold_minutes
+    and max_age_hours, and verify the pk's latest event is still in that stage.
+    Inflated by ~3-4x vs the filename-grouped /api/pipeline/stuck because of the
+    per-stage pdf_id fragmentation issue.
     """
     if user not in ADMIN_USERS:
         return JSONResponse({"error": "Admin access required"}, status_code=403)
@@ -13898,56 +13928,104 @@ def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, use
     return {"stuck": stuck, "threshold_minutes": threshold_minutes, "max_age_hours": max_age_hours}
 
 
+_PRE_SUBMISSION_STAGES = {"S1", "S1_Std", "S1_Lg", "S1_largefile", "S3"}
+_POST_SUBMISSION_STAGES = {"S4", "S6", "S7", "S8", "S9", "S99"}
+_ALL_TRACKED_STAGES = _PRE_SUBMISSION_STAGES | _POST_SUBMISSION_STAGES
+
+
+def _build_filename_latest_index(now_epoch: int, max_age_hours: int):
+    """Walk gsi-stage-time across every stage in the window, group by filename,
+    return {filename: {'ts': latest_ts, 'stage': latest_stage, 'pk': latest_pk,
+    'event_type': str, 's3_key': str}}.
+
+    This is how we de-fragment the per-stage pdf_id problem: a single logical bill
+    has a different pk per stage, but `filename` (the basename of the pending S3 key,
+    e.g. "20260504T142442Z_Inv_54668...pdf") is preserved across all stage tracker
+    writes, so it's the canonical link.
+    """
+    floor_epoch = now_epoch - (max_age_hours * 3600)
+    latest_by_filename: dict = {}
+
+    for st in _ALL_TRACKED_STAGES:
+        last_key = None
+        while True:
+            kwargs = {
+                "TableName": PIPELINE_TRACKER_TABLE,
+                "IndexName": "gsi-stage-time",
+                "KeyConditionExpression": "stage = :s AND timestamp_epoch >= :floor",
+                "ExpressionAttributeValues": {
+                    ":s": {"S": st},
+                    ":floor": {"N": str(floor_epoch)},
+                },
+                "ProjectionExpression": "filename, #s, #t, pk, event_type, s3_key",
+                "ExpressionAttributeNames": {"#s": "stage", "#t": "timestamp_epoch"},
+            }
+            if last_key:
+                kwargs["ExclusiveStartKey"] = last_key
+            try:
+                resp = ddb.query(**kwargs)
+            except Exception as e:
+                print(f"[PIPELINE] filename-index query for {st} failed: {e}")
+                break
+            for it in resp.get("Items", []):
+                fn = it.get("filename", {}).get("S", "")
+                if not fn:
+                    continue
+                ts = int(it.get("timestamp_epoch", {}).get("N", "0"))
+                prev = latest_by_filename.get(fn)
+                if prev is not None and ts <= prev["ts"]:
+                    continue
+                latest_by_filename[fn] = {
+                    "ts": ts,
+                    "stage": it.get("stage", {}).get("S", ""),
+                    "pk": it.get("pk", {}).get("S", ""),
+                    "event_type": it.get("event_type", {}).get("S", ""),
+                    "s3_key": it.get("s3_key", {}).get("S", ""),
+                }
+            last_key = resp.get("LastEvaluatedKey")
+            if not last_key:
+                break
+    return latest_by_filename
+
+
 @app.get("/api/pipeline/stuck-count")
 def api_pipeline_stuck_count(threshold_minutes: int = 60, max_age_hours: int = 48, user: str = Depends(require_user)):
-    """Cheap summary metric — paginates DDB with Select=COUNT (no items returned).
+    """True stuck count — groups events by filename across ALL stages, finds the
+    latest event per filename, and counts only filenames whose newest-anywhere event
+    is in a pre-submission stage and >threshold_minutes old.
 
-    Counts pipeline events stuck in pre-submission stages. This is event-count, not
-    unique-bill count: a single logical bill that progressed through S1_Std -> S3
-    has a separate per-stage pdf_id (SHA1 of stage-specific S3 key), so it appears
-    once per stage. Inflates the count by ~1.5-2x of the unique-bill stuck pool but
-    is directionally correct and very cheap to compute.
-
-    Use /api/pipeline/stuck for the verified, deduped, displayable list.
+    This avoids the per-stage pdf_id fragmentation that made the earlier metric a
+    massive false-positive count. Also returns volume-through metrics from the same
+    underlying scan: how many distinct filenames completed each post-submission
+    stage in the window.
     """
     if user not in ADMIN_USERS:
         return JSONResponse({"error": "Admin access required"}, status_code=403)
     now_epoch = int(time.time())
-    cutoff_epoch = now_epoch - (threshold_minutes * 60)
-    floor_epoch = now_epoch - (max_age_hours * 3600)
-    by_stage = {}
-    total = 0
-    for st in ["S1", "S1_Std", "S1_Lg", "S3"]:
-        try:
-            count = 0
-            last_key = None
-            while True:
-                kwargs = {
-                    "TableName": PIPELINE_TRACKER_TABLE,
-                    "IndexName": "gsi-stage-time",
-                    "KeyConditionExpression": "stage = :s AND timestamp_epoch BETWEEN :floor AND :cutoff",
-                    "ExpressionAttributeValues": {
-                        ":s": {"S": st},
-                        ":floor": {"N": str(floor_epoch)},
-                        ":cutoff": {"N": str(cutoff_epoch)},
-                    },
-                    "Select": "COUNT",
-                }
-                if last_key:
-                    kwargs["ExclusiveStartKey"] = last_key
-                resp = ddb.query(**kwargs)
-                count += resp.get("Count", 0)
-                last_key = resp.get("LastEvaluatedKey")
-                if not last_key:
-                    break
-            by_stage[st] = count
-            total += count
-        except Exception as e:
-            print(f"[PIPELINE] stuck-count for {st} failed: {e}")
-            by_stage[st] = -1  # signal error without breaking the response
+    threshold_epoch = now_epoch - (threshold_minutes * 60)
+
+    latest_by_filename = _build_filename_latest_index(now_epoch, max_age_hours)
+
+    # Tally
+    stuck_by_stage = {s: 0 for s in _PRE_SUBMISSION_STAGES}
+    flowing_by_stage = {s: 0 for s in _POST_SUBMISSION_STAGES}
+    stuck_total = 0
+    flowing_total = 0
+    for fn, latest in latest_by_filename.items():
+        st = latest["stage"]
+        if st in _PRE_SUBMISSION_STAGES and latest["ts"] <= threshold_epoch:
+            stuck_by_stage[st] = stuck_by_stage.get(st, 0) + 1
+            stuck_total += 1
+        elif st in _POST_SUBMISSION_STAGES:
+            flowing_by_stage[st] = flowing_by_stage.get(st, 0) + 1
+            flowing_total += 1
+
     return {
-        "total": total,
-        "by_stage": by_stage,
+        "stuck_total": stuck_total,
+        "stuck_by_stage": stuck_by_stage,
+        "flowing_total": flowing_total,
+        "flowing_by_stage": flowing_by_stage,
+        "total_unique_files": len(latest_by_filename),
         "threshold_minutes": threshold_minutes,
         "max_age_hours": max_age_hours,
     }
