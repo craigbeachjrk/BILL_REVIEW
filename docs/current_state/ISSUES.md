@@ -310,6 +310,18 @@ Issues in this log are tagged with a **Scope** field:
 - **Location:** aws_lambdas/us-east-1/jrk-presigned-upload/ + `templates/input.html`
 - **Fix:** Browser PUTs directly to S3 via presigned URL (metadata for Q-13 attribution); poll via job-queue (Q-14). Removes the ~30MB upload ceiling.
 
+#### [ISSUE-069] Pipeline tracker fragments `pdf_id` per stage — every consumer must group by filename
+- **Severity:** P1
+- **Scope:** DATA
+- **Status:** **partially-fixed** (read-side workaround shipped 2026-05-05; root cause requires Lambda-side fix)
+- **Module:** observability / pipeline tracker
+- **Location:** every Lambda that writes to `jrk-bill-pipeline-tracker` (router, parser, large-parser, chunk-processor, aggregator, enricher, rework_handler)
+- **Problem:** Each Lambda computes `pdf_id = SHA1(its_current_s3_key)` and uses that as the tracker pk. When a bill changes S3 prefix (Pending → Standard → Parsed_Outputs jsonl → Enriched_Outputs jsonl → PreEntrata_Submission jsonl) its `pdf_id` changes, so one logical bill becomes 4-6 disjoint pks in the tracker. Every consumer that aggregates per-bill (the "X stuck >60 min" banner, lifecycle queries, etc.) silently undercounts unique bills and overcounts "stuck" events. Verified by tracing one `Inv_54668` bill: 4 pks, 6 events, fully completed in 4 hours, but appeared as 3-4 separate "stuck" entries. Real stuck-bill count was inflated 5-10x for months.
+- **Read-side workaround (shipped):** `_canonical_bill_key(filename, s3_key)` in `main.py` strips the trailing extension and groups events by filename stem. The new `/api/pipeline/stuck-count` and updated `/api/pipeline/stuck` walk all stages in the time window, take the latest event across all pks per filename, and only flag pre-submission filenames whose newest-anywhere event is in `{S1, S1_Std, S1_Lg, S1_largefile, S3}`. Chunks of `completed`/`failed` parent jobs are dropped (looked up via `BatchGetItem` on `jrk-bill-parser-jobs`). Required IAM addition: `ParserJobsRead` inline policy on `jrk-bill-review-instance-role`. Result: 48h stuck count dropped from 562 → 2.
+- **Proper fix (TODO):** Pick a single canonical `pdf_id` (likely `SHA1` of the original `Bill_Parser_1_Pending_Parsing/` key) and thread it through every Lambda's tracker writes via S3 metadata or sidecar JSON. Once all Lambdas use this pdf_id, the tracker becomes one continuous lineage per logical bill and the filename-grouping workaround can be removed.
+- **Cross-ref:** `current/strategic_initiatives/S1_OBSERVABILITY.md` "Known architecture issue" section
+- **Commits:** `d75f9cd` (filename grouping + flow-through summary), `4ee5308` (extension strip), `5e73e96` (terminal-job chunk filter)
+
 ### Module 3 — Post & Entrata (reviewed 2026-04-16, awaiting user confirmation)
 
 See `modules/03_post_entrata.md` for full context on each issue.
