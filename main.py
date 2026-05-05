@@ -13830,6 +13830,7 @@ def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, use
     now_epoch = int(time.time())
     cutoff_epoch = now_epoch - (threshold_minutes * 60)
     floor_epoch = now_epoch - (max_age_hours * 3600)
+    seen_pks: set = set()  # dedupe — a bill with events across multiple stages must only appear once
     stuck = []
     for st in ["S1", "S1_Std", "S1_Lg", "S3"]:
         try:
@@ -13843,13 +13844,15 @@ def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, use
                     ":cutoff": {"N": str(cutoff_epoch)},
                 },
                 ScanIndexForward=True,
-                Limit=50,
+                Limit=200,
             )
             for it in resp.get("Items", []):
                 pk = it.get("pk", {}).get("S", "")
+                if pk in seen_pks:
+                    continue  # Already accounted for under a different stage
                 ts = int(it.get("timestamp_epoch", {}).get("N", "0"))
-                age_min = (now_epoch - ts) // 60
                 # Verify bill is ACTUALLY still in this stage by checking latest event
+                latest_ts = ts
                 try:
                     latest_resp = ddb.query(
                         TableName=PIPELINE_TRACKER_TABLE,
@@ -13870,6 +13873,11 @@ def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, use
                             continue
                 except Exception:
                     pass  # If check fails, include it anyway (conservative)
+                # Age is measured from the LATEST event in the stage, not the oldest entry
+                age_min = (now_epoch - latest_ts) // 60
+                if age_min < threshold_minutes:
+                    continue  # Newer same-stage event pushed it under threshold
+                seen_pks.add(pk)
                 meta = {}
                 try:
                     meta = json.loads(it.get("metadata", {}).get("S", "{}"))
