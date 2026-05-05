@@ -13898,6 +13898,61 @@ def api_pipeline_stuck(threshold_minutes: int = 60, max_age_hours: int = 48, use
     return {"stuck": stuck, "threshold_minutes": threshold_minutes, "max_age_hours": max_age_hours}
 
 
+@app.get("/api/pipeline/stuck-count")
+def api_pipeline_stuck_count(threshold_minutes: int = 60, max_age_hours: int = 48, user: str = Depends(require_user)):
+    """Cheap summary metric — paginates DDB with Select=COUNT (no items returned).
+
+    Counts pipeline events stuck in pre-submission stages. This is event-count, not
+    unique-bill count: a single logical bill that progressed through S1_Std -> S3
+    has a separate per-stage pdf_id (SHA1 of stage-specific S3 key), so it appears
+    once per stage. Inflates the count by ~1.5-2x of the unique-bill stuck pool but
+    is directionally correct and very cheap to compute.
+
+    Use /api/pipeline/stuck for the verified, deduped, displayable list.
+    """
+    if user not in ADMIN_USERS:
+        return JSONResponse({"error": "Admin access required"}, status_code=403)
+    now_epoch = int(time.time())
+    cutoff_epoch = now_epoch - (threshold_minutes * 60)
+    floor_epoch = now_epoch - (max_age_hours * 3600)
+    by_stage = {}
+    total = 0
+    for st in ["S1", "S1_Std", "S1_Lg", "S3"]:
+        try:
+            count = 0
+            last_key = None
+            while True:
+                kwargs = {
+                    "TableName": PIPELINE_TRACKER_TABLE,
+                    "IndexName": "gsi-stage-time",
+                    "KeyConditionExpression": "stage = :s AND timestamp_epoch BETWEEN :floor AND :cutoff",
+                    "ExpressionAttributeValues": {
+                        ":s": {"S": st},
+                        ":floor": {"N": str(floor_epoch)},
+                        ":cutoff": {"N": str(cutoff_epoch)},
+                    },
+                    "Select": "COUNT",
+                }
+                if last_key:
+                    kwargs["ExclusiveStartKey"] = last_key
+                resp = ddb.query(**kwargs)
+                count += resp.get("Count", 0)
+                last_key = resp.get("LastEvaluatedKey")
+                if not last_key:
+                    break
+            by_stage[st] = count
+            total += count
+        except Exception as e:
+            print(f"[PIPELINE] stuck-count for {st} failed: {e}")
+            by_stage[st] = -1  # signal error without breaking the response
+    return {
+        "total": total,
+        "by_stage": by_stage,
+        "threshold_minutes": threshold_minutes,
+        "max_age_hours": max_age_hours,
+    }
+
+
 @app.get("/api/pipeline/stats")
 def api_pipeline_stats(hours: int = 24, user: str = Depends(require_user)):
     """Aggregate pipeline throughput by hour for the last N hours."""

@@ -352,39 +352,68 @@ function getWindowHours() {
   return Number.isFinite(v) && v > 0 ? v : 24;
 }
 
-async function loadStuck() {
+let stuckListLoaded = false;
+let stuckCount = 0;
+
+async function loadStuckCount() {
+  try {
+    const hrs = getWindowHours();
+    const resp = await fetch(`/api/pipeline/stuck-count?threshold_minutes=60&max_age_hours=${hrs}`);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    stuckCount = data.total || 0;
+    renderStuckBanner(data.by_stage || {});
+  } catch (e) {
+    console.error('loadStuckCount error:', e);
+  }
+}
+
+async function loadStuckList() {
   try {
     const hrs = getWindowHours();
     const resp = await fetch(`/api/pipeline/stuck?threshold_minutes=60&max_age_hours=${hrs}`);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     stuckBills = data.stuck || [];
-    renderStuck();
+    stuckListLoaded = true;
+    renderStuckList();
   } catch (e) {
-    console.error('loadStuck error:', e);
-    /* non-critical — don't toast */
+    console.error('loadStuckList error:', e);
   }
 }
 
 function onWindowChange() {
   loadStats();
-  loadStuck();
+  stuckListLoaded = false;
+  loadStuckCount();
+  // If banner is currently expanded, also refresh the list immediately
+  if (document.getElementById('stuckBanner').classList.contains('expanded')) {
+    loadStuckList();
+  }
 }
 
-function renderStuck() {
+function renderStuckBanner(byStage) {
   const banner = document.getElementById('stuckBanner');
   const titleEl = document.getElementById('stuckTitle');
-  const listEl = document.getElementById('stuckList');
-
-  if (!stuckBills.length) {
+  if (!stuckCount) {
     banner.classList.remove('visible');
+    banner.classList.remove('expanded');
     return;
   }
-
   banner.classList.add('visible');
   const hrs = getWindowHours();
-  titleEl.textContent = stuckBills.length + ' bill' + (stuckBills.length !== 1 ? 's' : '') + ` stuck >60 min (last ${hrs}h)`;
+  const stageBits = ['S1','S1_Std','S1_Lg','S3']
+    .map(s => `${s}: ${byStage[s] ?? 0}`)
+    .join(' · ');
+  titleEl.textContent = `${stuckCount} stuck event${stuckCount !== 1 ? 's' : ''} >60 min (last ${hrs}h) — ${stageBits}`;
+}
 
+function renderStuckList() {
+  const listEl = document.getElementById('stuckList');
+  if (!stuckBills.length) {
+    listEl.innerHTML = '<div style="padding:12px;opacity:.8">No detail rows returned (events may have aged past the window).</div>';
+    return;
+  }
   let html = '';
   for (const bill of stuckBills) {
     const filename = bill.filename || bill.pdf_id || 'Unknown';
@@ -398,8 +427,17 @@ function renderStuck() {
   listEl.innerHTML = html;
 }
 
+// Backwards-compat wrappers for existing call sites
+async function loadStuck() { await loadStuckCount(); }
+function renderStuck() { renderStuckBanner({}); }
+
 function toggleStuck() {
-  document.getElementById('stuckBanner').classList.toggle('expanded');
+  const banner = document.getElementById('stuckBanner');
+  const expanding = !banner.classList.contains('expanded');
+  banner.classList.toggle('expanded');
+  if (expanding && !stuckListLoaded) {
+    loadStuckList();  // lazy-load detail list only when user expands
+  }
 }
 
 /* ═══ SEARCH ═══ */
