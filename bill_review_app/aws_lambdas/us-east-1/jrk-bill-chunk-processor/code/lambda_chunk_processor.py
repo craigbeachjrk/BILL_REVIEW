@@ -617,47 +617,53 @@ Use the vendor, account number, bill dates, and service address from the previou
             reply_text = call_gemini_api(api_key, pdf_bytes, current_prompt, timeout=90)
 
             # Success! Parse the response
-            if reply_text.upper() == "EMPTY":
-                print(json.dumps({"message": "chunk_reported_empty", "chunk": chunk_num}))
-                return [], f"Chunk {chunk_num} empty (no line items)"
-
-            # Parse JSON response
             rows = []
             invalid_rows = []  # Track rows that failed validation
             all_content_errors = []  # Collect all validation errors for potential retry
 
-            # Try to parse JSON - handle markdown code blocks
-            json_text = reply_text.strip()
-            if json_text.startswith("```"):
-                # Remove markdown code block wrapper
-                lines = json_text.split("\n")
-                # Find start and end of code block
-                start_idx = 0
-                end_idx = len(lines)
-                for i, line in enumerate(lines):
-                    if line.strip().startswith("```") and i == 0:
-                        start_idx = 1
-                    elif line.strip() == "```":
-                        end_idx = i
-                        break
-                json_text = "\n".join(lines[start_idx:end_idx])
+            if reply_text.upper() == "EMPTY":
+                # Model says no line items on this page. Treat as a 0-row response so
+                # the empty-response retry logic below can re-prompt with stronger
+                # instructions. This handles the case where Gemini returns "EMPTY" for
+                # pages that do have charges (e.g., after a prior timeout forced a retry
+                # and the model then incorrectly decided the page was blank).
+                print(json.dumps({"warning": "chunk_reported_empty", "chunk": chunk_num, "attempt": attempt + 1}))
+                items = []
+            else:
+                # Parse JSON response
 
-            try:
-                items = json.loads(json_text)
-                if not isinstance(items, list):
-                    items = [items]  # Single object, wrap in list
-            except json.JSONDecodeError as e:
-                print(json.dumps({"error": "json_parse_failed", "chunk": chunk_num, "error_msg": str(e), "preview": json_text[:500]}))
-                # Fall back to trying to extract JSON array from text
-                import re
-                json_match = re.search(r'\[[\s\S]*\]', json_text)
-                if json_match:
-                    try:
-                        items = json.loads(json_match.group())
-                    except:
+                # Try to parse JSON - handle markdown code blocks
+                json_text = reply_text.strip()
+                if json_text.startswith("```"):
+                    # Remove markdown code block wrapper
+                    lines = json_text.split("\n")
+                    # Find start and end of code block
+                    start_idx = 0
+                    end_idx = len(lines)
+                    for i, line in enumerate(lines):
+                        if line.strip().startswith("```") and i == 0:
+                            start_idx = 1
+                        elif line.strip() == "```":
+                            end_idx = i
+                            break
+                    json_text = "\n".join(lines[start_idx:end_idx])
+
+                try:
+                    items = json.loads(json_text)
+                    if not isinstance(items, list):
+                        items = [items]  # Single object, wrap in list
+                except json.JSONDecodeError as e:
+                    print(json.dumps({"error": "json_parse_failed", "chunk": chunk_num, "error_msg": str(e), "preview": json_text[:500]}))
+                    # Fall back to trying to extract JSON array from text
+                    import re
+                    json_match = re.search(r'\[[\s\S]*\]', json_text)
+                    if json_match:
+                        try:
+                            items = json.loads(json_match.group())
+                        except:
+                            items = []
+                    else:
                         items = []
-                else:
-                    items = []
 
             # JSON field to COLUMNS index mapping
             JSON_TO_COLUMN = {
