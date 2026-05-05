@@ -13727,19 +13727,33 @@ def api_pipeline_queue(user: str = Depends(require_user)):
         pk = it["pk"]["S"]
         ts = int(it["timestamp_epoch"]["N"])
         if pk not in latest_by_bill or ts > latest_by_bill[pk]["ts"]:
-            latest_by_bill[pk] = {"ts": ts, "stage": it["stage"]["S"]}
+            latest_by_bill[pk] = {
+                "ts": ts,
+                "stage": it["stage"]["S"],
+                "event_type": it.get("event_type", {}).get("S", ""),
+            }
 
     # Count bills per current stage.
     # For pre-submission stages (S1/S3/S4), only count bills from the last 4 hours.
     # Older bills either completed without instrumentation or are genuinely stuck
     # (the /stuck endpoint handles those). This prevents historical events from
     # inflating the "active queue" count.
+    # Failed bills use a wider 48-hour window so users can see recent failures.
     from collections import Counter
-    active_cutoff = now_epoch - 4 * 3600  # 4 hours
+    active_cutoff = now_epoch - 4 * 3600    # 4 hours for in-flight stages
+    failed_cutoff = now_epoch - 48 * 3600   # 48 hours for failed bills
+    _FAILED_EVENT_TYPES = {"FAILED", "PARSE_FAILED", "ENRICHMENT_FAILED", "AGGREGATION_FAILED"}
     stage_counts = Counter()
     stage_oldest = {}
+    failed_count = 0
     for pk, info in latest_by_bill.items():
         st = info["stage"]
+        et = info["event_type"]
+        # Count bills whose latest event is a failure type (last 48h)
+        if et in _FAILED_EVENT_TYPES:
+            if info["ts"] >= failed_cutoff:
+                failed_count += 1
+            continue
         # Skip old events in pre-submission stages
         if st in ("S1", "S1_Std", "S1_Lg", "S3", "S4") and info["ts"] < active_cutoff:
             continue
@@ -13756,7 +13770,7 @@ def api_pipeline_queue(user: str = Depends(require_user)):
         stages.append({"stage": st, "count": count, "oldest_age_minutes": oldest_age_min})
         total += count
 
-    result = {"stages": stages, "total_in_flight": total, "as_of": dt.datetime.now(dt.timezone.utc).isoformat()}
+    result = {"stages": stages, "total_in_flight": total, "failed_count": failed_count, "as_of": dt.datetime.now(dt.timezone.utc).isoformat()}
     _CACHE[cache_key] = {"ts": time.time(), "data": result}
     return result
 
