@@ -43,7 +43,7 @@ def get_job_info(job_id: str) -> dict:
             'total_chunks': int(item['total_chunks']['N']),
             'chunks_completed': int(item['chunks_completed']['N']),
             'status': item['status']['S'],
-            'chunk_results': list(item.get('chunk_results', {}).get('SS', []))
+            'chunk_results': [r['S'] for r in item.get('chunk_results', {}).get('L', [])]
         }
     except Exception as e:
         print(f"Error getting job info: {e}")
